@@ -1,0 +1,734 @@
+#include "GLRenderer.h"
+#include <android/log.h>
+#include <cmath>
+#include <android/asset_manager.h>
+#include <cstring>
+#include <cstddef>  // for offsetof
+#include "TextureLoader.h"
+#include "MeshGenerator.h"
+
+#define LOG_TAG "GLRenderer"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
+
+AAssetManager* GLRenderer::g_assetManager = nullptr;
+
+void GLRenderer::setAssetManager(AAssetManager* assetManager) {
+    g_assetManager = assetManager;
+}
+
+void GLRenderer::setChunkManager(ChunkManager* manager) {
+    chunkManager = manager;
+    
+    // 标记需要重建网格，在渲染线程中执行
+    if (manager && display != EGL_NO_DISPLAY) {
+        needRebuildMesh = true;
+        
+        // 清除旧的缓存，强制重新生成
+        for (auto& [chunkKey, renderData] : chunkRenderCache) {
+            renderData.needsUpdate = true;
+        }
+    }
+}
+
+GLRenderer::GLRenderer()
+        : display(EGL_NO_DISPLAY), context(EGL_NO_CONTEXT), surface(EGL_NO_SURFACE),
+          shaderProgram(0), vao(0), vbo(0), ebo(0), textureArrayID(0),
+          uniformModel(-1), uniformView(-1), uniformProj(-1), uniformTexture(-1),
+          vertexCount(0), indexCount(0), screenWidth(0), screenHeight(0) {
+    memset(cameraMatrix, 0, sizeof(cameraMatrix));
+    memset(projectionMatrix, 0, sizeof(projectionMatrix));
+}
+
+GLRenderer::~GLRenderer() {
+    cleanup();
+}
+
+bool GLRenderer::initialize(ANativeWindow* window) {
+    LOGI("=== GLRenderer::initialize START ===");
+    
+    screenWidth = ANativeWindow_getWidth(window);
+    screenHeight = ANativeWindow_getHeight(window);
+
+    LOGI("Window size: %dx%d", screenWidth, screenHeight);
+
+    if (!createEGLContext(window)) {
+        LOGE("Failed to create EGL context");
+        return false;
+    }
+
+    if (!eglMakeCurrent(display, surface, surface, context)) {
+        LOGE("Failed to make current: 0x%x", eglGetError());
+        return false;
+    }
+
+    glViewport(0, 0, screenWidth, screenHeight);
+
+    if (!createShaders()) {
+        return false;
+    }
+
+    if (!createBuffers()) {
+        return false;
+    }
+
+    // 加载纹理到纹理数组
+    LOGI("Loading textures to texture array...");
+    
+    // 定义需要加载的纹理列表
+    struct TextureEntry {
+        const char* filename;
+        int blockState;  // 对应的 blockState ID
+    };
+    
+    std::vector<TextureEntry> textureList = {
+        {"grass_top.png", 2},    // 草方块顶部
+        {"grass_side.png", 2},   // 草方块侧面
+        {"dirt.png", 3},         // 泥土
+        // 未来可以继续添加：
+        // {"stone.png", 4},
+        // {"sand.png", 5},
+        // ...
+    };
+    
+    int textureCount = textureList.size();
+    
+    // 加载第一个纹理获取尺寸
+    TextureData firstTex = TextureLoader::loadImage(textureList[0].filename);
+    if (!firstTex.data) {
+        LOGE("Failed to load first texture!");
+        return false;
+    }
+    
+    int texWidth = firstTex.width;
+    int texHeight = firstTex.height;
+    
+    // 创建 2D 纹理数组
+    glGenTextures(1, &textureArrayID);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayID);
+    
+    // 分配存储空间
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA, 
+                 texWidth, texHeight, textureCount, 
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    
+    // 加载每个纹理到对应的层
+    for (int i = 0; i < textureCount; i++) {
+        TextureData texData = TextureLoader::loadImage(textureList[i].filename);
+        if (texData.data) {
+            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 
+                           0, 0, i,  // x, y, layer
+                           texWidth, texHeight, 1, 
+                           GL_RGBA, GL_UNSIGNED_BYTE, 
+                           texData.data);
+            LOGI("Loaded texture %d: %s (layer %d)", 
+                 i, textureList[i].filename, i);
+        } else {
+            LOGE("Failed to load texture: %s", textureList[i].filename);
+        }
+    }
+    
+    // 设置纹理参数
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    
+    LOGI("Texture array created: %dx%d, %d layers", 
+         texWidth, texHeight, textureCount);
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    
+    // 启用背面剔除，减少渲染的面数
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glFrontFace(GL_CCW);  // 逆时针为正面
+
+    // 强制清空旧缓存，重新构建（确保使用最新的 MeshGenerator 代码）
+    LOGI("Clearing chunk render cache...");
+    for (auto& [chunkKey, renderData] : chunkRenderCache) {
+        if (renderData.vbo != 0) {
+            glDeleteBuffers(1, &renderData.vbo);
+        }
+        if (renderData.ebo != 0) {
+            glDeleteBuffers(1, &renderData.ebo);
+        }
+    }
+    chunkRenderCache.clear();
+    
+    // 初始化时创建测试方块
+    LOGI("Rebuilding mesh from chunks...");
+    rebuildMeshFromChunks();
+
+    eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    LOGI("=== GLRenderer::initialize SUCCESS ===");
+    return true;
+}
+
+bool GLRenderer::createEGLContext(ANativeWindow* window) {
+    display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    if (display == EGL_NO_DISPLAY) {
+        LOGE("Failed to get EGL display");
+        return false;
+    }
+
+    EGLint major, minor;
+    if (!eglInitialize(display, &major, &minor)) {
+        LOGE("Failed to initialize EGL");
+        return false;
+    }
+
+    LOGI("EGL initialized: %d.%d", major, minor);
+
+    EGLint configAttribs[] = {
+            EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+            EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+            EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
+            EGL_DEPTH_SIZE, 24,
+            EGL_NONE
+    };
+
+    EGLConfig config;
+    EGLint numConfigs;
+    if (!eglChooseConfig(display, configAttribs, &config, 1, &numConfigs)) {
+        LOGE("Failed to choose EGL config");
+        return false;
+    }
+
+    EGLint contextAttribs[] = {
+            EGL_CONTEXT_CLIENT_VERSION, 3,
+            EGL_NONE
+    };
+
+    context = eglCreateContext(display, config, EGL_NO_CONTEXT, contextAttribs);
+    if (context == EGL_NO_CONTEXT) {
+        LOGE("Failed to create EGL context");
+        return false;
+    }
+
+    surface = eglCreateWindowSurface(display, config, window, nullptr);
+    if (surface == EGL_NO_SURFACE) {
+        LOGE("Failed to create EGL surface");
+        return false;
+    }
+
+    LOGI("EGL context and surface created");
+    return true;
+}
+
+std::string GLRenderer::loadShaderFile(const std::string& filename) {
+    if (!g_assetManager) {
+        LOGE("Asset manager not set!");
+        return "";
+    }
+
+    AAsset* asset = AAssetManager_open(g_assetManager, filename.c_str(), AASSET_MODE_BUFFER);
+    if (!asset) {
+        LOGE("Failed to open shader file: %s", filename.c_str());
+        return "";
+    }
+
+    off_t length = AAsset_getLength(asset);
+    const char* buffer = static_cast<const char*>(AAsset_getBuffer(asset));
+
+    std::string content(buffer, length);
+    AAsset_close(asset);
+
+    LOGI("Loaded shader file: %s (%d bytes)", filename.c_str(), (int)content.size());
+    return content;
+}
+
+GLuint GLRenderer::compileShader(GLenum type, const std::string& source) {
+    GLuint shader = glCreateShader(type);
+    const char* src = source.c_str();
+    glShaderSource(shader, 1, &src, nullptr);
+    glCompileShader(shader);
+
+    GLint success;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        char infoLog[512];
+        glGetShaderInfoLog(shader, 512, nullptr, infoLog);
+        LOGE("Shader compilation failed: %s", infoLog);
+        glDeleteShader(shader);
+        return 0;
+    }
+
+    return shader;
+}
+
+GLuint GLRenderer::createProgram(const std::string& vertSource, const std::string& fragSource) {
+    GLuint vertShader = compileShader(GL_VERTEX_SHADER, vertSource);
+    if (vertShader == 0) return 0;
+
+    GLuint fragShader = compileShader(GL_FRAGMENT_SHADER, fragSource);
+    if (fragShader == 0) {
+        glDeleteShader(vertShader);
+        return 0;
+    }
+
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vertShader);
+    glAttachShader(program, fragShader);
+    glLinkProgram(program);
+
+    GLint success;
+    glGetProgramiv(program, GL_LINK_STATUS, &success);
+    if (!success) {
+        char infoLog[512];
+        glGetProgramInfoLog(program, 512, nullptr, infoLog);
+        LOGE("Program linking failed: %s", infoLog);
+        glDeleteProgram(program);
+        glDeleteShader(vertShader);
+        glDeleteShader(fragShader);
+        return 0;
+    }
+
+    glDeleteShader(vertShader);
+    glDeleteShader(fragShader);
+    return program;
+}
+
+bool GLRenderer::createShaders() {
+    std::string vertSource = loadShaderFile("shaders/gl_shader.vert");
+    std::string fragSource = loadShaderFile("shaders/gl_shader.frag");
+
+    if (vertSource.empty() || fragSource.empty()) {
+        LOGE("Failed to load shader files");
+        return false;
+    }
+
+    shaderProgram = createProgram(vertSource, fragSource);
+    if (shaderProgram == 0) {
+        return false;
+    }
+
+    uniformModel = glGetUniformLocation(shaderProgram, "model");
+    uniformView = glGetUniformLocation(shaderProgram, "view");
+    uniformProj = glGetUniformLocation(shaderProgram, "proj");
+    uniformTexture = glGetUniformLocation(shaderProgram, "textureSampler");
+
+    LOGI("Uniform locations: model=%d, view=%d, proj=%d, texture=%d",
+         uniformModel, uniformView, uniformProj, uniformTexture);
+
+    LOGI("Shaders compiled and linked successfully");
+    return true;
+}
+
+bool GLRenderer::createBuffers() {
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+    glGenBuffers(1, &ebo);
+
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+
+    // 位置属性 (location = 0)
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    // 纹理坐标属性 (location = 1)
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    
+    // 纹理索引属性 (location = 2)
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(5 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+
+    glBindVertexArray(0);
+
+    LOGI("Buffers created with 3 vertex attributes (pos, texCoord, texIndex)");
+    return true;
+}
+
+void GLRenderer::rebuildMeshFromChunks() {
+    if (!chunkManager) {
+        LOGW("ChunkManager not set!");
+        return;
+    }
+    
+    LOGI("=== Starting optimized chunk batch rendering ===");
+    
+    auto allChunks = chunkManager->getAllChunks();
+    LOGI("Total loaded chunks: %zu", allChunks.size());
+    
+    int chunksProcessed = 0;
+    int chunksSkipped = 0;
+    int chunksUpdated = 0;
+    
+    // 摄像机位置（用于视锥体裁剪）
+    glm::vec3 cameraPos(cameraMatrix[12], cameraMatrix[13], cameraMatrix[14]);
+    
+    for (const auto* chunk : allChunks) {
+        if (!chunk || !chunk->isLoaded) {
+            continue;
+        }
+        
+        uint64_t chunkKey = ((uint64_t)(chunk->pos.x & 0xFFFFFFFF) << 32) | (chunk->pos.z & 0xFFFFFFFF);
+        
+        // 检查区块是否在缓存中
+        auto it = chunkRenderCache.find(chunkKey);
+        ChunkRenderData* renderData = nullptr;
+        
+        if (it == chunkRenderCache.end()) {
+            // 创建新的渲染数据
+            ChunkRenderData newData;
+            glGenBuffers(1, &newData.vbo);
+            glGenBuffers(1, &newData.ebo);
+            newData.position = glm::vec3(chunk->pos.x * 16.0f, 0.0f, chunk->pos.z * 16.0f);
+            newData.needsUpdate = true;
+            
+            auto [insertIt, inserted] = chunkRenderCache.emplace(chunkKey, std::move(newData));
+            renderData = &insertIt->second;
+            chunksUpdated++;
+        } else {
+            renderData = &it->second;
+        }
+        
+        // 视锥体裁剪：计算区块中心到摄像机的距离
+        float chunkCenterX = chunk->pos.x * 16.0f + 8.0f;
+        float chunkCenterZ = chunk->pos.z * 16.0f + 8.0f;
+        float distX = chunkCenterX - cameraPos.x;
+        float distZ = chunkCenterZ - cameraPos.z;
+        float distance = sqrt(distX * distX + distZ * distZ);
+        
+        // 如果超出渲染距离，标记为不可见
+        if (distance > farPlane) {
+            renderData->visible = false;
+            chunksSkipped++;
+            continue;
+        }
+        
+        renderData->visible = true;
+        
+        // 只重建需要更新的区块
+        if (renderData->needsUpdate) {
+            LOGI("Rebuilding chunk (%d, %d)...", chunk->pos.x, chunk->pos.z);
+            auto [chunkVertices, chunkIndices] = MeshGenerator::generateMeshWithIndices(*chunk);
+            
+            // 调试：打印前几个顶点的信息
+            if (!chunkVertices.empty() && chunksProcessed == 0) {
+                LOGI("First 3 vertices in chunk:");
+                for (int i = 0; i < std::min(3, (int)chunkVertices.size()); i++) {
+                    LOGI("  Vertex %d: pos=(%.1f, %.1f, %.1f), texCoord=(%.2f, %.2f), texIndex=%.1f",
+                         i,
+                         chunkVertices[i].pos[0], chunkVertices[i].pos[1], chunkVertices[i].pos[2],
+                         chunkVertices[i].texCoord[0], chunkVertices[i].texCoord[1],
+                         chunkVertices[i].texIndex);
+                }
+            }
+            
+            // 上传到 GPU
+            glBindBuffer(GL_ARRAY_BUFFER, renderData->vbo);
+            glBufferData(GL_ARRAY_BUFFER, chunkVertices.size() * sizeof(Vertex), 
+                        chunkVertices.data(), GL_STATIC_DRAW);
+            
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderData->ebo);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, chunkIndices.size() * sizeof(uint32_t), 
+                        chunkIndices.data(), GL_STATIC_DRAW);
+            
+            renderData->vertexCount = static_cast<uint32_t>(chunkVertices.size());
+            renderData->indexCount = static_cast<uint32_t>(chunkIndices.size());
+            renderData->needsUpdate = false;
+            
+            chunksUpdated++;
+        }
+        
+        chunksProcessed++;
+    }
+    
+    LOGI("Chunks processed: %d, updated: %d, skipped (culling): %d", 
+         chunksProcessed, chunksUpdated, chunksSkipped);
+}
+
+void GLRenderer::markChunkForUpdate(int chunkX, int chunkZ) {
+    uint64_t chunkKey = ((uint64_t)(chunkX & 0xFFFFFFFF) << 32) | (chunkZ & 0xFFFFFFFF);
+    auto it = chunkRenderCache.find(chunkKey);
+    if (it != chunkRenderCache.end()) {
+        it->second.needsUpdate = true;
+        LOGI("Marked chunk (%d, %d) for update", chunkX, chunkZ);
+    }
+}
+
+void GLRenderer::addBlockToMesh(std::vector<Vertex>& vertices,
+                                std::vector<uint32_t>& indices,
+                                float x, float y, float z) {
+    uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
+
+    // 前面 (z+)
+    vertices.push_back({{x, y, z + 1.0f}, {0.0f, 0.0f}});
+    vertices.push_back({{x + 1.0f, y, z + 1.0f}, {1.0f, 0.0f}});
+    vertices.push_back({{x + 1.0f, y + 1.0f, z + 1.0f}, {1.0f, 1.0f}});
+    vertices.push_back({{x, y + 1.0f, z + 1.0f}, {0.0f, 1.0f}});
+
+    // 后面 (z-)
+    vertices.push_back({{x + 1.0f, y, z}, {0.0f, 0.0f}});
+    vertices.push_back({{x, y, z}, {1.0f, 0.0f}});
+    vertices.push_back({{x, y + 1.0f, z}, {1.0f, 1.0f}});
+    vertices.push_back({{x + 1.0f, y + 1.0f, z}, {0.0f, 1.0f}});
+
+    // 上面 (y+)
+    vertices.push_back({{x, y + 1.0f, z + 1.0f}, {0.0f, 0.0f}});
+    vertices.push_back({{x + 1.0f, y + 1.0f, z + 1.0f}, {1.0f, 0.0f}});
+    vertices.push_back({{x + 1.0f, y + 1.0f, z}, {1.0f, 1.0f}});
+    vertices.push_back({{x, y + 1.0f, z}, {0.0f, 1.0f}});
+
+    // 下面 (y-)
+    vertices.push_back({{x, y, z}, {0.0f, 0.0f}});
+    vertices.push_back({{x + 1.0f, y, z}, {1.0f, 0.0f}});
+    vertices.push_back({{x + 1.0f, y, z + 1.0f}, {1.0f, 1.0f}});
+    vertices.push_back({{x, y, z + 1.0f}, {0.0f, 1.0f}});
+
+    // 右面 (x+)
+    vertices.push_back({{x + 1.0f, y, z + 1.0f}, {0.0f, 0.0f}});
+    vertices.push_back({{x + 1.0f, y, z}, {1.0f, 0.0f}});
+    vertices.push_back({{x + 1.0f, y + 1.0f, z}, {1.0f, 1.0f}});
+    vertices.push_back({{x + 1.0f, y + 1.0f, z + 1.0f}, {0.0f, 1.0f}});
+
+    // 左面 (x-)
+    vertices.push_back({{x, y, z}, {0.0f, 0.0f}});
+    vertices.push_back({{x, y, z + 1.0f}, {1.0f, 0.0f}});
+    vertices.push_back({{x, y + 1.0f, z + 1.0f}, {1.0f, 1.0f}});
+    vertices.push_back({{x, y + 1.0f, z}, {0.0f, 1.0f}});
+
+    for (int face = 0; face < 6; face++) {
+        uint32_t offset = baseIndex + face * 4;
+        indices.push_back(offset);
+        indices.push_back(offset + 1);
+        indices.push_back(offset + 2);
+        indices.push_back(offset);
+        indices.push_back(offset + 2);
+        indices.push_back(offset + 3);
+    }
+}
+
+void GLRenderer::addBlock(int x, int y, int z) {
+    BlockPosition pos = {x, y, z};
+    blocks[pos] = true;
+    rebuildMeshFromChunks();
+    LOGI("Added block at (%d, %d, %d)", x, y, z);
+}
+
+void GLRenderer::removeBlock(int x, int y, int z) {
+    BlockPosition pos = {x, y, z};
+    auto it = blocks.find(pos);
+    if (it != blocks.end()) {
+        blocks.erase(it);
+        rebuildMeshFromChunks();
+        LOGI("Removed block at (%d, %d, %d)", x, y, z);
+    }
+}
+
+void GLRenderer::updateCamera(float cx, float cy, float cz, float pitch, float yaw) {
+    // ===== 使用 Botcraft + GLM 的 Camera 算法 =====
+    
+    // 1. 限制俯仰角（Botcraft: -89° 到 +89°）
+    const float maxPitch = glm::radians(89.0f);
+    if (pitch > maxPitch) pitch = maxPitch;
+    if (pitch < -maxPitch) pitch = -maxPitch;
+
+    // 2. 计算前方向量（Botcraft Camera.cpp 第 108-110 行）
+    glm::vec3 front;
+    front.x = -sinf(yaw) * cosf(pitch);
+    front.y = -sinf(pitch);
+    front.z = cosf(yaw) * cosf(pitch);
+    front = glm::normalize(front);
+
+    // 3. 计算右向量和上向量（Botcraft 第 114-115 行）
+    glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+    glm::vec3 right = glm::normalize(glm::cross(front, worldUp));
+    glm::vec3 up = glm::normalize(glm::cross(right, front));
+
+    // 4. 构建视图矩阵（Botcraft 第 117 行：glm::lookAt(position, position + front, up)）
+    glm::vec3 position(cx, cy, cz);
+    glm::vec3 target = position + front;
+    glm::mat4 viewMatrix = glm::lookAt(position, target, up);
+
+    // 将 GLM 矩阵复制到数组（列主序）
+    memcpy(cameraMatrix, glm::value_ptr(viewMatrix), sizeof(float) * 16);
+
+    // 5. 透视投影矩阵（与 Botcraft 相同）
+    float aspect = (float)screenWidth / screenHeight;
+    float fov = glm::radians(70.0f);  // 70度转弧度
+    float nearP = 0.1f;
+    float farP = 1000.0f;
+
+    glm::mat4 projMatrix = glm::perspective(fov, aspect, nearP, farP);
+
+    // 将 GLM 矩阵复制到数组（列主序）
+    memcpy(projectionMatrix, glm::value_ptr(projMatrix), sizeof(float) * 16);
+}
+
+void GLRenderer::makeCurrent() {
+    if (display && surface && context) {
+        EGLBoolean result = eglMakeCurrent(display, surface, surface, context);
+        if (result != EGL_TRUE) {
+            LOGE("Failed to make EGL context current: 0x%x", eglGetError());
+        } else {
+            LOGI("EGL context made current");
+        }
+    }
+}
+
+void GLRenderer::releaseCurrent() {
+    if (display) {
+        eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        LOGI("EGL context released");
+    }
+}
+
+void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
+    if (!display || !context) {
+        LOGE("EGL not initialized");
+        return;
+    }
+
+    // 如果需要重建网格，在渲染线程中执行
+    if (needRebuildMesh) {
+        rebuildMeshFromChunks();
+        needRebuildMesh = false;
+    }
+
+    glClearColor(0.53f, 0.81f, 0.92f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // 帧计数器递增
+    frameCount++;
+
+    updateCamera(cx, cy, cz, pitch, yaw);
+
+    glUseProgram(shaderProgram);
+    
+    // 设置矩阵 uniform
+    float modelMatrix[16] = {
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+            0, 0, 0, 1
+    };
+    glUniformMatrix4fv(uniformModel, 1, GL_FALSE, modelMatrix);
+    glUniformMatrix4fv(uniformView, 1, GL_FALSE, cameraMatrix);
+    glUniformMatrix4fv(uniformProj, 1, GL_FALSE, projectionMatrix);
+
+    // 绑定纹理数组
+    if (textureArrayID != 0) {
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayID);
+        glUniform1i(uniformTexture, 0);
+        
+        // 启用纹理采样
+        GLint useTextureLoc = glGetUniformLocation(shaderProgram, "useTexture");
+        if (useTextureLoc != -1) {
+            glUniform1i(useTextureLoc, 1);
+        }
+    } else {
+        // 没有纹理时使用红色
+        GLint useTextureLoc = glGetUniformLocation(shaderProgram, "useTexture");
+        if (useTextureLoc != -1) {
+            glUniform1i(useTextureLoc, 0);
+        }
+    }
+
+    // ===== 合批渲染所有可见区块 =====
+    int chunksRendered = 0;
+    int totalTriangles = 0;
+    
+    for (auto& [chunkKey, renderData] : chunkRenderCache) {
+        if (!renderData.visible || renderData.indexCount == 0) {
+            continue;
+        }
+        
+        // 绑定该区块的 VBO/EBO
+        glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, renderData.vbo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderData.ebo);
+        
+        // 重新设置顶点属性（因为 VBO 变了）
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(5 * sizeof(float)));
+        glEnableVertexAttribArray(2);
+        
+        // 绘制该区块
+        glDrawElements(GL_TRIANGLES, renderData.indexCount, GL_UNSIGNED_INT, 0);
+        
+        chunksRendered++;
+        totalTriangles += renderData.indexCount / 3;
+    }
+    
+    glBindVertexArray(0);
+    
+    // 每 60 帧打印一次统计信息
+    if (frameCount % 60 == 0) {
+        LOGI("Frame %u: Rendered %d chunks, %d triangles", 
+             frameCount, chunksRendered, totalTriangles);
+    }
+
+    eglSwapBuffers(display, surface);
+}
+
+void GLRenderer::recreateSurface(int width, int height) {
+    screenWidth = width;
+    screenHeight = height;
+    glViewport(0, 0, width, height);
+}
+
+void GLRenderer::cleanup() {
+    // 清理纹理数组
+    if (textureArrayID != 0) {
+        glDeleteTextures(1, &textureArrayID);
+        textureArrayID = 0;
+    }
+    
+    // 清理所有区块的渲染数据
+    for (auto& [chunkKey, renderData] : chunkRenderCache) {
+        if (renderData.vbo != 0) {
+            glDeleteBuffers(1, &renderData.vbo);
+        }
+        if (renderData.ebo != 0) {
+            glDeleteBuffers(1, &renderData.ebo);
+        }
+    }
+    chunkRenderCache.clear();
+    
+    if (vao != 0) {
+        glDeleteVertexArrays(1, &vao);
+        vao = 0;
+    }
+    if (vbo != 0) {
+        glDeleteBuffers(1, &vbo);
+        vbo = 0;
+    }
+    if (ebo != 0) {
+        glDeleteBuffers(1, &ebo);
+        ebo = 0;
+    }
+    if (shaderProgram != 0) {
+        glDeleteProgram(shaderProgram);
+        shaderProgram = 0;
+    }
+
+    if (display) {
+        eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+
+        if (context) {
+            eglDestroyContext(display, context);
+            context = EGL_NO_CONTEXT;
+        }
+
+        if (surface) {
+            eglDestroySurface(display, surface);
+            surface = EGL_NO_SURFACE;
+        }
+
+        eglTerminate(display);
+        display = EGL_NO_DISPLAY;
+    }
+
+    LOGI("OpenGL ES renderer cleaned up");
+}

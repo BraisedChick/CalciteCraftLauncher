@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:background="#1a1a2e">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp"
+        android:gravity="center_horizontal">
+
+        <!-- 标题 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Minecraft 启动器"
+            android:textSize="28sp"
+            android:textColor="#ffffff"
+            android:textStyle="bold"
+            android:layout_marginTop="32dp"
+            android:layout_marginBottom="8dp"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="支持 1.8 - 1.26 全版本"
+            android:textSize="14sp"
+            android:textColor="#999999"
+            android:layout_marginBottom="32dp"/>
+
+        <!-- 登录方式选择 -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="登录方式"
+            android:textSize="16sp"
+            android:textColor="#ffffff"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp"/>
+
+        <RadioGroup
+            android:id="@+id/rgLoginType"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="16dp">
+
+            <RadioButton
+                android:id="@+id/rbOffline"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="离线登录"
+                android:textColor="#ffffff"
+                android:checked="true"
+                android:padding="12dp"/>
+
+            <RadioButton
+                android:id="@+id/rbPremium"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="正版登录"
+                android:textColor="#ffffff"
+                android:enabled="false"
+                android:alpha="0.5"
+                android:padding="12dp"/>
+
+        </RadioGroup>
+
+        <!-- 用户名输入 -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="用户名"
+            android:textSize="16sp"
+            android:textColor="#ffffff"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp"/>
+
+        <EditText
+            android:id="@+id/etUsername"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="输入你的用户名"
+            android:textColor="#ffffff"
+            android:textColorHint="#666666"
+            android:backgroundTint="#4CAF50"
+            android:padding="12dp"
+            android:layout_marginBottom="16dp"
+            android:maxLines="1"
+            android:inputType="text"/>
+
+        <!-- 服务器配置 -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="服务器配置"
+            android:textSize="16sp"
+            android:textColor="#ffffff"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp"/>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="16dp">
+
+            <EditText
+                android:id="@+id/etServerIP"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="2"
+                android:hint="服务器地址"
+                android:textColor="#ffffff"
+                android:textColorHint="#666666"
+                android:backgroundTint="#4CAF50"
+                android:padding="12dp"
+                android:maxLines="1"
+                android:inputType="textUri"
+                android:layout_marginEnd="8dp"/>
+
+            <EditText
+                android:id="@+id/etPort"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:hint="端口"
+                android:text="25565"
+                android:textColor="#ffffff"
+                android:textColorHint="#666666"
+                android:backgroundTint="#4CAF50"
+                android:padding="12dp"
+                android:maxLines="1"
+                android:inputType="number"/>
+
+        </LinearLayout>
+
+        <!-- 版本选择 -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="游戏版本"
+            android:textSize="16sp"
+            android:textColor="#ffffff"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp"/>
+
+        <Spinner
+            android:id="@+id/spinnerVersion"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:backgroundTint="#4CAF50"
+            android:padding="12dp"
+            android:layout_marginBottom="16dp"/>
+
+        <!-- 渲染器选择 -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="渲染器"
+            android:textSize="16sp"
+            android:textColor="#ffffff"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp"/>
+
+        <RadioGroup
+            android:id="@+id/rgRenderer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="24dp">
+
+            <RadioButton
+                android:id="@+id/rbOpenGL"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="OpenGL ES"
+                android:textColor="#ffffff"
+                android:checked="true"
+                android:padding="12dp"/>
+
+            <RadioButton
+                android:id="@+id/rbVulkan"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Vulkan"
+                android:textColor="#ffffff"
+                android:enabled="false"
+                android:alpha="0.5"
+                android:padding="12dp"/>
+
+        </RadioGroup>
+
+        <!-- 启动按钮 -->
+        <Button
+            android:id="@+id/btnLaunch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="启动游戏"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:padding="16dp"
+            android:backgroundTint="#4CAF50"
+            android:textColor="#ffffff"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="32dp"/>
+
+        <!-- 底部信息 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Powered by ProtocolCraft"
+            android:textSize="12sp"
+            android:textColor="#666666"
+            android:layout_marginBottom="16dp"/>
+
+    </LinearLayout>
+
+</ScrollView>
