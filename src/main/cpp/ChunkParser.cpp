@@ -4,9 +4,9 @@
 
 #include "ChunkParser.h"
 #include "utils.h"
+#include "protocolCraft/BinaryReadWrite.hpp"
 #include <cstring>
 #include <stdexcept>
-#include "VarInt.h"
 #include <android/log.h>
 
 #define LOG_TAG "ChunkParser"
@@ -17,24 +17,16 @@
 ChunkParser::ChunkParser() {}
 
 int32_t ChunkParser::readVarInt(const std::vector<uint8_t>& data, size_t& pos) {
-    int32_t result = 0;
-    int shift = 0;
-
-    while (pos < data.size()) {
-        uint8_t byte = data[pos++];
-        result |= (static_cast<int32_t>(byte & 0x7F) << shift);
-
-        if ((byte & 0x80) == 0) {
-            return result;
-        }
-
-        shift += 7;
-        if (shift >= 35) {
-            throw std::runtime_error("VarInt too big");
-        }
+    try {
+        ProtocolCraft::ReadIterator iter = data.begin() + pos;
+        size_t length = data.size() - pos;
+        int32_t result = ProtocolCraft::ReadData<int32_t, ProtocolCraft::VarInt>(iter, length);
+        pos = data.size() - length;
+        return result;
+    } catch (const std::exception& e) {
+        LOGE("Failed to read VarInt: %s", e.what());
+        throw;
     }
-
-    throw std::runtime_error("Unexpected end of data while reading VarInt");
 }
 
 uint64_t ChunkParser::readLong(const std::vector<uint8_t>& data, size_t& pos) {
