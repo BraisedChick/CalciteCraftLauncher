@@ -1,5 +1,5 @@
 #include "NetworkManager.h"
-#include "VarInt.h"
+#include "protocolCraft/BinaryReadWrite.hpp"
 #include "Compression.h"
 #include "utils.h"
 #include <sys/socket.h>
@@ -55,7 +55,8 @@ bool NetworkManager::sendPacket(int packetId, const std::vector<uint8_t>& payloa
              packetId, static_cast<int>(payload.size()), threshold);
 
         // 构建未压缩的包内容：包ID + payload
-        auto idBytes = VarInt::encode(packetId);
+        ProtocolCraft::WriteContainer idBytes;
+        ProtocolCraft::WriteData<int, ProtocolCraft::VarInt>(packetId, idBytes);
         packetData.insert(packetData.end(), idBytes.begin(), idBytes.end());
         packetData.insert(packetData.end(), payload.begin(), payload.end());
 
@@ -66,9 +67,10 @@ bool NetworkManager::sendPacket(int packetId, const std::vector<uint8_t>& payloa
             if (compressed.empty()) return false;
 
             // 压缩后的结构：[原始长度VarInt] [压缩数据]
-            auto originalLen = VarInt::encode(packetData.size());
+            ProtocolCraft::WriteContainer originalLenBytes;
+            ProtocolCraft::WriteData<int, ProtocolCraft::VarInt>(static_cast<int>(packetData.size()), originalLenBytes);
             packetData.clear();
-            packetData.insert(packetData.end(), originalLen.begin(), originalLen.end());
+            packetData.insert(packetData.end(), originalLenBytes.begin(), originalLenBytes.end());
             packetData.insert(packetData.end(), compressed.begin(), compressed.end());
         } else {
             // 未压缩，结构：[VarInt(0)] [包ID] [payload]
@@ -80,13 +82,15 @@ bool NetworkManager::sendPacket(int packetId, const std::vector<uint8_t>& payloa
         }
     } else {
         // 未启用压缩，结构：[包ID] [payload]
-        auto idBytes = VarInt::encode(packetId);
+        ProtocolCraft::WriteContainer idBytes;
+        ProtocolCraft::WriteData<int, ProtocolCraft::VarInt>(packetId, idBytes);
         packetData.insert(packetData.end(), idBytes.begin(), idBytes.end());
         packetData.insert(packetData.end(), payload.begin(), payload.end());
     }
 
     // 手动添加包长度前缀
-    auto lenBytes = VarInt::encode(static_cast<int>(packetData.size()));
+    ProtocolCraft::WriteContainer lenBytes;
+    ProtocolCraft::WriteData<int, ProtocolCraft::VarInt>(static_cast<int>(packetData.size()), lenBytes);
     std::vector<uint8_t> fullPacket;
     fullPacket.insert(fullPacket.end(), lenBytes.begin(), lenBytes.end());
     fullPacket.insert(fullPacket.end(), packetData.begin(), packetData.end());
@@ -114,8 +118,9 @@ bool NetworkManager::sendRawPacket(const std::vector<uint8_t>& fullPacketData) {
             if (compressed.empty()) return false;
 
             // 压缩后的结构：[原始长度VarInt] [压缩数据]
-            auto originalLen = VarInt::encode(fullPacketData.size());
-            packetData.insert(packetData.end(), originalLen.begin(), originalLen.end());
+            ProtocolCraft::WriteContainer originalLenBytes;
+            ProtocolCraft::WriteData<int, ProtocolCraft::VarInt>(static_cast<int>(fullPacketData.size()), originalLenBytes);
+            packetData.insert(packetData.end(), originalLenBytes.begin(), originalLenBytes.end());
             packetData.insert(packetData.end(), compressed.begin(), compressed.end());
         } else {
             // 未压缩，结构：[VarInt(0)] [Packet ID + payload]
@@ -129,7 +134,8 @@ bool NetworkManager::sendRawPacket(const std::vector<uint8_t>& fullPacketData) {
     }
 
     // 添加包长度前缀
-    auto lenBytes = VarInt::encode(static_cast<int>(packetData.size()));
+    ProtocolCraft::WriteContainer lenBytes;
+    ProtocolCraft::WriteData<int, ProtocolCraft::VarInt>(static_cast<int>(packetData.size()), lenBytes);
     std::vector<uint8_t> finalPacket;
     finalPacket.insert(finalPacket.end(), lenBytes.begin(), lenBytes.end());
     finalPacket.insert(finalPacket.end(), packetData.begin(), packetData.end());
@@ -143,18 +149,23 @@ std::vector<uint8_t> NetworkManager::receivePacket() {
     if (!connected) return {};
 
     // 读取包长度
-    uint8_t lenBuf[5];
+    std::vector<uint8_t> lenBuf(5);
     int bytesRead = 0;
     int packetLen = -1;
     while (bytesRead < 5) {
-        int n = recv(sock, lenBuf + bytesRead, 1, 0);
+        int n = recv(sock, lenBuf.data() + bytesRead, 1, 0);
         if (n <= 0) return {};
         bytesRead++;
-        size_t pos = 0;
-        int tmp = VarInt::decode(std::vector<uint8_t>(lenBuf, lenBuf + bytesRead), pos);
-        if (tmp != -1) {
-            packetLen = tmp;
+        
+        // 尝试解码 VarInt
+        ProtocolCraft::ReadIterator iter = lenBuf.begin();
+        size_t length = bytesRead;
+        try {
+            packetLen = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(iter, length);
             break;
+        } catch (...) {
+            // VarInt 不完整，继续读取
+            continue;
         }
     }
     if (packetLen == -1) return {};
@@ -170,16 +181,20 @@ std::vector<uint8_t> NetworkManager::receivePacket() {
 
     // 如果启用了接收压缩，处理压缩头
     if (Compression::isReceiveEnabled()) {
-        size_t pos = 0;
-        int uncompressedLen = VarInt::decode(rawData, pos);
-        if (uncompressedLen == -1) return {};
-        std::vector<uint8_t> rest(rawData.begin() + pos, rawData.end());
-        if (uncompressedLen == 0) {
-            // 数据未压缩
-            return rest;
-        } else {
-            // 需要解压
-            return Compression::decompress(rest, uncompressedLen);
+        ProtocolCraft::ReadIterator iter = rawData.begin();
+        size_t length = rawData.size();
+        try {
+            int uncompressedLen = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(iter, length);
+            std::vector<uint8_t> rest(iter, rawData.end());
+            if (uncompressedLen == 0) {
+                // 数据未压缩
+                return rest;
+            } else {
+                // 需要解压
+                return Compression::decompress(rest, uncompressedLen);
+            }
+        } catch (...) {
+            return {};
         }
     } else {
         return rawData;
