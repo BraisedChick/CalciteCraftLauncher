@@ -407,7 +407,27 @@ void GLRenderer::rebuildMeshFromChunks() {
         // 只重建需要更新的区块
         if (renderData->needsUpdate) {
             LOGI("Rebuilding chunk (%d, %d)...", chunk->pos.x, chunk->pos.z);
-            auto [chunkVertices, chunkIndices] = MeshGenerator::generateMeshWithIndices(*chunk);
+            
+            // 使用新的方法：逐 Section 生成网格，支持跨区块剔除
+            std::vector<Vertex> chunkVertices;
+            std::vector<uint32_t> chunkIndices;
+            
+            for (size_t sectionIdx = 0; sectionIdx < chunk->sections.size(); ++sectionIdx) {
+                const auto& section = chunk->sections[sectionIdx];
+                if (!section || section->isEmpty) continue;
+                
+                int sectionY = section->y;
+                auto [sectionVertices, sectionIndices] = MeshGenerator::generateSectionMesh(
+                    *section, chunk->pos.x, sectionY, chunk->pos.z, chunkManager);
+                
+                // 调整索引偏移
+                uint32_t vertexOffset = static_cast<uint32_t>(chunkVertices.size());
+                for (uint32_t idx : sectionIndices) {
+                    chunkIndices.push_back(vertexOffset + idx);
+                }
+                
+                chunkVertices.insert(chunkVertices.end(), sectionVertices.begin(), sectionVertices.end());
+            }
             
             // 调试：打印前几个顶点的信息
             if (!chunkVertices.empty() && chunksProcessed == 0) {
