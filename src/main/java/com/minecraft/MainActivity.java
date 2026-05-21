@@ -36,7 +36,7 @@ public class MainActivity extends Activity {
     private Button btnDown;
     private boolean keyUp = false;
     private boolean keyDown = false;
-    private VulkanSurfaceView vulkanSurfaceView;
+    private RendererSurfaceView rendererSurfaceView;
     private FrameLayout joystickContainer;
     private View joystickKnob;
 
@@ -172,7 +172,7 @@ public class MainActivity extends Activity {
         rendererSelector = findViewById(R.id.rendererSelector);
         radioOpenGL = findViewById(R.id.radioOpenGL);
         radioVulkan = findViewById(R.id.radioVulkan);
-        vulkanSurfaceView = findViewById(R.id.gameSurface);
+        rendererSurfaceView = findViewById(R.id.gameSurface);
         joystickContainer = findViewById(R.id.joystickContainer);
         joystickKnob = findViewById(R.id.joystickKnob);
         
@@ -181,8 +181,8 @@ public class MainActivity extends Activity {
         btnUp = findViewById(R.id.btnUp);
         btnDown = findViewById(R.id.btnDown);
 
-        // 隐藏 Vulkan 表面
-        vulkanSurfaceView.setVisibility(View.GONE);
+        // 隐藏渲染表面
+        rendererSurfaceView.setVisibility(View.GONE);
 
         // 设置从启动器接收的值
         if (username != null && !username.isEmpty()) {
@@ -253,7 +253,7 @@ public class MainActivity extends Activity {
         });
 
         // 设置触摸监听器（视角控制）
-        vulkanSurfaceView.setOnTouchListener(new View.OnTouchListener() {
+        rendererSurfaceView.setOnTouchListener(new View.OnTouchListener() {
             @Override
             public boolean onTouch(View v, MotionEvent event) {
                 float x = event.getX();
@@ -363,8 +363,8 @@ public class MainActivity extends Activity {
         updateCamera();
         android.util.Log.i("MainActivity", "Camera position set to: (" + cameraX + ", " + cameraY + ", " + cameraZ + ")");
 
-        // 显示 Vulkan 表面（这会触发 surfaceCreated 回调）
-        vulkanSurfaceView.setVisibility(View.VISIBLE);
+        // 显示渲染表面（这会触发 surfaceCreated 回调）
+        rendererSurfaceView.setVisibility(View.VISIBLE);
 
         // 根据用户选择设置渲染器类型
         setRendererType(useVulkan);

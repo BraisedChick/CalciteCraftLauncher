@@ -113,8 +113,8 @@
 
     </ScrollView>
 
-    <!-- Vulkan 渲染表面 -->
-    <com.minecraft.VulkanSurfaceView
+    <!-- 渲染表面 -->
+    <com.minecraft.RendererSurfaceView
         android:id="@+id/gameSurface"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
