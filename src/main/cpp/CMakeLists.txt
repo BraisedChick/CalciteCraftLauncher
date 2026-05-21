@@ -25,7 +25,6 @@ set(SOURCES
     ClientEngine.cpp
     Compression.cpp
     NetworkManager.cpp
-    VarInt.cpp
     native-lib.cpp
     utils.cpp
     ChunkManager.cpp
