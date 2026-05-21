@@ -185,7 +185,9 @@ std::vector<uint8_t> NetworkManager::receivePacket() {
         size_t length = rawData.size();
         try {
             int uncompressedLen = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(iter, length);
-            std::vector<uint8_t> rest(iter, rawData.end());
+            // 计算剩余数据的起始位置
+            size_t remainingStart = rawData.size() - length;
+            std::vector<uint8_t> rest(rawData.begin() + remainingStart, rawData.end());
             if (uncompressedLen == 0) {
                 // 数据未压缩
                 return rest;
