@@ -26,8 +26,8 @@ int32_t MeshGenerator::getBlockStateAt(int x, int y, int z, const ChunkManager* 
         return 0;
     }
     
-    // 获取区块
-    const Chunk* chunk = chunkManager->getChunk(chunkX, chunkZ);
+    // 获取区块（shared_ptr 保证线程安全）
+    auto chunk = chunkManager->getChunk(chunkX, chunkZ);
     if (!chunk || !chunk->isLoaded) return 0;
     
     // 找到对应的 section
@@ -141,12 +141,8 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateSec
             
             int32_t blockState = getBlockStateAt(globalX, globalY, globalZ, chunkManager);
             
-            // 调试日志：打印跨区块查询
-            if (blockState != 0) {
-                LOGI("Cross-chunk query: local=(%d,%d,%d) -> global=(%d,%d,%d), blockState=%d",
-                     x, y, z, globalX, globalY, globalZ, blockState);
-            }
-            
+
+
             return blockState == 0;
         }
         

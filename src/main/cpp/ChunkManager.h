@@ -2,7 +2,7 @@
 #include "Chunk.h"
 #include "ChunkParser.h"
 #include <unordered_map>
-#include <mutex>
+#include <shared_mutex>
 #include <memory>
 #include <vector>
 
@@ -17,9 +17,9 @@ public:
                    const std::vector<uint8_t>& blockEntities,
                    int dimensionMinY = 0);
     
-    // 获取区块
-    const Chunk* getChunk(int x, int z) const;
-    Chunk* getChunk(int x, int z);
+    // 获取区块（返回 shared_ptr，线程安全）
+    std::shared_ptr<const Chunk> getChunk(int x, int z) const;
+    std::shared_ptr<Chunk> getChunk(int x, int z);
     
     // 卸载区块
     void unloadChunk(int x, int z);
@@ -31,10 +31,10 @@ public:
     size_t getLoadedChunkCount() const;
     
     // 获取所有区块（用于渲染）
-    std::vector<const Chunk*> getAllChunks() const;
+    std::vector<std::shared_ptr<const Chunk>> getAllChunks() const;
 
 private:
-    std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, std::hash<ChunkPos>> chunks;
-    mutable std::mutex mutex;
+    std::unordered_map<ChunkPos, std::shared_ptr<Chunk>, std::hash<ChunkPos>> chunks;
+    mutable std::shared_mutex mutex;
     ChunkParser parser;
 };

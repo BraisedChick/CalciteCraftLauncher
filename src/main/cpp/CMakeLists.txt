@@ -19,6 +19,9 @@ message(STATUS "Using local GLM from: ${CMAKE_CURRENT_SOURCE_DIR}/glm")
 # 添加 ProtocolCraft 子目录
 set(PROTOCOLCRAFT_STATIC ON CACHE BOOL "Build protocolCraft as static library" FORCE)
 set(PROTOCOL_VERSION 758 CACHE STRING "Minecraft protocol version (758 = 1.18.2)" FORCE)
+
+# 设置 Botcraft 输出目录，防止协议库输出到根目录 /lib/
+set(BOTCRAFT_OUTPUT_DIR ${CMAKE_BINARY_DIR})
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft ${CMAKE_BINARY_DIR}/protocolCraft)
 
 set(SOURCES

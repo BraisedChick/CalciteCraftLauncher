@@ -181,6 +181,25 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
         LOGI("Compression fully enabled");
     }
 
+    // ========== 发送客户端信息（视野距离等）==========
+    // 必须在进入 PLAY 状态后立即发送，让服务器知道客户端的视野距离
+    {
+        ProtocolCraft::ServerboundClientInformationPacket infoPacket;
+        infoPacket.SetLanguage("en_US");
+        infoPacket.SetViewDistance(10);    // 请求 10 个区块的视野距离
+        infoPacket.SetChatVisibility(0);   // 0=全部显示
+        infoPacket.SetChatColors(true);
+        infoPacket.SetModelCustomisation(0x7F);  // 全部启用
+        infoPacket.SetMainHand(1);         // 1=右手
+        infoPacket.SetTextFilteringEnabled(false);
+        infoPacket.SetAllowListing(true);
+
+        ProtocolCraft::WriteContainer writeData;
+        infoPacket.Write(writeData);
+        net.sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+        LOGI("Sent Client Information (ViewDistance=10)");
+    }
+
     // ========== PLAY 状态主循环 ==========
     while (true) {
         auto resp = net.receivePacket();
@@ -366,9 +385,10 @@ void ClientEngine::handlePlayPacket(NetworkManager& net, int packetId,
                                 dimensionMinY
                         );
 
-                        // 通知渲染器重建网格
+                        // 通知渲染器重建网格（增量更新，只重建当前区块）
                         if (glRenderer) {
                             glRenderer->setChunkManager(chunkManager.get());
+                            glRenderer->markChunkForUpdate(chunkX, chunkZ);
                         }
                     }
                 } catch (const std::exception& e) {

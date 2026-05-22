@@ -8,12 +8,12 @@ void ChunkManager::loadChunk(int x, int z, const std::vector<uint8_t>& data,
                               const std::vector<uint8_t>& heightmaps,
                               const std::vector<uint8_t>& blockEntities,
                               int dimensionMinY) {
-    std::lock_guard<std::mutex> lock(mutex);
-    
+    std::unique_lock<std::shared_mutex> lock(mutex);
+
     try {
-        auto chunk = parser.parseChunkData(x, z, data, fullChunk, primaryBitMask, 
+        auto chunk = parser.parseChunkData(x, z, data, fullChunk, primaryBitMask,
                                            heightmaps, blockEntities, dimensionMinY);
-        
+
         ChunkPos pos{x, z};
         chunks[pos] = std::move(chunk);
     } catch (const std::exception& e) {
@@ -21,31 +21,31 @@ void ChunkManager::loadChunk(int x, int z, const std::vector<uint8_t>& data,
     }
 }
 
-const Chunk* ChunkManager::getChunk(int x, int z) const {
-    std::lock_guard<std::mutex> lock(mutex);
-    
+std::shared_ptr<const Chunk> ChunkManager::getChunk(int x, int z) const {
+    std::shared_lock<std::shared_mutex> lock(mutex);
+
     ChunkPos pos{x, z};
     auto it = chunks.find(pos);
     if (it != chunks.end()) {
-        return it->second.get();
+        return it->second;
     }
     return nullptr;
 }
 
-Chunk* ChunkManager::getChunk(int x, int z) {
-    std::lock_guard<std::mutex> lock(mutex);
-    
+std::shared_ptr<Chunk> ChunkManager::getChunk(int x, int z) {
+    std::shared_lock<std::shared_mutex> lock(mutex);
+
     ChunkPos pos{x, z};
     auto it = chunks.find(pos);
     if (it != chunks.end()) {
-        return it->second.get();
+        return it->second;
     }
     return nullptr;
 }
 
 void ChunkManager::unloadChunk(int x, int z) {
-    std::lock_guard<std::mutex> lock(mutex);
-    
+    std::unique_lock<std::shared_mutex> lock(mutex);
+
     ChunkPos pos{x, z};
     auto it = chunks.find(pos);
     if (it != chunks.end()) {
@@ -54,24 +54,24 @@ void ChunkManager::unloadChunk(int x, int z) {
 }
 
 void ChunkManager::clear() {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::unique_lock<std::shared_mutex> lock(mutex);
     chunks.clear();
     LOGI("All chunks cleared");
 }
 
 size_t ChunkManager::getLoadedChunkCount() const {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::shared_lock<std::shared_mutex> lock(mutex);
     return chunks.size();
 }
 
-std::vector<const Chunk*> ChunkManager::getAllChunks() const {
-    std::lock_guard<std::mutex> lock(mutex);
+std::vector<std::shared_ptr<const Chunk>> ChunkManager::getAllChunks() const {
+    std::shared_lock<std::shared_mutex> lock(mutex);
 
-    std::vector<const Chunk*> result;
+    std::vector<std::shared_ptr<const Chunk>> result;
     result.reserve(chunks.size());
 
     for (const auto& pair : chunks) {
-        result.push_back(pair.second.get());
+        result.push_back(pair.second);
     }
 
     return result;

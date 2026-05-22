@@ -20,15 +20,12 @@ void GLRenderer::setAssetManager(AAssetManager* assetManager) {
 
 void GLRenderer::setChunkManager(ChunkManager* manager) {
     chunkManager = manager;
-    
+
     // 标记需要重建网格，在渲染线程中执行
+    // 注意：不要遍历旧缓存设置 needsUpdate = true，
+    // 新区块在 rebuildMeshFromChunks 中创建时已经自动标记了 needsUpdate
     if (manager && display != EGL_NO_DISPLAY) {
         needRebuildMesh = true;
-        
-        // 清除旧的缓存，强制重新生成
-        for (auto& [chunkKey, renderData] : chunkRenderCache) {
-            renderData.needsUpdate = true;
-        }
     }
 }
 
@@ -39,6 +36,7 @@ GLRenderer::GLRenderer()
           vertexCount(0), indexCount(0), screenWidth(0), screenHeight(0) {
     memset(cameraMatrix, 0, sizeof(cameraMatrix));
     memset(projectionMatrix, 0, sizeof(projectionMatrix));
+    startWorker();
 }
 
 GLRenderer::~GLRenderer() {
@@ -148,15 +146,18 @@ bool GLRenderer::initialize(ANativeWindow* window) {
 
     // 强制清空旧缓存，重新构建（确保使用最新的 MeshGenerator 代码）
     LOGI("Clearing chunk render cache...");
-    for (auto& [chunkKey, renderData] : chunkRenderCache) {
-        if (renderData.vbo != 0) {
-            glDeleteBuffers(1, &renderData.vbo);
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        for (auto& [chunkKey, renderData] : chunkRenderCache) {
+            if (renderData.vbo != 0) {
+                glDeleteBuffers(1, &renderData.vbo);
+            }
+            if (renderData.ebo != 0) {
+                glDeleteBuffers(1, &renderData.ebo);
+            }
         }
-        if (renderData.ebo != 0) {
-            glDeleteBuffers(1, &renderData.ebo);
-        }
+        chunkRenderCache.clear();
     }
-    chunkRenderCache.clear();
     
     // 初始化时创建测试方块
     LOGI("Rebuilding mesh from chunks...");
@@ -344,132 +345,231 @@ bool GLRenderer::createBuffers() {
     return true;
 }
 
-void GLRenderer::rebuildMeshFromChunks() {
+bool GLRenderer::rebuildMeshFromChunks() {
     if (!chunkManager) {
         LOGW("ChunkManager not set!");
-        return;
+        return false;
     }
-    
-    LOGI("=== Starting optimized chunk batch rendering ===");
-    
+
     auto allChunks = chunkManager->getAllChunks();
-    LOGI("Total loaded chunks: %zu", allChunks.size());
-    
+
     int chunksProcessed = 0;
     int chunksSkipped = 0;
-    int chunksUpdated = 0;
-    
+    int chunksEnqueued = 0;
+    const int MAX_ENQUEUE_PER_CALL = 16;
+
     // 摄像机位置（用于视锥体裁剪）
     glm::vec3 cameraPos(cameraMatrix[12], cameraMatrix[13], cameraMatrix[14]);
-    
-    for (const auto* chunk : allChunks) {
+
+    for (const auto& chunk : allChunks) {
         if (!chunk || !chunk->isLoaded) {
             continue;
         }
-        
-        uint64_t chunkKey = ((uint64_t)(chunk->pos.x & 0xFFFFFFFF) << 32) | (chunk->pos.z & 0xFFFFFFFF);
-        
-        // 检查区块是否在缓存中
-        auto it = chunkRenderCache.find(chunkKey);
-        ChunkRenderData* renderData = nullptr;
-        
-        if (it == chunkRenderCache.end()) {
-            // 创建新的渲染数据
-            ChunkRenderData newData;
-            glGenBuffers(1, &newData.vbo);
-            glGenBuffers(1, &newData.ebo);
-            newData.position = glm::vec3(chunk->pos.x * 16.0f, 0.0f, chunk->pos.z * 16.0f);
-            newData.needsUpdate = true;
-            
-            auto [insertIt, inserted] = chunkRenderCache.emplace(chunkKey, std::move(newData));
-            renderData = &insertIt->second;
-            chunksUpdated++;
-        } else {
-            renderData = &it->second;
-        }
-        
-        // 视锥体裁剪：计算区块中心到摄像机的距离
+
+        // 距离计算
         float chunkCenterX = chunk->pos.x * 16.0f + 8.0f;
         float chunkCenterZ = chunk->pos.z * 16.0f + 8.0f;
         float distX = chunkCenterX - cameraPos.x;
         float distZ = chunkCenterZ - cameraPos.z;
         float distance = sqrt(distX * distX + distZ * distZ);
-        
-        // 如果超出渲染距离，标记为不可见
+
+        uint64_t chunkKey = ((uint64_t)(chunk->pos.x & 0xFFFFFFFF) << 32) | (chunk->pos.z & 0xFFFFFFFF);
+
+        ChunkRenderData* renderData = nullptr;
+
+        // 短时锁定 cacheMutex，保护 chunkRenderCache 的线程安全
+        {
+            std::lock_guard<std::mutex> lock(cacheMutex);
+            auto it = chunkRenderCache.find(chunkKey);
+
+            if (it == chunkRenderCache.end()) {
+                if (distance > farPlane) {
+                    chunksSkipped++;
+                    continue;
+                }
+
+                // 创建新的渲染数据（分配 GPU 缓冲区）
+                ChunkRenderData newData;
+                glGenBuffers(1, &newData.vbo);
+                glGenBuffers(1, &newData.ebo);
+                newData.position = glm::vec3(chunk->pos.x * 16.0f, 0.0f, chunk->pos.z * 16.0f);
+                newData.needsUpdate = true;
+
+                auto [insertIt, inserted] = chunkRenderCache.emplace(chunkKey, std::move(newData));
+                renderData = &insertIt->second;
+            } else {
+                renderData = &it->second;
+            }
+        }
+
+        // 距离剔除
         if (distance > farPlane) {
             renderData->visible = false;
             chunksSkipped++;
             continue;
         }
-        
         renderData->visible = true;
-        
-        // 只重建需要更新的区块
-        if (renderData->needsUpdate) {
-            LOGI("Rebuilding chunk (%d, %d)...", chunk->pos.x, chunk->pos.z);
-            
-            // 使用新的方法：逐 Section 生成网格，支持跨区块剔除
-            std::vector<Vertex> chunkVertices;
-            std::vector<uint32_t> chunkIndices;
-            
-            for (size_t sectionIdx = 0; sectionIdx < chunk->sections.size(); ++sectionIdx) {
-                const auto& section = chunk->sections[sectionIdx];
-                if (!section || section->isEmpty) continue;
-                
-                int sectionY = section->y;
-                auto [sectionVertices, sectionIndices] = MeshGenerator::generateSectionMesh(
-                    *section, chunk->pos.x, sectionY, chunk->pos.z, chunkManager);
-                
-                // 调整索引偏移
-                uint32_t vertexOffset = static_cast<uint32_t>(chunkVertices.size());
-                for (uint32_t idx : sectionIndices) {
-                    chunkIndices.push_back(vertexOffset + idx);
-                }
-                
-                chunkVertices.insert(chunkVertices.end(), sectionVertices.begin(), sectionVertices.end());
+
+        // 需要更新且未在队列中 → 入队工作线程处理
+        if (renderData->needsUpdate && !renderData->pending) {
+            {
+                std::lock_guard<std::mutex> lock(pendingMutex);
+                if (pendingChunks.find(chunkKey) != pendingChunks.end()) continue;
+                pendingChunks.insert(chunkKey);
+                // 在 pendingMutex 保护下一起设 pending，与 processCompletedWork 中的清除对应
+                renderData->pending = true;
             }
-            
-            // 调试：打印前几个顶点的信息
-            if (!chunkVertices.empty() && chunksProcessed == 0) {
-                LOGI("First 3 vertices in chunk:");
-                for (int i = 0; i < std::min(3, (int)chunkVertices.size()); i++) {
-                    LOGI("  Vertex %d: pos=(%.1f, %.1f, %.1f), texCoord=(%.2f, %.2f), texIndex=%.1f",
-                         i,
-                         chunkVertices[i].pos[0], chunkVertices[i].pos[1], chunkVertices[i].pos[2],
-                         chunkVertices[i].texCoord[0], chunkVertices[i].texCoord[1],
-                         chunkVertices[i].texIndex);
-                }
-            }
-            
-            // 上传到 GPU
-            glBindBuffer(GL_ARRAY_BUFFER, renderData->vbo);
-            glBufferData(GL_ARRAY_BUFFER, chunkVertices.size() * sizeof(Vertex), 
-                        chunkVertices.data(), GL_STATIC_DRAW);
-            
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderData->ebo);
-            glBufferData(GL_ELEMENT_ARRAY_BUFFER, chunkIndices.size() * sizeof(uint32_t), 
-                        chunkIndices.data(), GL_STATIC_DRAW);
-            
-            renderData->vertexCount = static_cast<uint32_t>(chunkVertices.size());
-            renderData->indexCount = static_cast<uint32_t>(chunkIndices.size());
-            renderData->needsUpdate = false;
-            
-            chunksUpdated++;
+            enqueueWork({chunkKey, chunk->pos.x, chunk->pos.z});
+            chunksEnqueued++;
+
+            if (chunksEnqueued >= MAX_ENQUEUE_PER_CALL) break;
         }
-        
+
         chunksProcessed++;
     }
-    
-    LOGI("Chunks processed: %d, updated: %d, skipped (culling): %d", 
-         chunksProcessed, chunksUpdated, chunksSkipped);
+
+    if (chunksEnqueued > 0) {
+        LOGI("Chunks processed: %d, enqueued: %d, skipped: %d",
+             chunksProcessed, chunksEnqueued, chunksSkipped);
+    }
+
+    return chunksEnqueued >= MAX_ENQUEUE_PER_CALL;
 }
 
 void GLRenderer::markChunkForUpdate(int chunkX, int chunkZ) {
     uint64_t chunkKey = ((uint64_t)(chunkX & 0xFFFFFFFF) << 32) | (chunkZ & 0xFFFFFFFF);
+    std::lock_guard<std::mutex> lock(cacheMutex);
     auto it = chunkRenderCache.find(chunkKey);
     if (it != chunkRenderCache.end()) {
         it->second.needsUpdate = true;
-        LOGI("Marked chunk (%d, %d) for update", chunkX, chunkZ);
+    }
+}
+
+// ===== 工作线程：离线网格生成，不阻塞渲染线程 =====
+
+void GLRenderer::startWorker() {
+    workerRunning = true;
+    meshWorker = std::thread(&GLRenderer::workerLoop, this);
+}
+
+void GLRenderer::stopWorker() {
+    {
+        std::lock_guard<std::mutex> lock(workMutex);
+        workerRunning = false;
+    }
+    workCV.notify_one();
+    if (meshWorker.joinable()) {
+        meshWorker.join();
+    }
+}
+
+void GLRenderer::enqueueWork(ChunkWorkItem item) {
+    {
+        std::lock_guard<std::mutex> lock(workMutex);
+        workQueue.push(std::move(item));
+    }
+    workCV.notify_one();
+}
+
+void GLRenderer::workerLoop() {
+    LOGI("Mesh worker thread started");
+
+    while (workerRunning) {
+        ChunkWorkItem item;
+        {
+            std::unique_lock<std::mutex> lock(workMutex);
+            workCV.wait(lock, [this]() {
+                return !workQueue.empty() || !workerRunning;
+            });
+
+            if (!workerRunning) break;
+
+            item = workQueue.front();
+            workQueue.pop();
+        }
+
+        // 在工作线程中生成网格（CPU 密集，不涉及 OpenGL）
+        // shared_ptr 确保区块在工作期间不会被网络线程卸载
+        auto chunk = chunkManager ? chunkManager->getChunk(item.chunkX, item.chunkZ) : nullptr;
+        if (!chunk || !chunk->isLoaded) {
+            // 区块不存在，从 pending 中移除
+            std::lock_guard<std::mutex> lock(pendingMutex);
+            pendingChunks.erase(item.chunkKey);
+            continue;
+        }
+
+        std::vector<Vertex> vertices;
+        std::vector<uint32_t> indices;
+
+        for (size_t sectionIdx = 0; sectionIdx < chunk->sections.size(); ++sectionIdx) {
+            const auto& section = chunk->sections[sectionIdx];
+            if (!section || section->isEmpty) continue;
+
+            auto [sectionVertices, sectionIndices] = MeshGenerator::generateSectionMesh(
+                *section, item.chunkX, section->y, item.chunkZ, chunkManager);
+
+            uint32_t vertexOffset = static_cast<uint32_t>(vertices.size());
+            for (uint32_t idx : sectionIndices) {
+                indices.push_back(vertexOffset + idx);
+            }
+            vertices.insert(vertices.end(), sectionVertices.begin(), sectionVertices.end());
+        }
+
+        // 推入完成队列
+        ChunkMeshResult result;
+        result.chunkKey = item.chunkKey;
+        result.vertices = std::move(vertices);
+        result.indices = std::move(indices);
+
+        {
+            std::lock_guard<std::mutex> lock(resultMutex);
+            resultQueue.push(std::move(result));
+        }
+    }
+
+    LOGI("Mesh worker thread stopped");
+}
+
+void GLRenderer::processCompletedWork() {
+    // 取出所有已完成的网格结果，上传到 GPU
+    std::queue<ChunkMeshResult> localResults;
+    {
+        std::lock_guard<std::mutex> lock(resultMutex);
+        localResults.swap(resultQueue);
+    }
+
+    while (!localResults.empty()) {
+        auto& result = localResults.front();
+
+        // 找到对应的缓存条目，上传数据
+        {
+            std::lock_guard<std::mutex> lock(cacheMutex);
+            auto it = chunkRenderCache.find(result.chunkKey);
+            if (it != chunkRenderCache.end()) {
+                auto& renderData = it->second;
+
+                glBindBuffer(GL_ARRAY_BUFFER, renderData.vbo);
+                glBufferData(GL_ARRAY_BUFFER, result.vertices.size() * sizeof(Vertex),
+                            result.vertices.data(), GL_STATIC_DRAW);
+
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderData.ebo);
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, result.indices.size() * sizeof(uint32_t),
+                            result.indices.data(), GL_STATIC_DRAW);
+
+                renderData.vertexCount = static_cast<uint32_t>(result.vertices.size());
+                renderData.indexCount = static_cast<uint32_t>(result.indices.size());
+                renderData.needsUpdate = false;
+                renderData.pending = false;
+            }
+        }
+
+        // 从 pending 集合中移除
+        {
+            std::lock_guard<std::mutex> lock(pendingMutex);
+            pendingChunks.erase(result.chunkKey);
+        }
+
+        localResults.pop();
     }
 }
 
@@ -528,7 +628,7 @@ void GLRenderer::addBlockToMesh(std::vector<Vertex>& vertices,
 void GLRenderer::addBlock(int x, int y, int z) {
     BlockPosition pos = {x, y, z};
     blocks[pos] = true;
-    rebuildMeshFromChunks();
+    needRebuildMesh = true;
     LOGI("Added block at (%d, %d, %d)", x, y, z);
 }
 
@@ -537,7 +637,7 @@ void GLRenderer::removeBlock(int x, int y, int z) {
     auto it = blocks.find(pos);
     if (it != blocks.end()) {
         blocks.erase(it);
-        rebuildMeshFromChunks();
+        needRebuildMesh = true;
         LOGI("Removed block at (%d, %d, %d)", x, y, z);
     }
 }
@@ -606,10 +706,12 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         return;
     }
 
-    // 如果需要重建网格，在渲染线程中执行
+    // 处理工作线程完成的网格结果（每帧优先上传）
+    processCompletedWork();
+
+    // 如果需要重建网格，在渲染线程中入队新任务
     if (needRebuildMesh) {
-        rebuildMeshFromChunks();
-        needRebuildMesh = false;
+        needRebuildMesh = rebuildMeshFromChunks();
     }
 
     glClearColor(0.53f, 0.81f, 0.92f, 1.0f);
@@ -655,7 +757,9 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     // ===== 合批渲染所有可见区块 =====
     int chunksRendered = 0;
     int totalTriangles = 0;
-    
+
+    // 加锁保护 chunkRenderCache，防止网络线程的 markChunkForUpdate 并发修改
+    std::lock_guard<std::mutex> renderLock(cacheMutex);
     for (auto& [chunkKey, renderData] : chunkRenderCache) {
         if (!renderData.visible || renderData.indexCount == 0) {
             continue;
@@ -699,6 +803,23 @@ void GLRenderer::recreateSurface(int width, int height) {
 }
 
 void GLRenderer::cleanup() {
+    // 先停止工作线程
+    stopWorker();
+
+    // 清空工作队列
+    {
+        std::lock_guard<std::mutex> lock(workMutex);
+        while (!workQueue.empty()) workQueue.pop();
+    }
+    {
+        std::lock_guard<std::mutex> lock(resultMutex);
+        while (!resultQueue.empty()) resultQueue.pop();
+    }
+    {
+        std::lock_guard<std::mutex> lock(pendingMutex);
+        pendingChunks.clear();
+    }
+
     // 清理纹理数组
     if (textureArrayID != 0) {
         glDeleteTextures(1, &textureArrayID);

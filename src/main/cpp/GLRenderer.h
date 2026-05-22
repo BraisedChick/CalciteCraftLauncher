@@ -11,6 +11,12 @@
 #include <cmath>
 #include <map>
 #include <memory>
+#include <mutex>
+#include <thread>
+#include <queue>
+#include <condition_variable>
+#include <atomic>
+#include <unordered_set>
 
 // 添加 GLM 库
 #define GLM_FORCE_RADIANS
@@ -62,13 +68,46 @@ public:
     // 设置 ChunkManager 引用
     void setChunkManager(ChunkManager* manager);
 
-    // 从区块数据重建网格
-    void rebuildMeshFromChunks();
+    // 从区块数据重建网格，返回 true 表示还有更多区块需要处理
+    bool rebuildMeshFromChunks();
     
     // 标记指定区块需要更新
     void markChunkForUpdate(int chunkX, int chunkZ);
 
 private:
+    // ===== 工作线程（离线网格生成）=====
+    struct ChunkWorkItem {
+        uint64_t chunkKey;
+        int chunkX;
+        int chunkZ;
+    };
+
+    struct ChunkMeshResult {
+        uint64_t chunkKey;
+        std::vector<Vertex> vertices;
+        std::vector<uint32_t> indices;
+    };
+
+    void workerLoop();
+    void startWorker();
+    void stopWorker();
+    void enqueueWork(ChunkWorkItem item);
+    void processCompletedWork();
+
+    // 工作线程
+    std::thread meshWorker;
+    std::mutex workMutex;
+    std::condition_variable workCV;
+    std::queue<ChunkWorkItem> workQueue;
+    bool workerRunning = false;
+
+    // 完成结果队列（worker→render 线程）
+    std::mutex resultMutex;
+    std::queue<ChunkMeshResult> resultQueue;
+
+    // 避免重复入队同一区块
+    std::unordered_set<uint64_t> pendingChunks;
+    std::mutex pendingMutex;
     bool createEGLContext(ANativeWindow* window);
     bool createShaders();
     bool createBuffers();
@@ -127,10 +166,12 @@ private:
         glm::vec3 position;      // 区块世界坐标
         bool visible = true;     // 是否在视锥体内
         bool needsUpdate = false; // 是否需要重建
+        bool pending = false;    // 是否已在工作队列中
     };
     
     // 缓存每个区块的渲染数据 (key: chunkX << 16 | chunkZ)
     std::unordered_map<uint64_t, ChunkRenderData> chunkRenderCache;
+    std::mutex cacheMutex;  // 保护 chunkRenderCache 的线程安全
     
     // 视锥体参数
     float fov = 70.0f;
