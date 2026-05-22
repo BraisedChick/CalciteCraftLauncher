@@ -86,7 +86,7 @@ static void renderLoop() {
         auto currentTime = std::chrono::high_resolution_clock::now();
         float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
         lastTime = currentTime;
-        
+
         // 更新摄像机（每帧）
         CameraController::getInstance().update(deltaTime);
 
@@ -123,7 +123,7 @@ Java_com_minecraft_MainActivity_initRenderer(
         // 从 assets 目录加载 blocks.json
         std::string blocksJsonPath = "/data/data/com.minecraft/files/blocks.json";
         JNI_LOGI("Loading BlockRegistry from: %s", blocksJsonPath.c_str());
-        
+
         if (BlockRegistry::getInstance().loadFromJson(blocksJsonPath)) {
             JNI_LOGI("BlockRegistry loaded successfully: %zu blocks",
                      BlockRegistry::getInstance().getBlockCount());
@@ -187,7 +187,7 @@ Java_com_minecraft_MainActivity_initRenderer(
             g_glRenderer->setChunkManager(g_engine->getChunkManager());
             g_engine->setRenderer(g_glRenderer);
             JNI_LOGI("ChunkManager and renderer linked");
-            
+
             // 如果已经收到玩家位置，将摄像机传送到玩家位置
             if (g_engine->hasPlayerPosition()) {
                 float playerX = static_cast<float>(g_engine->getPlayerX());
@@ -195,10 +195,10 @@ Java_com_minecraft_MainActivity_initRenderer(
                 float playerZ = static_cast<float>(g_engine->getPlayerZ());
                 float playerYaw = g_engine->getYaw();
                 float playerPitch = g_engine->getPitch();
-                
+
                 CameraController::getInstance().setPosition(playerX, playerY, playerZ);
                 CameraController::getInstance().setRotation(playerPitch, playerYaw);
-                
+
                 JNI_LOGI("Camera teleported to player position: (%.2f, %.2f, %.2f), yaw=%.2f, pitch=%.2f",
                          playerX, playerY, playerZ, playerYaw, playerPitch);
             } else {
@@ -288,7 +288,7 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_minecraft_MainActivity_setKeyState(
         JNIEnv* env, jobject thiz,
         jint key, jboolean pressed) {
-    
+
     CameraController::getInstance().setKeyState((int)key, (bool)pressed);
 }
 
@@ -296,7 +296,7 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_minecraft_MainActivity_setJoystickInput(
         JNIEnv* env, jobject thiz,
         jfloat dx, jfloat dy) {
-    
+
     CameraController::getInstance().setJoystickInput((float)dx, (float)dy);
 }
 
@@ -365,9 +365,9 @@ Java_com_minecraft_MainActivity_setProtocolVersion(
 
     int protocolVersion = (int)version;
     VersionManager::getInstance().setProtocolVersion(protocolVersion);
-    
-    JNI_LOGI("Protocol version set to: %d (%s)", 
-             protocolVersion, 
+
+    JNI_LOGI("Protocol version set to: %d (%s)",
+             protocolVersion,
              VersionManager::getInstance().getVersionName().c_str());
 }
 
