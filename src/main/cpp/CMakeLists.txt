@@ -35,6 +35,7 @@ set(SOURCES
     MeshGenerator.cpp
     TextureLoader.cpp
     BlockRegistry.cpp
+    CameraController.cpp
 )
 
 add_library(minecraftclient SHARED ${SOURCES})

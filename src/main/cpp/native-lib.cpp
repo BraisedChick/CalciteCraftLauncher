@@ -13,6 +13,7 @@
 #include "TextureLoader.h"
 #include "MinecraftVersion.h"
 #include "BlockRegistry.h"
+#include "CameraController.h"
 
 #define JNI_LOG_TAG "JNI"
 #define JNI_LOGI(...) __android_log_print(ANDROID_LOG_INFO, JNI_LOG_TAG, __VA_ARGS__)
@@ -31,13 +32,6 @@ static bool g_cameraSyncedToPlayer = false;  // 标记摄像机是否已同步�
 // Java 虚拟机和对象引用，用于回调
 static JavaVM* g_jvm = nullptr;
 static jobject g_mainActivityObj = nullptr;
-
-// 摄像机状态
-static float g_cameraX = 0.0f;
-static float g_cameraY = 8.0f;
-static float g_cameraZ = 15.0f;
-static float g_pitch = -0.5f;  // 向下看约 30 度
-static float g_yaw = 0.0f;
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_minecraft_MainActivity_connectToServer(
@@ -84,18 +78,32 @@ static void renderLoop() {
     }
 
     int frameCount = 0;
+    auto lastTime = std::chrono::high_resolution_clock::now();
 
     while (g_rendering) {
         frameCount++;
+
+        // 计算 delta time
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
+        lastTime = currentTime;
+        
+        // 更新摄像机（每帧）
+        CameraController::getInstance().update(deltaTime);
 
         if (frameCount <= 5 || frameCount % 60 == 0) {
             JNI_LOGI("Rendering frame %d", frameCount);
         }
 
+        // 从 CameraController 获取摄像机数据
+        auto pos = CameraController::getInstance().getPosition();
+        float pitch = CameraController::getInstance().getPitch();
+        float yaw = CameraController::getInstance().getYaw();
+
         if (g_glRenderer) {
-            g_glRenderer->render(g_cameraX, g_cameraY, g_cameraZ, g_pitch, g_yaw);
+            g_glRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
         } else if (g_useVulkan && g_vulkanRenderer) {
-            g_vulkanRenderer->render(g_cameraX, g_cameraY, g_cameraZ, g_pitch, g_yaw);
+            g_vulkanRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
@@ -183,14 +191,18 @@ Java_com_minecraft_MainActivity_initRenderer(
             
             // 如果已经收到玩家位置且尚未同步，将摄像机传送到玩家位置
             if (!g_cameraSyncedToPlayer && g_engine->hasPlayerPosition()) {
-                g_cameraX = static_cast<float>(g_engine->getPlayerX());
-                g_cameraY = static_cast<float>(g_engine->getPlayerY());
-                g_cameraZ = static_cast<float>(g_engine->getPlayerZ());
-                g_yaw = g_engine->getYaw();
-                g_pitch = g_engine->getPitch();
+                float playerX = static_cast<float>(g_engine->getPlayerX());
+                float playerY = static_cast<float>(g_engine->getPlayerY());
+                float playerZ = static_cast<float>(g_engine->getPlayerZ());
+                float playerYaw = g_engine->getYaw();
+                float playerPitch = g_engine->getPitch();
+                
+                CameraController::getInstance().setPosition(playerX, playerY, playerZ);
+                CameraController::getInstance().setRotation(playerPitch, playerYaw);
+                
                 g_cameraSyncedToPlayer = true;
                 JNI_LOGI("Camera teleported to player position: (%.2f, %.2f, %.2f), yaw=%.2f, pitch=%.2f",
-                         g_cameraX, g_cameraY, g_cameraZ, g_yaw, g_pitch);
+                         playerX, playerY, playerZ, playerYaw, playerPitch);
             } else if (g_cameraSyncedToPlayer) {
                 JNI_LOGI("Camera already synced to player, keeping current position");
             } else {
@@ -223,10 +235,15 @@ Java_com_minecraft_MainActivity_renderFrame(
         return;
     }
 
+    // 从 CameraController 获取摄像机数据
+    auto pos = CameraController::getInstance().getPosition();
+    float pitch = CameraController::getInstance().getPitch();
+    float yaw = CameraController::getInstance().getYaw();
+
     if (g_useVulkan && g_vulkanRenderer) {
-        g_vulkanRenderer->render(g_cameraX, g_cameraY, g_cameraZ, g_pitch, g_yaw);
+        g_vulkanRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
     } else if (g_glRenderer) {
-        g_glRenderer->render(g_cameraX, g_cameraY, g_cameraZ, g_pitch, g_yaw);
+        g_glRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
     }
 }
 
@@ -260,32 +277,23 @@ Java_com_minecraft_MainActivity_cleanupRenderer(
     JNI_LOGI("Cleanup completed");
 }
 
-extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_setCameraPosition(
-        JNIEnv* env, jobject thiz,
-        jfloat x, jfloat y, jfloat z,
-        jfloat pitch, jfloat yaw) {
-
-    g_cameraX = x;
-    g_cameraY = y;
-    g_cameraZ = z;
-    g_pitch = pitch;
-    g_yaw = yaw;
-}
-
 // 从 ClientEngine 同步摄像机位置到玩家位置
 extern "C" JNIEXPORT void JNICALL
 Java_com_minecraft_MainActivity_syncCameraToPlayer(
         JNIEnv* env, jobject thiz) {
     
     if (g_engine && g_engine->hasPlayerPosition()) {
-        g_cameraX = static_cast<float>(g_engine->getPlayerX());
-        g_cameraY = static_cast<float>(g_engine->getPlayerY());
-        g_cameraZ = static_cast<float>(g_engine->getPlayerZ());
-        g_yaw = g_engine->getYaw();
-        g_pitch = g_engine->getPitch();
+        float playerX = static_cast<float>(g_engine->getPlayerX());
+        float playerY = static_cast<float>(g_engine->getPlayerY());
+        float playerZ = static_cast<float>(g_engine->getPlayerZ());
+        float playerYaw = g_engine->getYaw();
+        float playerPitch = g_engine->getPitch();
+        
+        CameraController::getInstance().setPosition(playerX, playerY, playerZ);
+        CameraController::getInstance().setRotation(playerPitch, playerYaw);
+        
         JNI_LOGI("Camera synced to player: (%.2f, %.2f, %.2f), yaw=%.2f, pitch=%.2f",
-                 g_cameraX, g_cameraY, g_cameraZ, g_yaw, g_pitch);
+                 playerX, playerY, playerZ, playerYaw, playerPitch);
     } else {
         JNI_LOGE("Cannot sync camera: engine=%p, hasPosition=%s",
                  g_engine, g_engine ? (g_engine->hasPlayerPosition() ? "true" : "false") : "N/A");
@@ -300,14 +308,16 @@ void syncCameraToPlayerPosition(double x, double y, double z, float yaw, float p
         return;
     }
     
-    g_cameraX = static_cast<float>(x);
-    g_cameraY = static_cast<float>(y);
-    g_cameraZ = static_cast<float>(z);
-    g_yaw = yaw;
-    g_pitch = pitch;
+    float playerX = static_cast<float>(x);
+    float playerY = static_cast<float>(y);
+    float playerZ = static_cast<float>(z);
+    
+    CameraController::getInstance().setPosition(playerX, playerY, playerZ);
+    CameraController::getInstance().setRotation(pitch, yaw);
+    
     g_cameraSyncedToPlayer = true;
     JNI_LOGI("[AutoSync] Camera synced to player: (%.2f, %.2f, %.2f), yaw=%.2f, pitch=%.2f",
-             g_cameraX, g_cameraY, g_cameraZ, g_yaw, g_pitch);
+             playerX, playerY, playerZ, yaw, pitch);
     
     // 同步 Java 层的摄像机位置
     if (g_jvm && g_mainActivityObj) {
@@ -334,7 +344,7 @@ void syncCameraToPlayerPosition(double x, double y, double z, float yaw, float p
         
         if (methodId) {
             env->CallVoidMethod(g_mainActivityObj, methodId, 
-                               static_cast<float>(x), static_cast<float>(y), static_cast<float>(z),
+                               playerX, playerY, playerZ,
                                yaw, pitch);
             JNI_LOGI("Called updateJavaCameraPosition on Java side");
         } else {
@@ -355,8 +365,37 @@ Java_com_minecraft_MainActivity_updateCameraAngle(
         JNIEnv* env, jobject thiz,
         jfloat pitch, jfloat yaw) {
 
-    g_pitch = pitch;
-    g_yaw = yaw;
+    // 直接更新 CameraController 的旋转
+    CameraController::getInstance().setRotation(pitch, yaw);
+}
+
+// ===== 新的输入控制接口 =====
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_minecraft_MainActivity_setKeyState(
+        JNIEnv* env, jobject thiz,
+        jint key, jboolean pressed) {
+    
+    CameraController::getInstance().setKeyState((int)key, (bool)pressed);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_minecraft_MainActivity_setJoystickInput(
+        JNIEnv* env, jobject thiz,
+        jfloat dx, jfloat dy) {
+    
+    CameraController::getInstance().setJoystickInput((float)dx, (float)dy);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_minecraft_MainActivity_setCameraPosition(
+        JNIEnv* env, jobject thiz,
+        jfloat x, jfloat y, jfloat z,
+        jfloat pitch, jfloat yaw) {
+
+    // 设置初始位置（只在初始化时调用一次）
+    CameraController::getInstance().setPosition(x, y, z);
+    CameraController::getInstance().setRotation(pitch, yaw);
 }
 
 extern "C" JNIEXPORT void JNICALL
