@@ -6,6 +6,7 @@
 #include <cstddef>  // for offsetof
 #include "TextureLoader.h"
 #include "MeshGenerator.h"
+#include "TextureAtlas.h"
 
 #define LOG_TAG "GLRenderer"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -19,13 +20,13 @@ void GLRenderer::setAssetManager(AAssetManager* assetManager) {
 }
 
 void GLRenderer::setChunkManager(ChunkManager* manager) {
-    chunkManager = manager;
+    chunkManager.store(manager);
 
     // 标记需要重建网格，在渲染线程中执行
     // 注意：不要遍历旧缓存设置 needsUpdate = true，
     // 新区块在 rebuildMeshFromChunks 中创建时已经自动标记了 needsUpdate
     if (manager && display != EGL_NO_DISPLAY) {
-        needRebuildMesh = true;
+        needRebuildMesh.store(true);
     }
 }
 
@@ -73,68 +74,70 @@ bool GLRenderer::initialize(ANativeWindow* window) {
 
     // 加载纹理到纹理数组
     LOGI("Loading textures to texture array...");
-    
-    // 定义需要加载的纹理列表
-    struct TextureEntry {
-        const char* filename;
-        int blockState;  // 对应的 blockState ID
-    };
-    
-    std::vector<TextureEntry> textureList = {
-        {"grass_top.png", 2},    // 草方块顶部
-        {"grass_side.png", 2},   // 草方块侧面
-        {"dirt.png", 3},         // 泥土
-        // 未来可以继续添加：
-        // {"stone.png", 4},
-        // {"sand.png", 5},
-        // ...
-    };
-    
-    int textureCount = textureList.size();
-    
-    // 加载第一个纹理获取尺寸
-    TextureData firstTex = TextureLoader::loadImage(textureList[0].filename);
-    if (!firstTex.data) {
-        LOGE("Failed to load first texture!");
-        return false;
+
+    int textureCount = TEXTURE_LAYER_COUNT;
+    int texWidth = 16;
+    int texHeight = 16;
+
+    // 先尝试加载第一个纹理获取尺寸
+    {
+        TextureData firstTex = TextureLoader::loadImage(getTextureFileName(0));
+        if (firstTex.data) {
+            texWidth = firstTex.width;
+            texHeight = firstTex.height;
+        } else {
+            LOGW("No texture files found at all, using 16x16 placeholder textures");
+        }
     }
-    
-    int texWidth = firstTex.width;
-    int texHeight = firstTex.height;
-    
+
     // 创建 2D 纹理数组
     glGenTextures(1, &textureArrayID);
     glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayID);
-    
+
     // 分配存储空间
-    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA, 
-                 texWidth, texHeight, textureCount, 
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA,
+                 texWidth, texHeight, textureCount,
                  0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    
+
     // 加载每个纹理到对应的层
     for (int i = 0; i < textureCount; i++) {
-        TextureData texData = TextureLoader::loadImage(textureList[i].filename);
+        std::string filename = getTextureFileName(i);
+        TextureData texData = TextureLoader::loadImage(filename);
         if (texData.data) {
-            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 
+            // 纹理文件加载成功，上传到 GPU
+            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0,
                            0, 0, i,  // x, y, layer
-                           texWidth, texHeight, 1, 
-                           GL_RGBA, GL_UNSIGNED_BYTE, 
+                           texWidth, texHeight, 1,
+                           GL_RGBA, GL_UNSIGNED_BYTE,
                            texData.data);
-            LOGI("Loaded texture %d: %s (layer %d)", 
-                 i, textureList[i].filename, i);
+            LOGI("Loaded texture %d: %s (layer %d)", i, filename.c_str(), i);
         } else {
-            LOGE("Failed to load texture: %s", textureList[i].filename);
+            // 纹理文件不存在，生成纯色占位纹理
+            LOGW("Texture not found: %s, using placeholder color for layer %d", filename.c_str(), i);
+            uint8_t r, g, b;
+            getPlaceholderColor(i, r, g, b);
+
+            std::vector<uint8_t> placeholder(texWidth * texHeight * 4);
+            for (int p = 0; p < texWidth * texHeight; p++) {
+                placeholder[p * 4 + 0] = r;
+                placeholder[p * 4 + 1] = g;
+                placeholder[p * 4 + 2] = b;
+                placeholder[p * 4 + 3] = 255;
+            }
+
+            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0,
+                           0, 0, i,
+                           texWidth, texHeight, 1,
+                           GL_RGBA, GL_UNSIGNED_BYTE,
+                           placeholder.data());
         }
     }
-    
-    // 设置纹理参数
+
+    // 设置纹理参数（必须设置，默认 GL_NEAREST_MIPMAP_LINEAR 在没有 mipmap 时会显示黑色）
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    
-    LOGI("Texture array created: %dx%d, %d layers", 
-         texWidth, texHeight, textureCount);
 
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
@@ -346,12 +349,14 @@ bool GLRenderer::createBuffers() {
 }
 
 bool GLRenderer::rebuildMeshFromChunks() {
-    if (!chunkManager) {
+    auto* mgr = chunkManager.load();
+    if (!mgr) {
         LOGW("ChunkManager not set!");
         return false;
     }
 
-    auto allChunks = chunkManager->getAllChunks();
+    auto allChunks = mgr->getAllChunks();
+    LOGI("rebuildMeshFromChunks: got %zu chunks from ChunkManager", allChunks.size());
 
     int chunksProcessed = 0;
     int chunksSkipped = 0;
@@ -490,7 +495,8 @@ void GLRenderer::workerLoop() {
 
         // 在工作线程中生成网格（CPU 密集，不涉及 OpenGL）
         // shared_ptr 确保区块在工作期间不会被网络线程卸载
-        auto chunk = chunkManager ? chunkManager->getChunk(item.chunkX, item.chunkZ) : nullptr;
+        auto* mgr = chunkManager.load();
+        auto chunk = mgr ? mgr->getChunk(item.chunkX, item.chunkZ) : nullptr;
         if (!chunk || !chunk->isLoaded) {
             // 区块不存在，从 pending 中移除
             std::lock_guard<std::mutex> lock(pendingMutex);

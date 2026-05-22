@@ -147,9 +147,9 @@ private:
 
     static AAssetManager* g_assetManager;
 
-    // 区块管理
-    ChunkManager* chunkManager = nullptr;
-    bool needRebuildMesh = false;  // 标记是否需要重建网格
+    // 区块管理（原子指针，跨线程安全）
+    std::atomic<ChunkManager*> chunkManager{nullptr};
+    std::atomic<bool> needRebuildMesh{false};  // 标记是否需要重建网格
 
     // 手动放置的方块
     std::map<BlockPosition, bool> blocks;

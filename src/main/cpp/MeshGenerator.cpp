@@ -1,5 +1,6 @@
 #include "MeshGenerator.h"
 #include "BlockRegistry.h"
+#include "TextureAtlas.h"
 #include <android/log.h>
 #include <map>
 #include <string>
@@ -172,7 +173,10 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateSec
                 }
                 
                 blocksRendered++;
-                
+
+                // 查询方块纹理配置（各面的纹理层索引）
+                BlockTextureConfig tex = getBlockTexture(blockState);
+
                 // 计算方块的绝对坐标
                 float posX = baseX + x;
                 float posY = baseY + localY;
@@ -184,7 +188,7 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateSec
                 
                 // 上面 (y+) - 如果上方是空气则渲染
                 if (isAir(x, localY + 1, z)) {
-                    float texIndex = 0.0f;  // 顶部使用 layer 0（grass_top）
+                    float texIndex = static_cast<float>(tex.top);
                     texIndexCount[0]++;  // 统计 layer 0
                     
                     // 调试日志：TOP 面
@@ -208,8 +212,8 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateSec
                 
                 // 下面 (y-) - 如果下方是空气则渲染
                 if (isAir(x, localY - 1, z)) {
-                    // 所有方块的底部都使用 layer 2（dirt）
-                    float texIndex = 2.0f;
+                    // 根据方块纹理配置查询底面纹理
+                    float texIndex = static_cast<float>(tex.bottom);
                     
                     // 统计 texIndex
                     texIndexCount[2]++;
@@ -236,8 +240,7 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateSec
                 
                 // 前面 (z+) - 如果前方是空气则渲染
                 if (isAir(x, localY, z + 1)) {
-                    // 所有方块的侧面都使用 layer 1（grass_side）
-                    float texIndex = 1.0f;
+                    float texIndex = static_cast<float>(tex.side);
                     
                     // 统计 texIndex
                     texIndexCount[1]++;
@@ -264,8 +267,7 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateSec
                 
                 // 后面 (z-) - 如果后方是空气则渲染
                 if (isAir(x, localY, z - 1)) {
-                    // 所有方块的侧面都使用 layer 1（grass_side）
-                    float texIndex = 1.0f;
+                    float texIndex = static_cast<float>(tex.side);
                     
                     // 统计 texIndex
                     texIndexCount[1]++;
@@ -287,8 +289,7 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateSec
                 
                 // 右面 (x+) - 如果右方是空气则渲染
                 if (isAir(x + 1, localY, z)) {
-                    // 所有方块的侧面都使用 layer 1（grass_side）
-                    float texIndex = 1.0f;
+                    float texIndex = static_cast<float>(tex.side);
                     
                     // 统计 texIndex
                     texIndexCount[1]++;
@@ -310,8 +311,7 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateSec
                 
                 // 左面 (x-) - 如果左方是空气则渲染
                 if (isAir(x - 1, localY, z)) {
-                    // 所有方块的侧面都使用 layer 1（grass_side）
-                    float texIndex = 1.0f;
+                    float texIndex = static_cast<float>(tex.side);
                     
                     // 统计 texIndex
                     texIndexCount[1]++;
