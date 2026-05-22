@@ -27,7 +27,6 @@ static ClientEngine* g_engine = nullptr;
 static bool g_initialized = false;
 static std::atomic<bool> g_rendering(false);
 static std::thread g_renderThread;
-static bool g_cameraSyncedToPlayer = false;  // 标记摄像机是否已同步到玩家位置
 
 // Java 虚拟机和对象引用，用于回调
 static JavaVM* g_jvm = nullptr;
@@ -189,8 +188,8 @@ Java_com_minecraft_MainActivity_initRenderer(
             g_engine->setRenderer(g_glRenderer);
             JNI_LOGI("ChunkManager and renderer linked");
             
-            // 如果已经收到玩家位置且尚未同步，将摄像机传送到玩家位置
-            if (!g_cameraSyncedToPlayer && g_engine->hasPlayerPosition()) {
+            // 如果已经收到玩家位置，将摄像机传送到玩家位置
+            if (g_engine->hasPlayerPosition()) {
                 float playerX = static_cast<float>(g_engine->getPlayerX());
                 float playerY = static_cast<float>(g_engine->getPlayerY());
                 float playerZ = static_cast<float>(g_engine->getPlayerZ());
@@ -200,11 +199,8 @@ Java_com_minecraft_MainActivity_initRenderer(
                 CameraController::getInstance().setPosition(playerX, playerY, playerZ);
                 CameraController::getInstance().setRotation(playerPitch, playerYaw);
                 
-                g_cameraSyncedToPlayer = true;
                 JNI_LOGI("Camera teleported to player position: (%.2f, %.2f, %.2f), yaw=%.2f, pitch=%.2f",
                          playerX, playerY, playerZ, playerYaw, playerPitch);
-            } else if (g_cameraSyncedToPlayer) {
-                JNI_LOGI("Camera already synced to player, keeping current position");
             } else {
                 JNI_LOGI("Player position not received yet, using default camera position");
             }
@@ -275,89 +271,6 @@ Java_com_minecraft_MainActivity_cleanupRenderer(
 
     g_initialized = false;
     JNI_LOGI("Cleanup completed");
-}
-
-// 从 ClientEngine 同步摄像机位置到玩家位置
-extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_syncCameraToPlayer(
-        JNIEnv* env, jobject thiz) {
-    
-    if (g_engine && g_engine->hasPlayerPosition()) {
-        float playerX = static_cast<float>(g_engine->getPlayerX());
-        float playerY = static_cast<float>(g_engine->getPlayerY());
-        float playerZ = static_cast<float>(g_engine->getPlayerZ());
-        float playerYaw = g_engine->getYaw();
-        float playerPitch = g_engine->getPitch();
-        
-        CameraController::getInstance().setPosition(playerX, playerY, playerZ);
-        CameraController::getInstance().setRotation(playerPitch, playerYaw);
-        
-        JNI_LOGI("Camera synced to player: (%.2f, %.2f, %.2f), yaw=%.2f, pitch=%.2f",
-                 playerX, playerY, playerZ, playerYaw, playerPitch);
-    } else {
-        JNI_LOGE("Cannot sync camera: engine=%p, hasPosition=%s",
-                 g_engine, g_engine ? (g_engine->hasPlayerPosition() ? "true" : "false") : "N/A");
-    }
-}
-
-// 供 ClientEngine 调用的内部函数（自动同步）
-void syncCameraToPlayerPosition(double x, double y, double z, float yaw, float pitch) {
-    // 只同步一次
-    if (g_cameraSyncedToPlayer) {
-        JNI_LOGI("[AutoSync] Camera already synced, skipping");
-        return;
-    }
-    
-    float playerX = static_cast<float>(x);
-    float playerY = static_cast<float>(y);
-    float playerZ = static_cast<float>(z);
-    
-    CameraController::getInstance().setPosition(playerX, playerY, playerZ);
-    CameraController::getInstance().setRotation(pitch, yaw);
-    
-    g_cameraSyncedToPlayer = true;
-    JNI_LOGI("[AutoSync] Camera synced to player: (%.2f, %.2f, %.2f), yaw=%.2f, pitch=%.2f",
-             playerX, playerY, playerZ, yaw, pitch);
-    
-    // 同步 Java 层的摄像机位置
-    if (g_jvm && g_mainActivityObj) {
-        JNIEnv* env = nullptr;
-        bool needDetach = false;
-        
-        // 获取 JNIEnv
-        int status = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
-        if (status == JNI_EDETACHED) {
-            if (g_jvm->AttachCurrentThread(&env, nullptr) == JNI_OK) {
-                needDetach = true;
-            } else {
-                JNI_LOGE("Failed to attach current thread");
-                return;
-            }
-        } else if (status != JNI_OK) {
-            JNI_LOGE("Failed to get JNIEnv");
-            return;
-        }
-        
-        // 获取 MainActivity 类和方法 ID
-        jclass clazz = env->GetObjectClass(g_mainActivityObj);
-        jmethodID methodId = env->GetMethodID(clazz, "updateJavaCameraPosition", "(FFFFF)V");
-        
-        if (methodId) {
-            env->CallVoidMethod(g_mainActivityObj, methodId, 
-                               playerX, playerY, playerZ,
-                               yaw, pitch);
-            JNI_LOGI("Called updateJavaCameraPosition on Java side");
-        } else {
-            JNI_LOGE("Failed to find updateJavaCameraPosition method");
-        }
-        
-        // 分离线程（如果需要）
-        if (needDetach) {
-            g_jvm->DetachCurrentThread();
-        }
-    } else {
-        JNI_LOGI("g_jvm=%p, g_mainActivityObj=%p, cannot callback Java", g_jvm, g_mainActivityObj);
-    }
 }
 
 extern "C" JNIEXPORT void JNICALL

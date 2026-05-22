@@ -493,16 +493,10 @@ public class MainActivity extends Activity {
     private native void addBlock(int x, int y, int z);
     private native void removeBlock(int x, int y, int z);
     private native boolean connectToServer(String address, int port, String username);
-    private native void syncCameraToPlayer();  // 同步摄像机到玩家位置
     
     // 新的输入控制接口
     private native void setKeyState(int key, boolean pressed);  // 按键状态
     private native void setJoystickInput(float dx, float dy);   // 摇杆输入
-    
-    // 从 C++ 层获取玩家位置并更新 Java 层变量（仅用于调试）
-    public void updateJavaCameraPosition(float x, float y, float z, float yaw, float pitch) {
-        android.util.Log.i("MainActivity", "Camera synced from C++: (" + x + ", " + y + ", " + z + ")");
-    }
 
     private void saveConnectionInfo(String gameName, String serverIP, int port) {
         // 保留用于后续使用
