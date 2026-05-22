@@ -363,10 +363,10 @@ void syncCameraToPlayerPosition(double x, double y, double z, float yaw, float p
 extern "C" JNIEXPORT void JNICALL
 Java_com_minecraft_MainActivity_updateCameraAngle(
         JNIEnv* env, jobject thiz,
-        jfloat pitch, jfloat yaw) {
+        jfloat pitchDelta, jfloat yawDelta) {
 
-    // 直接更新 CameraController 的旋转
-    CameraController::getInstance().setRotation(pitch, yaw);
+    // 更新 CameraController 的旋转（相对变化量）
+    CameraController::getInstance().updateRotation(pitchDelta, yawDelta);
 }
 
 // ===== 新的输入控制接口 =====

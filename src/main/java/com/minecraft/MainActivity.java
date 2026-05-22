@@ -34,27 +34,17 @@ public class MainActivity extends Activity {
     private LinearLayout elevationButtons;
     private Button btnUp;
     private Button btnDown;
-    private boolean keyUp = false;
-    private boolean keyDown = false;
     private RendererSurfaceView rendererSurfaceView;
     private FrameLayout joystickContainer;
     private View joystickKnob;
 
-    // 摄像机控制
-    private float cameraX = -176.0f;  // 区块 (-11, *) 的中心: -11 * 16 + 8 = -168
-    private float cameraY = 65.0f;    // 高度 65（在渲染范围内）
-    private float cameraZ = -56.0f;   // 区块 (*, -4) 的中心: -4 * 16 + 8 = -56
-    private float pitch = -0.3f;      // 稍微向下看
-    private float yaw = 3.14159f;     // 面向原点 (PI)
-
-    // 移动速度
-    private float moveSpeed = 0.1f;
-
-    // 键盘控制状态
-    private boolean keyW = false;
-    private boolean keyS = false;
-    private boolean keyA = false;
-    private boolean keyD = false;
+    // 按键码常量（与 C++ CameraController.h 中的定义对应）
+    private static final int KEY_W = 0;
+    private static final int KEY_S = 1;
+    private static final int KEY_A = 2;
+    private static final int KEY_D = 3;
+    private static final int KEY_UP = 4;
+    private static final int KEY_DOWN = 5;
 
     // 摇杆控制
     private boolean isJoystickActive = false;
@@ -74,59 +64,8 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        if (!g_rendering) {
-            return super.onTouchEvent(event);
-        }
-
-        float x = event.getX();
-        float y = event.getY();
-
-        switch (event.getAction()) {
-            case MotionEvent.ACTION_DOWN:
-                lastTouchX = x;
-                lastTouchY = y;
-                isFirstTouch = true;
-                break;
-
-            case MotionEvent.ACTION_MOVE:
-                if (isFirstTouch) {
-                    isFirstTouch = false;
-                    lastTouchX = x;
-                    lastTouchY = y;
-                    break;
-                }
-
-                float deltaX = x - lastTouchX;
-                float deltaY = y - lastTouchY;
-
-                // 调整灵敏度
-                float sensitivity = 0.005f;
-
-                // 修复：向右滑动(deltaX > 0)应该让视角右转(yaw减小)
-                yaw -= deltaX * sensitivity;
-                pitch += deltaY * sensitivity;
-
-                // 限制俯仰角范围 (-89° 到 +89°)，避免万向节锁
-                float maxPitch = (float) Math.PI / 2.0f - 0.017f; // 约 89 度
-                if (pitch > maxPitch) pitch = maxPitch;
-                if (pitch < -maxPitch) pitch = -maxPitch;
-
-                // 规范化 yaw 角度到 [0, 2π)
-                yaw = yaw % (2.0f * (float) Math.PI);
-                if (yaw < 0) yaw += 2.0f * (float) Math.PI;
-
-                // 更新摄像机角度
-                updateCameraAngle(pitch, yaw);
-
-                lastTouchX = x;
-                lastTouchY = y;
-                break;
-
-            case MotionEvent.ACTION_UP:
-                break;
-        }
-
-        return true;
+        // 这个方法不再使用，触摸事件由 RendererSurfaceView 处理
+        return super.onTouchEvent(event);
     }
 
     @Override
@@ -224,11 +163,11 @@ public class MainActivity extends Activity {
             public boolean onTouch(View v, MotionEvent event) {
                 switch (event.getAction()) {
                     case MotionEvent.ACTION_DOWN:
-                        keyUp = true;
+                        setKeyState(KEY_UP, true);
                         return true;
                     case MotionEvent.ACTION_UP:
                     case MotionEvent.ACTION_CANCEL:
-                        keyUp = false;
+                        setKeyState(KEY_UP, false);
                         return true;
                 }
                 return false;
@@ -241,11 +180,11 @@ public class MainActivity extends Activity {
             public boolean onTouch(View v, MotionEvent event) {
                 switch (event.getAction()) {
                     case MotionEvent.ACTION_DOWN:
-                        keyDown = true;
+                        setKeyState(KEY_DOWN, true);
                         return true;
                     case MotionEvent.ACTION_UP:
                     case MotionEvent.ACTION_CANCEL:
-                        keyDown = false;
+                        setKeyState(KEY_DOWN, false);
                         return true;
                 }
                 return false;
@@ -271,17 +210,11 @@ public class MainActivity extends Activity {
                             float dx = x - lastTouchX;
                             float dy = y - lastTouchY;
 
-                            // 修复：向右滑动(dx > 0)应该让视角右转(yaw减小)
-                            yaw += dx * 0.005f;
-                            pitch += dy * 0.005f;
+                            // 计算角度变化并传递给 C++ 层
+                            float pitchDelta = dy * 0.005f;
+                            float yawDelta = dx * 0.005f;  // 向右滑动让视角右转
 
-                            // 限制俯仰角（万向节锁）
-                            float maxPitch = (float) Math.PI / 2.0f - 0.017f;
-                            if (pitch > maxPitch) pitch = maxPitch;
-                            if (pitch < -maxPitch) pitch = -maxPitch;
-
-                            // 只更新角度，不更新位置
-                            updateCameraAngle(pitch, yaw);
+                            updateCameraAngle(pitchDelta, yawDelta);
 
                             lastTouchX = x;
                             lastTouchY = y;
@@ -319,21 +252,21 @@ public class MainActivity extends Activity {
                         break;
 
                     case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
                         isJoystickActive = false;
                         joystickDX = 0;
                         joystickDY = 0;
                         // 重置摇杆位置
                         joystickKnob.setTranslationX(0);
                         joystickKnob.setTranslationY(0);
+                        // 通知 C++ 层摇杆归零
+                        setJoystickInput(0, 0);
                         break;
                 }
 
                 return true;
             }
         });
-
-        // 启动移动更新线程
-        startMovementUpdate();
     }
     
     // 自动启动游戏（从启动器调用）
@@ -358,10 +291,6 @@ public class MainActivity extends Activity {
 
         // 隐藏登录界面
         findViewById(R.id.loginLayout).setVisibility(View.GONE);
-
-        // 初始化摄像机位置
-        updateCamera();
-        android.util.Log.i("MainActivity", "Camera position set to: (" + cameraX + ", " + cameraY + ", " + cameraZ + ")");
 
         // 显示渲染表面（这会触发 surfaceCreated 回调）
         rendererSurfaceView.setVisibility(View.VISIBLE);
@@ -437,125 +366,32 @@ public class MainActivity extends Activity {
         // 归一化输出 (-1 到 1)
         joystickDX = dx / maxDistance;
         joystickDY = dy / maxDistance;
-    }
-
-    private void startMovementUpdate() {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                while (true) {
-                    try {
-                        Thread.sleep(16); // 60 FPS
-
-                        boolean moved = false;
-
-                        // 1. 计算标准化的前向量 (Front Vector)
-                        // 注意：这里必须与 GLRenderer.cpp 中的 updateCamera 逻辑完全一致
-                        // 使用与 C++ 层相同的 Botcraft 算法
-                        float cosYaw = (float) Math.cos(yaw);
-                        float sinYaw = (float) Math.sin(yaw);
-                        float cosPitch = (float) Math.cos(pitch);
-                        float sinPitch = (float) Math.sin(pitch);
-
-                        // 前向量 (X, Y, Z) - 与 GLRenderer.cpp 中的 Botcraft 算法一致
-                        float frontX = -sinYaw * cosPitch;
-                        float frontY = -sinPitch;
-                        float frontZ = cosYaw * cosPitch;
-
-                        // 归一化前向量（忽略 Y 轴用于水平移动）
-                        float len = (float) Math.sqrt(frontX * frontX + frontZ * frontZ);
-                        if (len > 1e-6f) {
-                            frontX /= len;
-                            frontZ /= len;
-                        }
-
-                        // 右向量 (Right Vector) - 前向量逆时针旋转 90 度
-                        float rightX = -frontZ;
-                        float rightZ = frontX;
-
-                        // 3. 处理输入并更新位置
-                        float moveX = 0;
-                        float moveZ = 0;
-
-                        // 键盘控制（反转符号以匹配 Botcraft 坐标系）
-                        if (keyW) { moveX += frontX; moveZ += frontZ; }
-                        if (keyS) { moveX -= frontX; moveZ -= frontZ; }
-                        if (keyA) { moveX -= rightX; moveZ -= rightZ; }
-                        if (keyD) { moveX += rightX; moveZ += rightZ; }
-
-                        // 摇杆控制
-                        if (Math.abs(joystickDX) > 0.1f || Math.abs(joystickDY) > 0.1f) {
-                            // joystickDY: 负值向前, 正值向后
-                            if (joystickDY < -0.1f) {
-                                float amount = -joystickDY;
-                                moveX += frontX * amount;
-                                moveZ += frontZ * amount;
-                            } else if (joystickDY > 0.1f) {
-                                float amount = joystickDY;
-                                moveX -= frontX * amount;
-                                moveZ -= frontZ * amount;
-                            }
-                            // joystickDX: 负值向左, 正值向右
-                            if (joystickDX < -0.1f) {
-                                float amount = -joystickDX;
-                                moveX -= rightX * amount;
-                                moveZ -= rightZ * amount;
-                            } else if (joystickDX > 0.1f) {
-                                float amount = joystickDX;
-                                moveX += rightX * amount;
-                                moveZ += rightZ * amount;
-                            }
-                        }
-
-                        // 应用移动
-                        if (moveX != 0 || moveZ != 0) {
-                            cameraX += moveX * moveSpeed;
-                            cameraZ += moveZ * moveSpeed;
-                            moved = true;
-                        }
-
-                        // 垂直移动
-                        if (keyUp) { cameraY += moveSpeed; moved = true; }
-                        if (keyDown) { cameraY -= moveSpeed; moved = true; }
-
-                        if (moved) {
-                            updateCamera();
-                        }
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
-                }
-            }
-        }).start();
-    }
-
-    private void updateCamera() {
-        setCameraPosition(cameraX, cameraY, cameraZ, pitch, yaw);
+        
+        // 通知 C++ 层摇杆输入
+        setJoystickInput(joystickDX, joystickDY);
     }
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         switch (keyCode) {
             case KeyEvent.KEYCODE_W:
-                keyW = true;
+                setKeyState(KEY_W, true);
                 return true;
             case KeyEvent.KEYCODE_S:
-                keyS = true;
+                setKeyState(KEY_S, true);
                 return true;
             case KeyEvent.KEYCODE_A:
-                keyA = true;
+                setKeyState(KEY_A, true);
                 return true;
             case KeyEvent.KEYCODE_D:
-                keyD = true;
+                setKeyState(KEY_D, true);
                 return true;
             case KeyEvent.KEYCODE_SPACE:
-                cameraY += moveSpeed;
-                updateCamera();
+                setKeyState(KEY_UP, true);
                 return true;
             case KeyEvent.KEYCODE_SHIFT_LEFT:
             case KeyEvent.KEYCODE_SHIFT_RIGHT:
-                cameraY -= moveSpeed;
-                updateCamera();
+                setKeyState(KEY_DOWN, true);
                 return true;
         }
         return super.onKeyDown(keyCode, event);
@@ -565,16 +401,23 @@ public class MainActivity extends Activity {
     public boolean onKeyUp(int keyCode, KeyEvent event) {
         switch (keyCode) {
             case KeyEvent.KEYCODE_W:
-                keyW = false;
+                setKeyState(KEY_W, false);
                 return true;
             case KeyEvent.KEYCODE_S:
-                keyS = false;
+                setKeyState(KEY_S, false);
                 return true;
             case KeyEvent.KEYCODE_A:
-                keyA = false;
+                setKeyState(KEY_A, false);
                 return true;
             case KeyEvent.KEYCODE_D:
-                keyD = false;
+                setKeyState(KEY_D, false);
+                return true;
+            case KeyEvent.KEYCODE_SPACE:
+                setKeyState(KEY_UP, false);
+                return true;
+            case KeyEvent.KEYCODE_SHIFT_LEFT:
+            case KeyEvent.KEYCODE_SHIFT_RIGHT:
+                setKeyState(KEY_DOWN, false);
                 return true;
         }
         return super.onKeyUp(keyCode, event);
@@ -643,8 +486,7 @@ public class MainActivity extends Activity {
     private native void initRenderer(android.view.Surface surface);
     private native void cleanupRenderer();
     private native void setAssetManager(AssetManager assetManager);
-    private native void setCameraPosition(float x, float y, float z, float pitch, float yaw);
-    private native void updateCameraAngle(float pitch, float yaw);
+    private native void updateCameraAngle(float pitchDelta, float yawDelta);  // 相对角度变化
     private native void resizeRenderer(int width, int height);
     private native void setRendererType(boolean useVulkan);
     private native void setProtocolVersion(int version);  // 设置协议版本
@@ -653,14 +495,13 @@ public class MainActivity extends Activity {
     private native boolean connectToServer(String address, int port, String username);
     private native void syncCameraToPlayer();  // 同步摄像机到玩家位置
     
-    // 从 C++ 层获取玩家位置并更新 Java 层变量
+    // 新的输入控制接口
+    private native void setKeyState(int key, boolean pressed);  // 按键状态
+    private native void setJoystickInput(float dx, float dy);   // 摇杆输入
+    
+    // 从 C++ 层获取玩家位置并更新 Java 层变量（仅用于调试）
     public void updateJavaCameraPosition(float x, float y, float z, float yaw, float pitch) {
-        cameraX = x;
-        cameraY = y;
-        cameraZ = z;
-        this.yaw = yaw;
-        this.pitch = pitch;
-        android.util.Log.i("MainActivity", "Java camera position updated to: (" + x + ", " + y + ", " + z + ")");
+        android.util.Log.i("MainActivity", "Camera synced from C++: (" + x + ", " + y + ", " + z + ")");
     }
 
     private void saveConnectionInfo(String gameName, String serverIP, int port) {

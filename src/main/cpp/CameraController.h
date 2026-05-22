@@ -24,6 +24,9 @@ public:
     // 设置初始位置
     void setPosition(float x, float y, float z);
     void setRotation(float pitch, float yaw);
+    
+    // 更新旋转（相对变化量）
+    void updateRotation(float pitchDelta, float yawDelta);
 
 private:
     CameraController();

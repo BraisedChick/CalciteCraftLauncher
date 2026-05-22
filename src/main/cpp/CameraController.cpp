@@ -138,3 +138,19 @@ void CameraController::setRotation(float newPitch, float newYaw) {
     if (yaw < 0) yaw += 2.0f * glm::pi<float>();
     if (yaw >= 2.0f * glm::pi<float>()) yaw -= 2.0f * glm::pi<float>();
 }
+
+void CameraController::updateRotation(float pitchDelta, float yawDelta) {
+    std::lock_guard<std::mutex> lock(mutex);
+    
+    // 应用相对变化
+    pitch += pitchDelta;
+    yaw += yawDelta;
+    
+    // 限制俯仰角范围 (-89° 到 +89°)
+    const float maxPitch = glm::radians(89.0f);
+    pitch = glm::clamp(pitch, -maxPitch, maxPitch);
+    
+    // 规范化 yaw 到 [0, 2π)
+    if (yaw < 0) yaw += 2.0f * glm::pi<float>();
+    if (yaw >= 2.0f * glm::pi<float>()) yaw -= 2.0f * glm::pi<float>();
+}
