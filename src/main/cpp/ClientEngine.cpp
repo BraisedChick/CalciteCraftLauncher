@@ -26,9 +26,12 @@
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundMovePlayerPacketPosRot.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundClientInformationPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundLoginPacket.hpp"
+#include "protocolCraft/include/protocolCraft/Types/NBT/Tag.hpp"
+#include "BiomeColorManager.h"
 
 #include <vector>
 #include <string>
+#include <map>
 
 ClientEngine::ClientEngine() : chunkManager(nullptr) {}
 
@@ -240,9 +243,97 @@ void ClientEngine::handlePlayPacket(NetworkManager& net, int packetId,
                          loginPacket.GetPlayerId(),
                          loginPacket.GetGameType());
 
+                    // 从 RegistryHolder 解析服务器端 biome 注册表
+                    try {
+                        const auto& registryHolder = loginPacket.GetRegistryHolder();
+                        if (registryHolder.contains("minecraft:worldgen/biome")) {
+                            const auto& biomeRegistry = registryHolder["minecraft:worldgen/biome"];
+                            if (biomeRegistry.is<ProtocolCraft::NBT::TagCompound>() &&
+                                biomeRegistry.contains("value")) {
+                                const auto& value = biomeRegistry["value"];
+                                if (value.is_list_of<ProtocolCraft::NBT::TagCompound>()) {
+                                    const auto& entries = value.as_list_of<ProtocolCraft::NBT::TagCompound>();
+                                    std::map<int32_t, BiomeColorManager::BiomeEntry> serverBiomes;
+                                    for (const auto& entry : entries) {
+                                        auto idIt = entry.find("id");
+                                        auto elementIt = entry.find("element");
+                                        if (idIt == entry.end() || elementIt == entry.end()) continue;
+
+                                        int32_t id = idIt->second.get<int>();
+                                        const auto& element = elementIt->second;
+
+                                        BiomeColorManager::BiomeEntry biomeEntry;
+
+                                        // temperature / downfall
+                                        if (element.is<ProtocolCraft::NBT::TagCompound>()) {
+                                            const auto& elemCompound = element.get<ProtocolCraft::NBT::TagCompound>();
+                                            auto tempIt = elemCompound.find("temperature");
+                                            auto downIt = elemCompound.find("downfall");
+                                            if (tempIt != elemCompound.end() && tempIt->second.is<ProtocolCraft::NBT::TagDouble>())
+                                                biomeEntry.temperature = tempIt->second.get<double>();
+                                            if (downIt != elemCompound.end() && downIt->second.is<ProtocolCraft::NBT::TagDouble>())
+                                                biomeEntry.downfall = downIt->second.get<double>();
+
+                                            // 解析 effects
+                                            auto effectsIt = elemCompound.find("effects");
+                                            if (effectsIt != elemCompound.end() && effectsIt->second.is<ProtocolCraft::NBT::TagCompound>()) {
+                                                const auto& effects = effectsIt->second.get<ProtocolCraft::NBT::TagCompound>();
+
+                                                // 固定草颜色
+                                                auto grassColorIt = effects.find("grass_color");
+                                                if (grassColorIt != effects.end() && grassColorIt->second.is<int>()) {
+                                                    int color = grassColorIt->second.get<int>();
+                                                    biomeEntry.hasFixedGrassColor = true;
+                                                    biomeEntry.fixedGrassR = (color >> 16) & 0xFF;
+                                                    biomeEntry.fixedGrassG = (color >> 8) & 0xFF;
+                                                    biomeEntry.fixedGrassB = color & 0xFF;
+                                                }
+
+                                                // 固定树叶颜色
+                                                auto foliageColorIt = effects.find("foliage_color");
+                                                if (foliageColorIt != effects.end() && foliageColorIt->second.is<int>()) {
+                                                    int color = foliageColorIt->second.get<int>();
+                                                    biomeEntry.hasFixedFoliageColor = true;
+                                                    biomeEntry.fixedFoliageR = (color >> 16) & 0xFF;
+                                                    biomeEntry.fixedFoliageG = (color >> 8) & 0xFF;
+                                                    biomeEntry.fixedFoliageB = color & 0xFF;
+                                                }
+
+                                                // grass_color_modifier（沼泽、黑森林等）
+                                                auto modifierIt = effects.find("grass_color_modifier");
+                                                if (modifierIt != effects.end() && modifierIt->second.is<ProtocolCraft::NBT::TagString>()) {
+                                                    std::string modifier = modifierIt->second.get<std::string>();
+                                                    if (modifier == "swamp") {
+                                                        biomeEntry.hasFixedGrassColor = true;
+                                                        biomeEntry.fixedGrassR = 106;
+                                                        biomeEntry.fixedGrassG = 112;
+                                                        biomeEntry.fixedGrassB = 57;
+                                                    } else if (modifier == "dark_forest") {
+                                                        biomeEntry.hasFixedGrassColor = true;
+                                                        biomeEntry.fixedGrassR = 64;
+                                                        biomeEntry.fixedGrassG = 128;
+                                                        biomeEntry.fixedGrassB = 64;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        serverBiomes[id] = biomeEntry;
+                                    }
+                                    if (!serverBiomes.empty()) {
+                                        LOGI("Applying server biome registry mapping, %zu entries",
+                                             serverBiomes.size());
+                                        BiomeColorManager::getInstance().applyServerBiomeMapping(serverBiomes);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (const std::exception& e) {
+                        LOGW("Failed to parse RegistryHolder biomes: %s", e.what());
+                    }
+
                     // Minecraft 1.18+ standard Overworld dimension
                     // min_y = -64, height = 384 (Y range: -64 to 320)
-                    // TODO: Parse DimensionType NBT from Login packet to get exact values
                     dimensionMinY = -64;
                     dimensionHeight = 384;
                     LOGI("Dimension info: min_y=%d, height=%d (Y range: %d to %d)",

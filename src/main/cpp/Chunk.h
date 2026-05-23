@@ -34,7 +34,7 @@ namespace std {
 struct ChunkSection {
     int y; // 截面的 Y 坐标
     std::vector<int32_t> blockStates; // 方块状态数据（完整的 blockState ID，非截断值）
-    std::vector<uint8_t> biomes; // 生物群系数据
+    std::vector<int32_t> biomes; // 生物群系数据 (4x4x4 = 64 个 biome ID)
     bool isEmpty = true;
 
     ChunkSection() : y(0) {}

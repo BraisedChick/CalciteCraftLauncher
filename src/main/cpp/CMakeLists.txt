@@ -39,6 +39,7 @@ set(SOURCES
     TextureLoader.cpp
     BlockRegistry.cpp
     CameraController.cpp
+    BiomeColorManager.cpp
 )
 
 add_library(minecraftclient SHARED ${SOURCES})

@@ -1,7 +1,10 @@
 #pragma once
 
+#include <cstdint>
+
 struct Vertex {
     float pos[3];
     float texCoord[2];
-    float texIndex;  // 0 = 顶部纹理, 1 = 侧面纹理
+    float texIndex;
+    uint8_t color[4] = {255, 255, 255, 255}; // RGBA 染色（默认白色=不染色）
 };

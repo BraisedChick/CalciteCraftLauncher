@@ -216,6 +216,89 @@ std::unique_ptr<Chunk> ChunkParser::parseModernChunk(
 }
 
 // ===== Extended Chunk Parser (1.18+) =====
+bool ChunkParser::parseBiomes(std::vector<int32_t>& biomesOut,
+                               const std::vector<uint8_t>& data,
+                               size_t& pos,
+                               size_t dataEnd) {
+    if (pos >= dataEnd) return false;
+
+    biomesOut.resize(64, 0);
+    uint8_t bitsPerBiome = data[pos++];
+
+    if (bitsPerBiome == 0) {
+        // 单值调色板：所有位置相同
+        int32_t singleBiome = readVarInt(data, pos);
+        for (int i = 0; i < 64; i++) {
+            biomesOut[i] = singleBiome;
+        }
+        // 消耗 data array（PalettedContainer 总是序列化 data array，即使 bits=0）
+        int dataArrayLength = readVarInt(data, pos);
+        pos += dataArrayLength * 8;
+        return true;
+    }
+
+    // 解析调色板（bitsPerBiome <= 3 时有调色板，> 3 时是全局 ID）
+    std::vector<int32_t> palette;
+    bool hasPalette = (bitsPerBiome <= 3);
+    if (hasPalette) {
+        int paletteLength = readVarInt(data, pos);
+        palette.resize(paletteLength);
+        for (int i = 0; i < paletteLength && pos < dataEnd; i++) {
+            palette[i] = readVarInt(data, pos);
+        }
+    }
+
+    // 读数据数组长度
+    if (pos >= dataEnd) return false;
+    int dataArrayLength = readVarInt(data, pos);
+
+    // 读 long 数组
+    std::vector<uint64_t> dataLongs(dataArrayLength);
+    for (int i = 0; i < dataArrayLength && pos + 8 <= dataEnd; i++) {
+        dataLongs[i] = readLong(data, pos);
+    }
+
+    // 解压 64 个 biome ID，使用和 blockStates 相同的位操作逻辑
+    int bitOffset = 0;
+    for (int i = 0; i < 64; i++) {
+        int longIndex = bitOffset / 64;
+        int bitInLong = bitOffset % 64;
+
+        if (longIndex >= static_cast<int>(dataLongs.size())) break;
+
+        uint64_t mask = ((1ULL << bitsPerBiome) - 1);
+        uint64_t biomeId;
+
+        if (bitInLong + bitsPerBiome <= 64) {
+            biomeId = (dataLongs[longIndex] >> bitInLong) & mask;
+        } else {
+            int remainingBits = 64 - bitInLong;
+            uint64_t firstPart = (dataLongs[longIndex] >> bitInLong);
+            uint64_t secondPart = (longIndex + 1 < static_cast<int>(dataLongs.size())) ? dataLongs[longIndex + 1] : 0;
+            biomeId = firstPart | (secondPart << remainingBits);
+            biomeId &= mask;
+        }
+
+        if (hasPalette && !palette.empty() && biomeId < static_cast<uint64_t>(palette.size())) {
+            biomesOut[i] = palette[biomeId];
+        } else {
+            biomesOut[i] = static_cast<int32_t>(biomeId);
+        }
+
+        bitOffset += bitsPerBiome;
+
+        // 1.16+ 协议中，compact data 的单个条目不会跨 long 边界
+        // 如果当前 long 剩余位数不够存一个条目，则跳过 padding 到下一个 long
+        #if PROTOCOL_VERSION > 712
+        if (64 - (bitOffset % 64) < bitsPerBiome) {
+            bitOffset += 64 - (bitOffset % 64);
+        }
+        #endif
+    }
+
+    return true;
+}
+
 std::unique_ptr<Chunk> ChunkParser::parseExtendedChunk(
     int chunkX, int chunkZ,
     const std::vector<uint8_t>& data,
@@ -273,30 +356,14 @@ std::unique_ptr<Chunk> ChunkParser::parseExtendedChunk(
             int dataArrayLength = readVarInt(data, pos);
             pos += dataArrayLength * 8;
             
-            // ========== Skip Biomes for this section (1.18+) ==========
-            if (pos < data.size()) {
-                // Read bits_per_biome
-                uint8_t bitsPerBiome = data[pos++];
-                
-                // Skip biome palette if present
-                if (bitsPerBiome > 0 && bitsPerBiome <= 3) {
-                    int biomePaletteLength = readVarInt(data, pos);
-                    for (int i = 0; i < biomePaletteLength; i++) {
-                        readVarInt(data, pos);
-                    }
-                } else if (bitsPerBiome == 0) {
-                    // Single value palette - read the value
-                    readVarInt(data, pos);
-                }
-                
-                // Skip biome data array
-                int biomeDataLength = readVarInt(data, pos);
-                pos += biomeDataLength * 8;
+            // ========== Parse Biomes for this section (1.18+) ==========
+            if (pos < data.size() && chunk->sections[sectionY]) {
+                parseBiomes(chunk->sections[sectionY]->biomes, data, pos, data.size());
             }
-            
+
             continue;
         }
-        
+
         // Non-empty section: parse it
         if (pos >= data.size()) break;
         uint8_t bitsPerBlock = data[pos++];
@@ -341,25 +408,9 @@ std::unique_ptr<Chunk> ChunkParser::parseExtendedChunk(
         // Move position past this section's data
         pos = sectionEnd;
         
-        // ========== Skip Biomes for this section (1.18+) ==========
-        if (pos < data.size()) {
-            // Read bits_per_biome
-            uint8_t bitsPerBiome = data[pos++];
-            
-            // Skip biome palette if present
-            if (bitsPerBiome > 0 && bitsPerBiome <= 3) {
-                int biomePaletteLength = readVarInt(data, pos);
-                for (int i = 0; i < biomePaletteLength; i++) {
-                    readVarInt(data, pos);
-                }
-            } else if (bitsPerBiome == 0) {
-                // Single value palette - read the value
-                readVarInt(data, pos);
-            }
-            
-            // Skip biome data array
-            int biomeDataLength = readVarInt(data, pos);
-            pos += biomeDataLength * 8;
+        // ========== Parse Biomes for this section (1.18+) ==========
+        if (pos < data.size() && chunk->sections[sectionY]) {
+            parseBiomes(chunk->sections[sectionY]->biomes, data, pos, data.size());
         }
     }
     

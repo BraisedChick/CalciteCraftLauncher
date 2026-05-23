@@ -60,7 +60,13 @@ private:
         bool hasPalette,
         int paletteLength
     );
-    
+
+    // 解析 biomes 数据（4x4x4 = 64 个 biome ID）
+    bool parseBiomes(std::vector<int32_t>& biomesOut,
+                     const std::vector<uint8_t>& data,
+                     size_t& pos,
+                     size_t dataEnd);
+
     // 辅助函数
     int32_t readVarInt(const std::vector<uint8_t>& data, size_t& pos);
     uint64_t readLong(const std::vector<uint8_t>& data, size_t& pos);

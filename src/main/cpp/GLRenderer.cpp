@@ -7,6 +7,7 @@
 #include "TextureLoader.h"
 #include "MeshGenerator.h"
 #include "TextureAtlas.h"
+#include "BiomeColorManager.h"
 
 #define LOG_TAG "GLRenderer"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -23,8 +24,7 @@ void GLRenderer::setChunkManager(ChunkManager* manager) {
     chunkManager.store(manager);
 
     // 标记需要重建网格，在渲染线程中执行
-    // 注意：不要遍历旧缓存设置 needsUpdate = true，
-    // 新区块在 rebuildMeshFromChunks 中创建时已经自动标记了 needsUpdate
+    // 已有缓存的区块也会标记 needsUpdate，确保所有区块使用最新的网格生成逻辑
     if (manager && display != EGL_NO_DISPLAY) {
         needRebuildMesh.store(true);
     }
@@ -131,6 +131,14 @@ bool GLRenderer::initialize(ANativeWindow* window) {
                            GL_RGBA, GL_UNSIGNED_BYTE,
                            placeholder.data());
         }
+    }
+
+    // 初始化 BiomeColorManager（加载 colormap 和 biome JSON）
+    LOGI("Initializing BiomeColorManager...");
+    if (g_assetManager) {
+        BiomeColorManager::getInstance().initialize(g_assetManager);
+    } else {
+        LOGE("Cannot initialize BiomeColorManager: asset manager not set");
     }
 
     // 设置纹理参数（必须设置，默认 GL_NEAREST_MIPMAP_LINEAR 在没有 mipmap 时会显示黑色）
@@ -342,9 +350,13 @@ bool GLRenderer::createBuffers() {
     glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(5 * sizeof(float)));
     glEnableVertexAttribArray(2);
 
+    // 顶点颜色属性 (location = 3) — 4 bytes RGBA, normalized unsigned byte
+    glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex), (void*)(offsetof(Vertex, color)));
+    glEnableVertexAttribArray(3);
+
     glBindVertexArray(0);
 
-    LOGI("Buffers created with 3 vertex attributes (pos, texCoord, texIndex)");
+    LOGI("Buffers created with 4 vertex attributes (pos, texCoord, texIndex, color)");
     return true;
 }
 
@@ -404,6 +416,10 @@ bool GLRenderer::rebuildMeshFromChunks() {
                 renderData = &insertIt->second;
             } else {
                 renderData = &it->second;
+                // 强制重新生成网格（修复旧 overlay 索引布局等需要重建的场景）
+                if (!renderData->pending) {
+                    renderData->needsUpdate = true;
+                }
             }
         }
 
@@ -512,19 +528,21 @@ void GLRenderer::workerLoop() {
 
         std::vector<Vertex> vertices;
         std::vector<uint32_t> indices;
+        uint32_t totalOverlayIndexCount = 0;
 
         for (size_t sectionIdx = 0; sectionIdx < chunk->sections.size(); ++sectionIdx) {
             const auto& section = chunk->sections[sectionIdx];
             if (!section || section->isEmpty) continue;
 
-            auto [sectionVertices, sectionIndices] = MeshGenerator::generateSectionMesh(
+            auto meshOut = MeshGenerator::generateSectionMesh(
                 *section, item.chunkX, section->y, item.chunkZ, chunkManager);
 
             uint32_t vertexOffset = static_cast<uint32_t>(vertices.size());
-            for (uint32_t idx : sectionIndices) {
+            for (uint32_t idx : meshOut.indices) {
                 indices.push_back(vertexOffset + idx);
             }
-            vertices.insert(vertices.end(), sectionVertices.begin(), sectionVertices.end());
+            vertices.insert(vertices.end(), meshOut.vertices.begin(), meshOut.vertices.end());
+            totalOverlayIndexCount += meshOut.overlayIndexCount;
         }
 
         // 推入完成队列
@@ -532,6 +550,7 @@ void GLRenderer::workerLoop() {
         result.chunkKey = item.chunkKey;
         result.vertices = std::move(vertices);
         result.indices = std::move(indices);
+        result.overlayIndexCount = totalOverlayIndexCount;
 
         {
             std::lock_guard<std::mutex> lock(resultMutex);
@@ -570,6 +589,7 @@ void GLRenderer::processCompletedWork() {
 
                 renderData.vertexCount = static_cast<uint32_t>(result.vertices.size());
                 renderData.indexCount = static_cast<uint32_t>(result.indices.size());
+                renderData.overlayIndexCount = result.overlayIndexCount;
                 renderData.needsUpdate = false;
                 renderData.pending = false;
             }
@@ -789,9 +809,27 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(5 * sizeof(float)));
         glEnableVertexAttribArray(2);
+        glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex), (void*)(offsetof(Vertex, color)));
+        glEnableVertexAttribArray(3);
         
-        // 绘制该区块
-        glDrawElements(GL_TRIANGLES, renderData.indexCount, GL_UNSIGNED_INT, 0);
+        // 第一遍：绘制不透明几何体（含草方块侧面基础层）
+        uint32_t baseIndexCount = renderData.indexCount - renderData.overlayIndexCount;
+        glDrawElements(GL_TRIANGLES, baseIndexCount, GL_UNSIGNED_INT, 0);
+
+        // 第二遍：绘制 overlay 几何体（草方块侧面染色覆盖层，需 alpha blend）
+        if (renderData.overlayIndexCount > 0) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthFunc(GL_LEQUAL);
+            glDepthMask(GL_FALSE);
+
+            glDrawElements(GL_TRIANGLES, renderData.overlayIndexCount, GL_UNSIGNED_INT,
+                          (const GLvoid*)(uintptr_t)(baseIndexCount * sizeof(uint32_t)));
+
+            glDepthMask(GL_TRUE);
+            glDepthFunc(GL_LESS);
+            glDisable(GL_BLEND);
+        }
         
         chunksRendered++;
         totalTriangles += renderData.indexCount / 3;

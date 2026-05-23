@@ -86,6 +86,7 @@ private:
         uint64_t chunkKey;
         std::vector<Vertex> vertices;
         std::vector<uint32_t> indices;
+        uint32_t overlayIndexCount = 0;
     };
 
     void workerLoop();
@@ -164,6 +165,7 @@ private:
         GLuint ebo = 0;          // 索引缓冲
         uint32_t vertexCount = 0;
         uint32_t indexCount = 0;
+        uint32_t overlayIndexCount = 0;  // overlay 索引数（需要 alpha blend 的部分）
         glm::vec3 position;      // 区块世界坐标
         bool visible = true;     // 是否在视锥体内
         bool needsUpdate = false; // 是否需要重建

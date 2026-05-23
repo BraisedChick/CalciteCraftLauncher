@@ -16,12 +16,19 @@ public:
         uint8_t r, g, b;
     };
 
+    // 网格生成输出：包含顶点、索引和其中 overlay 层（需混合）的索引数量
+    struct SectionMeshOutput {
+        std::vector<Vertex> vertices;
+        std::vector<uint32_t> indices;
+        uint32_t overlayIndexCount = 0;
+    };
+
     static std::vector<Vertex> generateMesh(const Chunk& chunk);
     static std::pair<std::vector<Vertex>, std::vector<uint32_t>> generateMeshWithIndices(const Chunk& chunk);
-    static std::pair<std::vector<Vertex>, std::vector<uint32_t>> generateSectionMesh(
-        const ChunkSection& section, 
+    static SectionMeshOutput generateSectionMesh(
+        const ChunkSection& section,
         int chunkX, int sectionY, int chunkZ,
-        const ChunkManager* chunkManager);  // 添加 ChunkManager 参数用于跨区块剔除
+        const ChunkManager* chunkManager);
 
 private:
     static void addFace(std::vector<Vertex>& vertices, float x, float y, float z,

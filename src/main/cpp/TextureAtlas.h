@@ -4,6 +4,7 @@
 #include <string>
 #include <android/log.h>
 #include "BlockRegistry.h"
+#include "BiomeColorManager.h"
 
 // ============================================================
 // 纹理层索引分配
@@ -32,6 +33,8 @@ enum TextureLayer : int {
     TEX_GRASS_BLOCK_SNOW = 16,    // grass_block_snow.png
     TEX_SNOW = 17,                // snow.png
     TEX_ICE = 18,                 // ice.png
+    TEX_GRASS_PLANT = 19,         // grass.png（草植物十字交叉纹理）
+    TEX_GRASS_SIDE_OVERLAY = 20,  // grass_block_side_overlay.png（侧面覆盖层，被染色后叠加在 grass_side 上）
 
     TEXTURE_LAYER_COUNT,  // 纹理层总数
 };
@@ -141,10 +144,10 @@ inline BlockTextureConfig getBlockTexture(int32_t blockState) {
         return {TEX_ICE, TEX_ICE, TEX_ICE};
     }
 
-    // 植物（不完整方块）：草、蕨等使用草方块顶面纹理
+    // 植物（不完整方块）：草、蕨等使用专用 grass.png 纹理
     if (name == "grass" || name == "tall_grass"
         || name == "fern" || name == "large_fern") {
-        return {TEX_GRASS_TOP, TEX_GRASS_TOP, TEX_GRASS_TOP};
+        return {TEX_GRASS_PLANT, TEX_GRASS_PLANT, TEX_GRASS_PLANT};
     }
 
     // 花
@@ -193,8 +196,15 @@ inline float getBlockHeight(int32_t blockState) {
         return 0.5f; // 无法确定层数，默认半格
     }
 
-    // 植物、花、不完整方块：高度设为 0.5，不遮挡相邻面
-    if (name == "grass" || name == "tall_grass"
+    return 1.0f; // 默认为完整方块
+}
+
+// 判断是否为植物类不完整方块（草、花、蕨等），需要十字交叉渲染
+inline bool isPlant(int32_t blockState) {
+    if (blockState == 0) return false;
+    auto& registry = BlockRegistry::getInstance();
+    std::string name = registry.getBlockName(blockState);
+    return name == "grass" || name == "tall_grass"
         || name == "fern" || name == "large_fern"
         || name == "dead_bush" || name == "vine"
         || name == "lily_pad" || name == "sugar_cane"
@@ -203,17 +213,35 @@ inline float getBlockHeight(int32_t blockState) {
         || name == "allium" || name == "azure_bluet" || name == "oxeye_daisy"
         || name == "cornflower" || name == "lily_of_the_valley"
         || name == "wither_rose" || name == "sunflower"
-        || name == "lilac" || name == "rose_bush" || name == "peony") {
-        return 0.5f;
-    }
-
-    return 1.0f; // 默认为完整方块
+        || name == "lilac" || name == "rose_bush" || name == "peony";
 }
 
-// 判断一个 blockState 是否为完整方块
+// 判断一个 blockState 是否为完整方块（不透明、遮挡相邻面）
 inline bool isFullBlock(int32_t blockState) {
     if (blockState == 0) return false;
+    if (isPlant(blockState)) return false; // 植物不遮挡相邻面
+
+    auto& registry = BlockRegistry::getInstance();
+    std::string name = registry.getBlockName(blockState);
+    // 树叶不遮挡相邻面（使被树叶包围的木头等方块正常渲染）
+    if (name.find("leaves") != std::string::npos) return false;
+
     return getBlockHeight(blockState) >= 1.0f;
+}
+
+// ============================================================
+// 生物群系着色：根据 biome ID 返回草/树叶的 tint color
+// 使用 BiomeColorManager 从 colormap PNG + biome JSON 采样
+// ============================================================
+
+// 获取 biome 的草染色（委托给 BiomeColorManager）
+inline void getBiomeGrassColor(int32_t biomeId, uint8_t& r, uint8_t& g, uint8_t& b) {
+    BiomeColorManager::getInstance().getGrassColor(biomeId, r, g, b);
+}
+
+// 获取 biome 的树叶染色
+inline void getBiomeFoliageColor(int32_t biomeId, uint8_t& r, uint8_t& g, uint8_t& b) {
+    BiomeColorManager::getInstance().getFoliageColor(biomeId, r, g, b);
 }
 
 // ============================================================
@@ -221,8 +249,8 @@ inline bool isFullBlock(int32_t blockState) {
 // ============================================================
 inline std::string getTextureFileName(int layer) {
     switch (layer) {
-        case TEX_GRASS_TOP:      return "grass_top.png";
-        case TEX_GRASS_SIDE:     return "grass_side.png";
+        case TEX_GRASS_TOP:      return "grass_block_top.png";
+        case TEX_GRASS_SIDE:     return "grass_block_side.png";
         case TEX_DIRT:           return "dirt.png";
         case TEX_STONE:          return "stone.png";
         case TEX_COBBLESTONE:    return "cobblestone.png";
@@ -240,6 +268,8 @@ inline std::string getTextureFileName(int layer) {
         case TEX_GRASS_BLOCK_SNOW: return "grass_block_snow.png";
         case TEX_SNOW:           return "snow.png";
         case TEX_ICE:            return "ice.png";
+        case TEX_GRASS_PLANT:    return "grass.png";
+        case TEX_GRASS_SIDE_OVERLAY: return "grass_block_side_overlay.png";
         default:                 return "stone.png";
     }
 }
@@ -268,6 +298,8 @@ inline void getPlaceholderColor(int layer, uint8_t& r, uint8_t& g, uint8_t& b) {
         case TEX_GRASS_BLOCK_SNOW: r = 0xF0; g = 0xF0; b = 0xF0; break; // 雪白
         case TEX_SNOW:           r = 0xF0; g = 0xF8; b = 0xFF; break; // 雪白
         case TEX_ICE:            r = 0xA0; g = 0xD8; b = 0xF0; break; // 冰蓝
+        case TEX_GRASS_PLANT:    r = 0x5B; g = 0x8E; b = 0x2D; break; // 草绿
+        case TEX_GRASS_SIDE_OVERLAY: r = 0x7C; g = 0xB3; b = 0x42; break; // 与 grass_top 相同
         default:                 r = 0xAA; g = 0x44; b = 0xAA; break; // 紫色（未知）
     }
 }
