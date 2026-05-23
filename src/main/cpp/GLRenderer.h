@@ -94,8 +94,9 @@ private:
     void enqueueWork(ChunkWorkItem item);
     void processCompletedWork();
 
-    // 工作线程
-    std::thread meshWorker;
+    // 工作线程池（多个线程并行生成网格）
+    static constexpr int WORKER_THREAD_COUNT = 4;
+    std::vector<std::thread> workerThreads;
     std::mutex workMutex;
     std::condition_variable workCV;
     std::queue<ChunkWorkItem> workQueue;

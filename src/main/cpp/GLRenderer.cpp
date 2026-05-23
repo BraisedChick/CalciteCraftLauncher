@@ -361,7 +361,7 @@ bool GLRenderer::rebuildMeshFromChunks() {
     int chunksProcessed = 0;
     int chunksSkipped = 0;
     int chunksEnqueued = 0;
-    const int MAX_ENQUEUE_PER_CALL = 16;
+    const int MAX_ENQUEUE_PER_CALL = 32;
 
     // 摄像机位置（用于视锥体裁剪）
     glm::vec3 cameraPos(cameraMatrix[12], cameraMatrix[13], cameraMatrix[14]);
@@ -454,7 +454,10 @@ void GLRenderer::markChunkForUpdate(int chunkX, int chunkZ) {
 
 void GLRenderer::startWorker() {
     workerRunning = true;
-    meshWorker = std::thread(&GLRenderer::workerLoop, this);
+    for (int i = 0; i < WORKER_THREAD_COUNT; i++) {
+        workerThreads.emplace_back(&GLRenderer::workerLoop, this);
+    }
+    LOGI("Started %d mesh worker threads", WORKER_THREAD_COUNT);
 }
 
 void GLRenderer::stopWorker() {
@@ -462,10 +465,13 @@ void GLRenderer::stopWorker() {
         std::lock_guard<std::mutex> lock(workMutex);
         workerRunning = false;
     }
-    workCV.notify_one();
-    if (meshWorker.joinable()) {
-        meshWorker.join();
+    workCV.notify_all();
+    for (auto& t : workerThreads) {
+        if (t.joinable()) {
+            t.join();
+        }
     }
+    workerThreads.clear();
 }
 
 void GLRenderer::enqueueWork(ChunkWorkItem item) {

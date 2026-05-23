@@ -150,7 +150,33 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateSec
         // 没有 ChunkManager，视为空气
         return true;
     };
-    
+
+    // 获取局部坐标的 blockState（用于非完整方块的面剔除判断）
+    auto getLocalBlockState = [&](int x, int y, int z) -> int32_t {
+        if (x >= 0 && x < CHUNK_WIDTH &&
+            y >= 0 && y < SECTION_HEIGHT &&
+            z >= 0 && z < CHUNK_DEPTH) {
+            int idx = (y * CHUNK_DEPTH + z) * CHUNK_WIDTH + x;
+            if (idx >= 0 && idx < static_cast<int>(section.blockStates.size())) {
+                return section.blockStates[idx];
+            }
+            return 0;
+        }
+        if (chunkManager) {
+            int globalX = chunkX * CHUNK_WIDTH + x;
+            int globalY = sectionY + y;
+            int globalZ = chunkZ * CHUNK_DEPTH + z;
+            return getBlockStateAt(globalX, globalY, globalZ, chunkManager);
+        }
+        return 0;
+    };
+
+    // 判断相邻位置是否非完整方块（用于侧面/底面剔除：仅完整方块能遮挡相邻面）
+    auto isNotFullSolid = [&](int x, int y, int z) -> bool {
+        int32_t state = getLocalBlockState(x, y, z);
+        return state == 0 || !isFullBlock(state);
+    };
+
     // 遍历截面中的所有方块 (16x16x16)
     for (int localY = 0; localY < SECTION_HEIGHT; localY++) {
         for (int z = 0; z < CHUNK_DEPTH; z++) {
@@ -177,6 +203,10 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateSec
                 // 查询方块纹理配置（各面的纹理层索引）
                 BlockTextureConfig tex = getBlockTexture(blockState);
 
+                // 查询方块高度（完整方块=1.0，雪片<1.0）
+                float blockHeight = getBlockHeight(blockState);
+                bool isFullBlockHeight = blockHeight >= 1.0f;
+
                 // 计算方块的绝对坐标
                 float posX = baseX + x;
                 float posY = baseY + localY;
@@ -186,8 +216,15 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateSec
                 
                 // 检查 6 个方向的相邻方块，只渲染暴露的面
                 
-                // 上面 (y+) - 如果上方是空气则渲染
-                if (isAir(x, localY + 1, z)) {
+                // 上面 (y+) - 非完整方块上方有非完整方块时仍渲染顶面
+                bool renderTop;
+                if (isFullBlockHeight) {
+                    renderTop = isAir(x, localY + 1, z);
+                } else {
+                    int32_t aboveState = getLocalBlockState(x, localY + 1, z);
+                    renderTop = (aboveState == 0) || !isFullBlock(aboveState);
+                }
+                if (renderTop) {
                     float texIndex = static_cast<float>(tex.top);
                     texIndexCount[0]++;  // 统计 layer 0
                     
@@ -196,10 +233,10 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateSec
                         LOGI("Grass block TOP at (%.1f, %.1f, %.1f): texIndex=%.1f", posX, posY+1.0f, posZ, texIndex);
                     }
                     
-                    vertices.push_back({{posX, posY + 1.0f, posZ + 1.0f}, {0.0f, 0.0f}, texIndex});
-                    vertices.push_back({{posX + 1.0f, posY + 1.0f, posZ + 1.0f}, {1.0f, 0.0f}, texIndex});
-                    vertices.push_back({{posX + 1.0f, posY + 1.0f, posZ}, {1.0f, 1.0f}, texIndex});
-                    vertices.push_back({{posX, posY + 1.0f, posZ}, {0.0f, 1.0f}, texIndex});
+                    vertices.push_back({{posX, posY + blockHeight, posZ + 1.0f}, {0.0f, 0.0f}, texIndex});
+                    vertices.push_back({{posX + 1.0f, posY + blockHeight, posZ + 1.0f}, {1.0f, 0.0f}, texIndex});
+                    vertices.push_back({{posX + 1.0f, posY + blockHeight, posZ}, {1.0f, 1.0f}, texIndex});
+                    vertices.push_back({{posX, posY + blockHeight, posZ}, {0.0f, 1.0f}, texIndex});
                     
                     uint32_t faceBase = static_cast<uint32_t>(vertices.size()) - 4;
                     indices.push_back(faceBase);
@@ -210,8 +247,8 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateSec
                     indices.push_back(faceBase + 3);
                 }
                 
-                // 下面 (y-) - 如果下方是空气则渲染
-                if (isAir(x, localY - 1, z)) {
+                // 下面 (y-) - 仅完整方块渲染，且下方不是完整方块时
+                if (isFullBlockHeight && isNotFullSolid(x, localY - 1, z)) {
                     // 根据方块纹理配置查询底面纹理
                     float texIndex = static_cast<float>(tex.bottom);
                     
@@ -238,24 +275,17 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateSec
                     indices.push_back(faceBase + 3);
                 }
                 
-                // 前面 (z+) - 如果前方是空气则渲染
-                if (isAir(x, localY, z + 1)) {
+                // 前面 (z+) - 邻居非完整方块时渲染（深度测试处理交叠）
+                if (isNotFullSolid(x, localY, z + 1)) {
                     float texIndex = static_cast<float>(tex.side);
-                    
-                    // 统计 texIndex
                     texIndexCount[1]++;
-                    
-                    // 调试日志：SIDE 面
-                    if (blockState == 2 && x == 8 && z == 8) {
-                        LOGI("Grass block SIDE (front) at (%.1f, %.1f, %.1f): texIndex=%.1f", posX, posY, posZ+1.0f, texIndex);
-                    }
-                    
+
                     // V 坐标翻转
                     vertices.push_back({{posX, posY, posZ + 1.0f}, {0.0f, 1.0f}, texIndex});
                     vertices.push_back({{posX + 1.0f, posY, posZ + 1.0f}, {1.0f, 1.0f}, texIndex});
-                    vertices.push_back({{posX + 1.0f, posY + 1.0f, posZ + 1.0f}, {1.0f, 0.0f}, texIndex});
-                    vertices.push_back({{posX, posY + 1.0f, posZ + 1.0f}, {0.0f, 0.0f}, texIndex});
-                    
+                    vertices.push_back({{posX + 1.0f, posY + blockHeight, posZ + 1.0f}, {1.0f, 0.0f}, texIndex});
+                    vertices.push_back({{posX, posY + blockHeight, posZ + 1.0f}, {0.0f, 0.0f}, texIndex});
+
                     uint32_t faceBase = static_cast<uint32_t>(vertices.size()) - 4;
                     indices.push_back(faceBase);
                     indices.push_back(faceBase + 1);
@@ -265,19 +295,17 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateSec
                     indices.push_back(faceBase + 3);
                 }
                 
-                // 后面 (z-) - 如果后方是空气则渲染
-                if (isAir(x, localY, z - 1)) {
+                // 后面 (z-) - 邻居非完整方块时渲染（深度测试处理交叠）
+                if (isNotFullSolid(x, localY, z - 1)) {
                     float texIndex = static_cast<float>(tex.side);
-                    
-                    // 统计 texIndex
                     texIndexCount[1]++;
-                    
+
                     // V 坐标翻转
                     vertices.push_back({{posX + 1.0f, posY, posZ}, {0.0f, 1.0f}, texIndex});
                     vertices.push_back({{posX, posY, posZ}, {1.0f, 1.0f}, texIndex});
-                    vertices.push_back({{posX, posY + 1.0f, posZ}, {1.0f, 0.0f}, texIndex});
-                    vertices.push_back({{posX + 1.0f, posY + 1.0f, posZ}, {0.0f, 0.0f}, texIndex});
-                    
+                    vertices.push_back({{posX, posY + blockHeight, posZ}, {1.0f, 0.0f}, texIndex});
+                    vertices.push_back({{posX + 1.0f, posY + blockHeight, posZ}, {0.0f, 0.0f}, texIndex});
+
                     uint32_t faceBase = static_cast<uint32_t>(vertices.size()) - 4;
                     indices.push_back(faceBase);
                     indices.push_back(faceBase + 1);
@@ -287,19 +315,17 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateSec
                     indices.push_back(faceBase + 3);
                 }
                 
-                // 右面 (x+) - 如果右方是空气则渲染
-                if (isAir(x + 1, localY, z)) {
+                // 右面 (x+) - 邻居非完整方块时渲染（深度测试处理交叠）
+                if (isNotFullSolid(x + 1, localY, z)) {
                     float texIndex = static_cast<float>(tex.side);
-                    
-                    // 统计 texIndex
                     texIndexCount[1]++;
-                    
+
                     // V 坐标翻转
                     vertices.push_back({{posX + 1.0f, posY, posZ + 1.0f}, {0.0f, 1.0f}, texIndex});
                     vertices.push_back({{posX + 1.0f, posY, posZ}, {1.0f, 1.0f}, texIndex});
-                    vertices.push_back({{posX + 1.0f, posY + 1.0f, posZ}, {1.0f, 0.0f}, texIndex});
-                    vertices.push_back({{posX + 1.0f, posY + 1.0f, posZ + 1.0f}, {0.0f, 0.0f}, texIndex});
-                    
+                    vertices.push_back({{posX + 1.0f, posY + blockHeight, posZ}, {1.0f, 0.0f}, texIndex});
+                    vertices.push_back({{posX + 1.0f, posY + blockHeight, posZ + 1.0f}, {0.0f, 0.0f}, texIndex});
+
                     uint32_t faceBase = static_cast<uint32_t>(vertices.size()) - 4;
                     indices.push_back(faceBase);
                     indices.push_back(faceBase + 1);
@@ -309,19 +335,17 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateSec
                     indices.push_back(faceBase + 3);
                 }
                 
-                // 左面 (x-) - 如果左方是空气则渲染
-                if (isAir(x - 1, localY, z)) {
+                // 左面 (x-) - 邻居非完整方块时渲染（深度测试处理交叠）
+                if (isNotFullSolid(x - 1, localY, z)) {
                     float texIndex = static_cast<float>(tex.side);
-                    
-                    // 统计 texIndex
                     texIndexCount[1]++;
-                    
+
                     // V 坐标翻转
                     vertices.push_back({{posX, posY, posZ}, {0.0f, 1.0f}, texIndex});
                     vertices.push_back({{posX, posY, posZ + 1.0f}, {1.0f, 1.0f}, texIndex});
-                    vertices.push_back({{posX, posY + 1.0f, posZ + 1.0f}, {1.0f, 0.0f}, texIndex});
-                    vertices.push_back({{posX, posY + 1.0f, posZ}, {0.0f, 0.0f}, texIndex});
-                    
+                    vertices.push_back({{posX, posY + blockHeight, posZ + 1.0f}, {1.0f, 0.0f}, texIndex});
+                    vertices.push_back({{posX, posY + blockHeight, posZ}, {0.0f, 0.0f}, texIndex});
+
                     uint32_t faceBase = static_cast<uint32_t>(vertices.size()) - 4;
                     indices.push_back(faceBase);
                     indices.push_back(faceBase + 1);

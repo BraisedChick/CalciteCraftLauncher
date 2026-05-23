@@ -30,6 +30,8 @@ enum TextureLayer : int {
     TEX_OAK_LEAVES = 14,          // oak_leaves.png
     TEX_SPRUCE_LEAVES = 15,       // spruce_leaves.png
     TEX_GRASS_BLOCK_SNOW = 16,    // grass_block_snow.png
+    TEX_SNOW = 17,                // snow.png
+    TEX_ICE = 18,                 // ice.png
 
     TEXTURE_LAYER_COUNT,  // 纹理层总数
 };
@@ -51,87 +53,167 @@ inline BlockTextureConfig getBlockTexture(int32_t blockState) {
     std::string name = registry.getBlockName(blockState);
 
     // 草方块：顶面 grass_top，侧面 grass_side，底面 dirt
-    if (name == "minecraft:grass_block") {
+    if (name == "grass_block") {
         return {TEX_GRASS_TOP, TEX_GRASS_SIDE, TEX_DIRT};
     }
 
     // 泥土：全部 dirt
-    if (name == "minecraft:dirt" || name == "minecraft:coarse_dirt"
-        || name == "minecraft:rooted_dirt" || name == "minecraft:mud") {
+    if (name == "dirt" || name == "coarse_dirt"
+        || name == "rooted_dirt" || name == "mud") {
         return {TEX_DIRT, TEX_DIRT, TEX_DIRT};
     }
 
     // 石头
-    if (name == "minecraft:stone" || name == "minecraft:andesite"
-        || name == "minecraft:diorite" || name == "minecraft:granite"
-        || name == "minecraft:deepslate" || name == "minecraft:tuff"
-        || name == "minecraft:calcite" || name == "minecraft:dripstone_block") {
+    if (name == "stone" || name == "andesite"
+        || name == "diorite" || name == "granite"
+        || name == "deepslate" || name == "tuff"
+        || name == "calcite" || name == "dripstone_block") {
         return {TEX_STONE, TEX_STONE, TEX_STONE};
     }
 
     // 圆石
-    if (name == "minecraft:cobblestone" || name == "minecraft:mossy_cobblestone"
-        || name == "minecraft:stone_bricks" || name == "minecraft:cracked_stone_bricks"
-        || name == "minecraft:mossy_stone_bricks") {
+    if (name == "cobblestone" || name == "mossy_cobblestone"
+        || name == "stone_bricks" || name == "cracked_stone_bricks"
+        || name == "mossy_stone_bricks") {
         return {TEX_COBBLESTONE, TEX_COBBLESTONE, TEX_COBBLESTONE};
     }
 
     // 橡木木板
-    if (name == "minecraft:oak_planks" || name == "minecraft:oak_stairs"
-        || name == "minecraft:oak_slab" || name == "minecraft:oak_fence") {
+    if (name == "oak_planks" || name == "oak_stairs"
+        || name == "oak_slab" || name == "oak_fence") {
         return {TEX_OAK_PLANKS, TEX_OAK_PLANKS, TEX_OAK_PLANKS};
     }
 
     // 橡木原木：顶面原木顶部，侧面原木侧面
-    if (name == "minecraft:oak_log" || name == "minecraft:oak_wood"
-        || name == "minecraft:stripped_oak_log" || name == "minecraft:stripped_oak_wood") {
+    if (name == "oak_log" || name == "oak_wood"
+        || name == "stripped_oak_log" || name == "stripped_oak_wood") {
         return {TEX_OAK_LOG_TOP, TEX_OAK_LOG_SIDE, TEX_OAK_LOG_TOP};
     }
 
     // 云杉木板
-    if (name == "minecraft:spruce_planks" || name == "minecraft:spruce_stairs"
-        || name == "minecraft:spruce_slab" || name == "minecraft:spruce_fence") {
+    if (name == "spruce_planks" || name == "spruce_stairs"
+        || name == "spruce_slab" || name == "spruce_fence") {
         return {TEX_SPRUCE_PLANKS, TEX_SPRUCE_PLANKS, TEX_SPRUCE_PLANKS};
     }
 
     // 云杉原木
-    if (name == "minecraft:spruce_log" || name == "minecraft:spruce_wood"
-        || name == "minecraft:stripped_spruce_log" || name == "minecraft:stripped_spruce_wood") {
+    if (name == "spruce_log" || name == "spruce_wood"
+        || name == "stripped_spruce_log" || name == "stripped_spruce_wood") {
         return {TEX_SPRUCE_LOG_TOP, TEX_SPRUCE_LOG_SIDE, TEX_SPRUCE_LOG_TOP};
     }
 
     // 沙子
-    if (name == "minecraft:sand" || name == "minecraft:red_sand"
-        || name == "minecraft:sandstone" || name == "minecraft:red_sandstone") {
+    if (name == "sand" || name == "red_sand"
+        || name == "sandstone" || name == "red_sandstone") {
         return {TEX_SAND, TEX_SAND, TEX_SAND};
     }
 
     // 砂砾
-    if (name == "minecraft:gravel") {
+    if (name == "gravel") {
         return {TEX_GRAVEL, TEX_GRAVEL, TEX_GRAVEL};
     }
 
     // 橡树树叶
-    if (name == "minecraft:oak_leaves" || name == "minecraft:birch_leaves"
-        || name == "minecraft:jungle_leaves" || name == "minecraft:acacia_leaves"
-        || name == "minecraft:dark_oak_leaves" || name == "minecraft:azalea_leaves"
-        || name == "minecraft:flowering_azalea_leaves") {
+    if (name == "oak_leaves" || name == "birch_leaves"
+        || name == "jungle_leaves" || name == "acacia_leaves"
+        || name == "dark_oak_leaves" || name == "azalea_leaves"
+        || name == "flowering_azalea_leaves") {
         return {TEX_OAK_LEAVES, TEX_OAK_LEAVES, TEX_OAK_LEAVES};
     }
 
     // 云杉树叶
-    if (name == "minecraft:spruce_leaves") {
+    if (name == "spruce_leaves") {
         return {TEX_SPRUCE_LEAVES, TEX_SPRUCE_LEAVES, TEX_SPRUCE_LEAVES};
     }
 
-    // 雪草方块：带雪的草方块
-    if (name == "minecraft:grass_block" || name.find("snow") != std::string::npos) {
-        // 注意：这里和上面的 grass_block 重复了，但 grass_block 已经先返回了
-        // 只用于带雪的方块
+    // 雪草方块
+    if (name == "grass_block_snow") {
+        return {TEX_GRASS_BLOCK_SNOW, TEX_GRASS_BLOCK_SNOW, TEX_DIRT};
     }
 
-    // 默认：石头
-    return {TEX_STONE, TEX_STONE, TEX_STONE};
+    // 雪片（不完整方块，可叠加 layers=1..8）
+    if (name == "snow") {
+        return {TEX_SNOW, TEX_SNOW, TEX_SNOW};
+    }
+
+    // 冰
+    if (name == "ice" || name == "packed_ice" || name == "blue_ice" || name == "frosted_ice") {
+        return {TEX_ICE, TEX_ICE, TEX_ICE};
+    }
+
+    // 植物（不完整方块）：草、蕨等使用草方块顶面纹理
+    if (name == "grass" || name == "tall_grass"
+        || name == "fern" || name == "large_fern") {
+        return {TEX_GRASS_TOP, TEX_GRASS_TOP, TEX_GRASS_TOP};
+    }
+
+    // 花
+    if (name == "dandelion" || name == "poppy" || name == "blue_orchid"
+        || name == "allium" || name == "azure_bluet" || name == "oxeye_daisy"
+        || name == "cornflower" || name == "lily_of_the_valley"
+        || name == "wither_rose" || name == "sunflower"
+        || name == "lilac" || name == "rose_bush" || name == "peony") {
+        return {TEX_OAK_PLANKS, TEX_OAK_PLANKS, TEX_OAK_PLANKS};
+    }
+
+    // 其他不完整方块：藤蔓、睡莲、枯灌木、甘蔗、蘑菇等
+    if (name == "vine" || name == "lily_pad" || name == "dead_bush"
+        || name == "sugar_cane" || name == "brown_mushroom"
+        || name == "red_mushroom" || name == "cactus") {
+        return {TEX_GRASS_TOP, TEX_GRASS_TOP, TEX_GRASS_TOP};
+    }
+
+    // 未知方块：根据 blockState ID 取模分配纹理，避免全部显示为石头
+    int texIndex = TEX_STONE + (blockState % 10);
+    if (texIndex >= TEXTURE_LAYER_COUNT) texIndex = TEX_STONE;
+    return {texIndex, texIndex, texIndex};
+}
+
+// ============================================================
+// 获取方块高度比例（1.0 = 完整方块，<1.0 = 不完整方块如雪片）
+// ============================================================
+inline float getBlockHeight(int32_t blockState) {
+    if (blockState == 0) return 0.0f;
+
+    auto& registry = BlockRegistry::getInstance();
+    std::string name = registry.getBlockName(blockState);
+
+    // 雪片：根据 blockState 在 "snow" 范围内的偏移量计算层数
+    if (name == "snow") {
+        auto* info = registry.getBlockInfo(blockState);
+        if (info) {
+            int stateCount = info->maxStateId - info->minStateId + 1;
+            if (stateCount >= 8) {
+                int layers = (blockState - info->minStateId) + 1;
+                if (layers < 1) layers = 1;
+                if (layers > 8) layers = 8;
+                return layers / 8.0f;
+            }
+        }
+        return 0.5f; // 无法确定层数，默认半格
+    }
+
+    // 植物、花、不完整方块：高度设为 0.5，不遮挡相邻面
+    if (name == "grass" || name == "tall_grass"
+        || name == "fern" || name == "large_fern"
+        || name == "dead_bush" || name == "vine"
+        || name == "lily_pad" || name == "sugar_cane"
+        || name == "brown_mushroom" || name == "red_mushroom"
+        || name == "dandelion" || name == "poppy" || name == "blue_orchid"
+        || name == "allium" || name == "azure_bluet" || name == "oxeye_daisy"
+        || name == "cornflower" || name == "lily_of_the_valley"
+        || name == "wither_rose" || name == "sunflower"
+        || name == "lilac" || name == "rose_bush" || name == "peony") {
+        return 0.5f;
+    }
+
+    return 1.0f; // 默认为完整方块
+}
+
+// 判断一个 blockState 是否为完整方块
+inline bool isFullBlock(int32_t blockState) {
+    if (blockState == 0) return false;
+    return getBlockHeight(blockState) >= 1.0f;
 }
 
 // ============================================================
@@ -146,16 +228,18 @@ inline std::string getTextureFileName(int layer) {
         case TEX_COBBLESTONE:    return "cobblestone.png";
         case TEX_OAK_PLANKS:     return "oak_planks.png";
         case TEX_OAK_LOG_TOP:    return "oak_log_top.png";
-        case TEX_OAK_LOG_SIDE:   return "oak_log_side.png";
+        case TEX_OAK_LOG_SIDE:   return "oak_log.png";
         case TEX_SPRUCE_PLANKS:  return "spruce_planks.png";
         case TEX_SPRUCE_LOG_TOP: return "spruce_log_top.png";
-        case TEX_SPRUCE_LOG_SIDE: return "spruce_log_side.png";
+        case TEX_SPRUCE_LOG_SIDE: return "spruce_log.png";
         case TEX_SAND:           return "sand.png";
         case TEX_GRAVEL:         return "gravel.png";
         case TEX_WATER:          return "water.png";
         case TEX_OAK_LEAVES:     return "oak_leaves.png";
         case TEX_SPRUCE_LEAVES:  return "spruce_leaves.png";
         case TEX_GRASS_BLOCK_SNOW: return "grass_block_snow.png";
+        case TEX_SNOW:           return "snow.png";
+        case TEX_ICE:            return "ice.png";
         default:                 return "stone.png";
     }
 }
@@ -182,6 +266,8 @@ inline void getPlaceholderColor(int layer, uint8_t& r, uint8_t& g, uint8_t& b) {
         case TEX_OAK_LEAVES:     r = 0x47; g = 0xA0; b = 0x36; break; // 树叶绿
         case TEX_SPRUCE_LEAVES:  r = 0x2D; g = 0x6B; b = 0x21; break; // 深树叶绿
         case TEX_GRASS_BLOCK_SNOW: r = 0xF0; g = 0xF0; b = 0xF0; break; // 雪白
+        case TEX_SNOW:           r = 0xF0; g = 0xF8; b = 0xFF; break; // 雪白
+        case TEX_ICE:            r = 0xA0; g = 0xD8; b = 0xF0; break; // 冰蓝
         default:                 r = 0xAA; g = 0x44; b = 0xAA; break; // 紫色（未知）
     }
 }
