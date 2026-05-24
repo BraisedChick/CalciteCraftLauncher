@@ -17,5 +17,6 @@
 
 📜 开源协议
 本项目采用 GPL-3.0 License 授权
+
 使用的第三方库
 - [Botcraft](https://github.com/adepierre/Botcraft)
