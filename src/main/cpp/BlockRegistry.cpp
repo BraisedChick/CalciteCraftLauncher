@@ -270,6 +270,8 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         meta.texBottom = TEX_DIRT;
     } else if (meta.isSnow) {
         meta.texTop = meta.texSide = meta.texBottom = TEX_SNOW;
+    } else if (meta.name == "snow_block") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_SNOW_BLOCK;
     } else if (meta.name == "ice" || meta.name == "packed_ice" || meta.name == "blue_ice" || meta.name == "frosted_ice") {
         meta.texTop = meta.texSide = meta.texBottom = TEX_ICE;
     } else if (meta.isWater) {
@@ -287,6 +289,61 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
                || meta.name == "sugar_cane" || meta.name == "brown_mushroom"
                || meta.name == "red_mushroom" || meta.name == "cactus") {
         meta.texTop = meta.texSide = meta.texBottom = TEX_GRASS_TOP;
+    }
+    // ---- 矿石 ----
+    else if (meta.name == "coal_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_COAL_ORE;
+    }
+    else if (meta.name == "deepslate_coal_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_DEEPSLATE_COAL_ORE;
+    }
+    else if (meta.name == "copper_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_COPPER_ORE;
+    }
+    else if (meta.name == "deepslate_copper_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_DEEPSLATE_COPPER_ORE;
+    }
+    else if (meta.name == "diamond_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_DIAMOND_ORE;
+    }
+    else if (meta.name == "deepslate_diamond_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_DEEPSLATE_DIAMOND_ORE;
+    }
+    else if (meta.name == "emerald_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_EMERALD_ORE;
+    }
+    else if (meta.name == "deepslate_emerald_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_DEEPSLATE_EMERALD_ORE;
+    }
+    else if (meta.name == "gold_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_GOLD_ORE;
+    }
+    else if (meta.name == "deepslate_gold_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_DEEPSLATE_GOLD_ORE;
+    }
+    else if (meta.name == "iron_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_IRON_ORE;
+    }
+    else if (meta.name == "deepslate_iron_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_DEEPSLATE_IRON_ORE;
+    }
+    else if (meta.name == "lapis_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_LAPIS_ORE;
+    }
+    else if (meta.name == "deepslate_lapis_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_DEEPSLATE_LAPIS_ORE;
+    }
+    else if (meta.name == "redstone_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_REDSTONE_ORE;
+    }
+    else if (meta.name == "deepslate_redstone_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_DEEPSLATE_REDSTONE_ORE;
+    }
+    else if (meta.name == "nether_gold_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_NETHER_GOLD_ORE;
+    }
+    else if (meta.name == "nether_quartz_ore") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_NETHER_QUARTZ_ORE;
     } else {
         // 未知方块：根据 blockState ID 取模分配纹理
         int texIndex = TEX_STONE + (blockState % 10);

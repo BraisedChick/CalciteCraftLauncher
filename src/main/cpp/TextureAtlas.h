@@ -36,7 +36,30 @@ enum TextureLayer : int {
     TEX_GRASS_PLANT = 19,         // grass.png（草植物十字交叉纹理）
     TEX_GRASS_SIDE_OVERLAY = 20,  // grass_block_side_overlay.png（侧面覆盖层，被染色后叠加在 grass_side 上）
 
-    TEXTURE_LAYER_COUNT,  // 纹理层总数
+    // ---- 矿石 ----
+    TEX_COAL_ORE = 21,                // coal_ore.png
+    TEX_DEEPSLATE_COAL_ORE = 22,      // deepslate_coal_ore.png
+    TEX_COPPER_ORE = 23,              // copper_ore.png
+    TEX_DEEPSLATE_COPPER_ORE = 24,    // deepslate_copper_ore.png
+    TEX_DIAMOND_ORE = 25,             // diamond_ore.png
+    TEX_DEEPSLATE_DIAMOND_ORE = 26,   // deepslate_diamond_ore.png
+    TEX_EMERALD_ORE = 27,             // emerald_ore.png
+    TEX_DEEPSLATE_EMERALD_ORE = 28,   // deepslate_emerald_ore.png
+    TEX_GOLD_ORE = 29,                // gold_ore.png
+    TEX_DEEPSLATE_GOLD_ORE = 30,      // deepslate_gold_ore.png
+    TEX_IRON_ORE = 31,                // iron_ore.png
+    TEX_DEEPSLATE_IRON_ORE = 32,      // deepslate_iron_ore.png
+    TEX_LAPIS_ORE = 33,               // lapis_ore.png
+    TEX_DEEPSLATE_LAPIS_ORE = 34,     // deepslate_lapis_ore.png
+    TEX_REDSTONE_ORE = 35,            // redstone_ore.png
+    TEX_DEEPSLATE_REDSTONE_ORE = 36,  // deepslate_redstone_ore.png
+    TEX_NETHER_GOLD_ORE = 37,         // nether_gold_ore.png
+    TEX_NETHER_QUARTZ_ORE = 38,       // nether_quartz_ore.png
+
+    // ---- 其他 ----
+    TEX_SNOW_BLOCK = 39,              // snow_block.png
+
+    TEXTURE_LAYER_COUNT,  // 纹理层总数（当前 = 40）
 };
 
 // ============================================================
@@ -139,6 +162,11 @@ inline BlockTextureConfig getBlockTexture(int32_t blockState) {
         return {TEX_SNOW, TEX_SNOW, TEX_SNOW};
     }
 
+    // 雪块（完整方块）
+    if (name == "snow_block") {
+        return {TEX_SNOW_BLOCK, TEX_SNOW_BLOCK, TEX_SNOW_BLOCK};
+    }
+
     // 冰
     if (name == "ice" || name == "packed_ice" || name == "blue_ice" || name == "frosted_ice") {
         return {TEX_ICE, TEX_ICE, TEX_ICE};
@@ -164,6 +192,62 @@ inline BlockTextureConfig getBlockTexture(int32_t blockState) {
         || name == "sugar_cane" || name == "brown_mushroom"
         || name == "red_mushroom" || name == "cactus") {
         return {TEX_GRASS_TOP, TEX_GRASS_TOP, TEX_GRASS_TOP};
+    }
+
+    // ---- 矿石 ----
+    if (name == "coal_ore") {
+        return {TEX_COAL_ORE, TEX_COAL_ORE, TEX_COAL_ORE};
+    }
+    if (name == "deepslate_coal_ore") {
+        return {TEX_DEEPSLATE_COAL_ORE, TEX_DEEPSLATE_COAL_ORE, TEX_DEEPSLATE_COAL_ORE};
+    }
+    if (name == "copper_ore") {
+        return {TEX_COPPER_ORE, TEX_COPPER_ORE, TEX_COPPER_ORE};
+    }
+    if (name == "deepslate_copper_ore") {
+        return {TEX_DEEPSLATE_COPPER_ORE, TEX_DEEPSLATE_COPPER_ORE, TEX_DEEPSLATE_COPPER_ORE};
+    }
+    if (name == "diamond_ore") {
+        return {TEX_DIAMOND_ORE, TEX_DIAMOND_ORE, TEX_DIAMOND_ORE};
+    }
+    if (name == "deepslate_diamond_ore") {
+        return {TEX_DEEPSLATE_DIAMOND_ORE, TEX_DEEPSLATE_DIAMOND_ORE, TEX_DEEPSLATE_DIAMOND_ORE};
+    }
+    if (name == "emerald_ore") {
+        return {TEX_EMERALD_ORE, TEX_EMERALD_ORE, TEX_EMERALD_ORE};
+    }
+    if (name == "deepslate_emerald_ore") {
+        return {TEX_DEEPSLATE_EMERALD_ORE, TEX_DEEPSLATE_EMERALD_ORE, TEX_DEEPSLATE_EMERALD_ORE};
+    }
+    if (name == "gold_ore") {
+        return {TEX_GOLD_ORE, TEX_GOLD_ORE, TEX_GOLD_ORE};
+    }
+    if (name == "deepslate_gold_ore") {
+        return {TEX_DEEPSLATE_GOLD_ORE, TEX_DEEPSLATE_GOLD_ORE, TEX_DEEPSLATE_GOLD_ORE};
+    }
+    if (name == "iron_ore") {
+        return {TEX_IRON_ORE, TEX_IRON_ORE, TEX_IRON_ORE};
+    }
+    if (name == "deepslate_iron_ore") {
+        return {TEX_DEEPSLATE_IRON_ORE, TEX_DEEPSLATE_IRON_ORE, TEX_DEEPSLATE_IRON_ORE};
+    }
+    if (name == "lapis_ore") {
+        return {TEX_LAPIS_ORE, TEX_LAPIS_ORE, TEX_LAPIS_ORE};
+    }
+    if (name == "deepslate_lapis_ore") {
+        return {TEX_DEEPSLATE_LAPIS_ORE, TEX_DEEPSLATE_LAPIS_ORE, TEX_DEEPSLATE_LAPIS_ORE};
+    }
+    if (name == "redstone_ore") {
+        return {TEX_REDSTONE_ORE, TEX_REDSTONE_ORE, TEX_REDSTONE_ORE};
+    }
+    if (name == "deepslate_redstone_ore") {
+        return {TEX_DEEPSLATE_REDSTONE_ORE, TEX_DEEPSLATE_REDSTONE_ORE, TEX_DEEPSLATE_REDSTONE_ORE};
+    }
+    if (name == "nether_gold_ore") {
+        return {TEX_NETHER_GOLD_ORE, TEX_NETHER_GOLD_ORE, TEX_NETHER_GOLD_ORE};
+    }
+    if (name == "nether_quartz_ore") {
+        return {TEX_NETHER_QUARTZ_ORE, TEX_NETHER_QUARTZ_ORE, TEX_NETHER_QUARTZ_ORE};
     }
 
     // 未知方块：根据 blockState ID 取模分配纹理，避免全部显示为石头
@@ -260,10 +344,29 @@ inline std::string getTextureFileName(int layer) {
         case TEX_SPRUCE_LEAVES:  return "spruce_leaves.png";
         case TEX_GRASS_BLOCK_SNOW: return "grass_block_snow.png";
         case TEX_SNOW:           return "snow.png";
+        case TEX_SNOW_BLOCK:     return "powder_snow.png";
         case TEX_ICE:            return "ice.png";
         case TEX_GRASS_PLANT:    return "grass.png";
         case TEX_GRASS_SIDE_OVERLAY: return "grass_block_side_overlay.png";
-        default:                 return "stone.png";
+        case TEX_COAL_ORE:           return "coal_ore.png";
+        case TEX_DEEPSLATE_COAL_ORE: return "deepslate_coal_ore.png";
+        case TEX_COPPER_ORE:         return "copper_ore.png";
+        case TEX_DEEPSLATE_COPPER_ORE: return "deepslate_copper_ore.png";
+        case TEX_DIAMOND_ORE:        return "diamond_ore.png";
+        case TEX_DEEPSLATE_DIAMOND_ORE: return "deepslate_diamond_ore.png";
+        case TEX_EMERALD_ORE:        return "emerald_ore.png";
+        case TEX_DEEPSLATE_EMERALD_ORE: return "deepslate_emerald_ore.png";
+        case TEX_GOLD_ORE:           return "gold_ore.png";
+        case TEX_DEEPSLATE_GOLD_ORE: return "deepslate_gold_ore.png";
+        case TEX_IRON_ORE:           return "iron_ore.png";
+        case TEX_DEEPSLATE_IRON_ORE: return "deepslate_iron_ore.png";
+        case TEX_LAPIS_ORE:          return "lapis_ore.png";
+        case TEX_DEEPSLATE_LAPIS_ORE: return "deepslate_lapis_ore.png";
+        case TEX_REDSTONE_ORE:       return "redstone_ore.png";
+        case TEX_DEEPSLATE_REDSTONE_ORE: return "deepslate_redstone_ore.png";
+        case TEX_NETHER_GOLD_ORE:    return "nether_gold_ore.png";
+        case TEX_NETHER_QUARTZ_ORE:  return "nether_quartz_ore.png";
+        default:                     return "stone.png";
     }
 }
 
@@ -289,10 +392,30 @@ inline void getPlaceholderColor(int layer, uint8_t& r, uint8_t& g, uint8_t& b) {
         case TEX_OAK_LEAVES:     r = 0x47; g = 0xA0; b = 0x36; break; // 树叶绿
         case TEX_SPRUCE_LEAVES:  r = 0x2D; g = 0x6B; b = 0x21; break; // 深树叶绿
         case TEX_GRASS_BLOCK_SNOW: r = 0xF0; g = 0xF0; b = 0xF0; break; // 雪白
-        case TEX_SNOW:           r = 0xF0; g = 0xF8; b = 0xFF; break; // 雪白
+        case TEX_SNOW:           r = 0xF0; g = 0xF8; b = 0xFF; break; // 雪片白
+        case TEX_SNOW_BLOCK:     r = 0xF5; g = 0xF5; b = 0xF5; break; // 雪块白
         case TEX_ICE:            r = 0xA0; g = 0xD8; b = 0xF0; break; // 冰蓝
         case TEX_GRASS_PLANT:    r = 0x5B; g = 0x8E; b = 0x2D; break; // 草绿
         case TEX_GRASS_SIDE_OVERLAY: r = 0x7C; g = 0xB3; b = 0x42; break; // 与 grass_top 相同
-        default:                 r = 0xAA; g = 0x44; b = 0xAA; break; // 紫色（未知）
+        // ---- 矿石占位色 ----
+        case TEX_COAL_ORE:           r = 0x2D; g = 0x2D; b = 0x2D; break; // 深灰
+        case TEX_DEEPSLATE_COAL_ORE: r = 0x1A; g = 0x1A; b = 0x1A; break; // 极深灰
+        case TEX_COPPER_ORE:         r = 0xCC; g = 0x77; b = 0x33; break; // 铜橙色
+        case TEX_DEEPSLATE_COPPER_ORE: r = 0x99; g = 0x55; b = 0x22; break; // 深铜色
+        case TEX_DIAMOND_ORE:        r = 0x55; g = 0xCC; b = 0xEE; break; // 青
+        case TEX_DEEPSLATE_DIAMOND_ORE: r = 0x33; g = 0x88; b = 0xAA; break; // 深青
+        case TEX_EMERALD_ORE:        r = 0x44; g = 0xCC; b = 0x44; break; // 绿
+        case TEX_DEEPSLATE_EMERALD_ORE: r = 0x22; g = 0x88; b = 0x22; break; // 深绿
+        case TEX_GOLD_ORE:           r = 0xFF; g = 0xCC; b = 0x44; break; // 金
+        case TEX_DEEPSLATE_GOLD_ORE: r = 0xBB; g = 0x99; b = 0x22; break; // 暗金
+        case TEX_IRON_ORE:           r = 0xCC; g = 0xBB; b = 0x99; break; // 米色
+        case TEX_DEEPSLATE_IRON_ORE: r = 0x99; g = 0x88; b = 0x66; break; // 深米
+        case TEX_LAPIS_ORE:          r = 0x33; g = 0x66; b = 0xCC; break; // 蓝
+        case TEX_DEEPSLATE_LAPIS_ORE: r = 0x22; g = 0x44; b = 0x99; break; // 深蓝
+        case TEX_REDSTONE_ORE:       r = 0xCC; g = 0x33; b = 0x33; break; // 红
+        case TEX_DEEPSLATE_REDSTONE_ORE: r = 0x88; g = 0x22; b = 0x22; break; // 深红
+        case TEX_NETHER_GOLD_ORE:    r = 0xCC; g = 0x88; b = 0x22; break; // 金褐
+        case TEX_NETHER_QUARTZ_ORE:  r = 0xDD; g = 0xCC; b = 0xBB; break; // 白
+        default:                     r = 0xAA; g = 0x44; b = 0xAA; break; // 紫色（未知）
     }
 }
