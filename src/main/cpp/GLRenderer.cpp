@@ -1034,7 +1034,7 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     if (anyWater) {
         glEnable(GL_BLEND);
         glBlendColor(1.0f, 1.0f, 1.0f, 0.5f);  // alpha=0.5，水下块更可见
-        glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glDepthFunc(GL_LEQUAL);
         glDepthMask(GL_FALSE);
         if (uniformUseWaterTexture != -1) glUniform1i(uniformUseWaterTexture, 1);
