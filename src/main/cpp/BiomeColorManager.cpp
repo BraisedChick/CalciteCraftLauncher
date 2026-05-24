@@ -174,3 +174,21 @@ void BiomeColorManager::getFoliageColor(int32_t biomeId, uint8_t& r, uint8_t& g,
         r = 127; g = 191; b = 80;
     }
 }
+
+void BiomeColorManager::getWaterColor(int32_t biomeId, uint8_t& r, uint8_t& g, uint8_t& b) const {
+    if (!ready || biomeId < 0 || biomeId >= BIOME_COUNT) {
+        r = 0x3F; g = 0x76; b = 0xE4;
+        return;
+    }
+
+    const auto& entry = biomes[biomeId];
+
+    if (entry.hasFixedWaterColor) {
+        r = entry.fixedWaterR;
+        g = entry.fixedWaterG;
+        b = entry.fixedWaterB;
+    } else {
+        // 无指定水色时使用 Minecraft 默认水色
+        r = 0x3F; g = 0x76; b = 0xE4;
+    }
+}

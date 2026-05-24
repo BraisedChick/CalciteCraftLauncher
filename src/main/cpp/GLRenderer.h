@@ -17,6 +17,7 @@
 #include <condition_variable>
 #include <atomic>
 #include <unordered_set>
+#include <chrono>
 
 // 添加 GLM 库
 #define GLM_FORCE_RADIANS
@@ -86,7 +87,8 @@ private:
         uint64_t chunkKey;
         std::vector<Vertex> vertices;
         std::vector<uint32_t> indices;
-        uint32_t overlayIndexCount = 0;
+        uint32_t overlayIndexCount = 0;  // 草覆盖层索引数
+        uint32_t waterIndexCount = 0;    // 水索引数
     };
 
     void workerLoop();
@@ -138,11 +140,15 @@ private:
     GLuint vbo = 0;
     GLuint ebo = 0;
     GLuint textureArrayID = 0;  // 纹理数组（替代单个 textureID）
+    GLuint waterTextureID = 0;  // 水纹理（单独加载，16x512 支持动画）
 
     GLint uniformModel = -1;
     GLint uniformView = -1;
     GLint uniformProj = -1;
     GLint uniformTexture = -1;
+    GLint uniformWaterTexture = -1;
+    GLint uniformWaterTime = -1;
+    GLint uniformUseWaterTexture = -1;
 
     float cameraMatrix[16];
     float projectionMatrix[16];
@@ -165,6 +171,10 @@ private:
     
     // 帧计数器
     uint32_t frameCount = 0;
+
+    // 水动画时间（累计，帧率无关）
+    float waterAnimTime = 0.0f;
+    std::chrono::steady_clock::time_point lastFrameTime;
     
     // ===== 区块合批渲染优化 =====
     struct ChunkRenderData {
@@ -172,7 +182,8 @@ private:
         GLuint ebo = 0;          // 索引缓冲
         uint32_t vertexCount = 0;
         uint32_t indexCount = 0;
-        uint32_t overlayIndexCount = 0;  // overlay 索引数（需要 alpha blend 的部分）
+        uint32_t overlayIndexCount = 0;  // 草覆盖层索引数（需 LEQUAL 写深度）
+        uint32_t waterIndexCount = 0;    // 水索引数（需 alpha blend，不写深度）
         glm::vec3 position;      // 区块世界坐标
         bool visible = true;     // 是否在视锥体内
         bool needsUpdate = false; // 是否需要重建

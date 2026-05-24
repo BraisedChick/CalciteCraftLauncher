@@ -16,11 +16,12 @@ public:
         uint8_t r, g, b;
     };
 
-    // 网格生成输出：包含顶点、索引和其中 overlay 层（需混合）的索引数量
+    // 网格生成输出：包含顶点、索引、草覆盖层索引数和水索引数
     struct SectionMeshOutput {
         std::vector<Vertex> vertices;
         std::vector<uint32_t> indices;
-        uint32_t overlayIndexCount = 0;
+        uint32_t overlayIndexCount = 0;  // 草覆盖层索引数（共面需 LEQUAL，写深度）
+        uint32_t waterIndexCount = 0;    // 水索引数（需 alpha blend，不写深度）
     };
 
     static std::vector<Vertex> generateMesh(const Chunk& chunk);

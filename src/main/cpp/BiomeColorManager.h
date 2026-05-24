@@ -26,14 +26,17 @@ public:
         uint8_t fixedGrassR = 255, fixedGrassG = 255, fixedGrassB = 255;
         bool hasFixedFoliageColor = false;
         uint8_t fixedFoliageR = 255, fixedFoliageG = 255, fixedFoliageB = 255;
+        bool hasFixedWaterColor = false;
+        uint8_t fixedWaterR = 255, fixedWaterG = 255, fixedWaterB = 255;
     };
 
     // 应用服务器端的 biome 注册表数据（从 LoginPacket RegistryHolder 解析）
     void applyServerBiomeMapping(const std::map<int32_t, BiomeEntry>& serverBiomes);
 
-    // 根据 biome ID (0-63, 1.18.2 默认注册顺序) 获取草/树叶颜色
+    // 根据 biome ID (0-63, 1.18.2 默认注册顺序) 获取草/树叶/水颜色
     void getGrassColor(int32_t biomeId, uint8_t& r, uint8_t& g, uint8_t& b) const;
     void getFoliageColor(int32_t biomeId, uint8_t& r, uint8_t& g, uint8_t& b) const;
+    void getWaterColor(int32_t biomeId, uint8_t& r, uint8_t& g, uint8_t& b) const;
 
 private:
     BiomeColorManager() = default;

@@ -189,6 +189,9 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         || meta.name == "wither_rose" || meta.name == "sunflower"
         || meta.name == "lilac" || meta.name == "rose_bush" || meta.name == "peony");
 
+    // ---- 水 ----
+    meta.isWater = (meta.name == "water");
+
     // ---- 高度 ----
     if (meta.isSnow) {
         int stateCount = info->maxStateId - info->minStateId + 1;
@@ -200,12 +203,24 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         } else {
             meta.height = 0.5f;
         }
+    } else if (meta.isWater) {
+        // 水：根据 level 计算高度（水源 0.875，流动水递减）
+        int stateCount = info->maxStateId - info->minStateId + 1;
+        if (stateCount >= 8) {
+            int level = blockState - info->minStateId;
+            if (level <= 0) level = 0;
+            if (level >= 7) level = 7;
+            // level 0 = 14/16, level 7 = 4/16（标准 Minecraft 水流高度）
+            meta.height = (14 - level * 2) / 16.0f;
+        } else {
+            meta.height = 0.875f;
+        }
     } else {
         meta.height = 1.0f;
     }
 
     // ---- 完整方块判定（用于面剔除） ----
-    meta.isFullBlock = (blockState != 0 && !meta.isPlant && !meta.isLeaves && meta.height >= 1.0f);
+    meta.isFullBlock = (blockState != 0 && !meta.isPlant && !meta.isLeaves && !meta.isWater && meta.height >= 1.0f);
 
     // ---- 纹理配置（复制 getBlockTexture 逻辑） ----
     if (meta.isGrassBlock) {
@@ -257,6 +272,8 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         meta.texTop = meta.texSide = meta.texBottom = TEX_SNOW;
     } else if (meta.name == "ice" || meta.name == "packed_ice" || meta.name == "blue_ice" || meta.name == "frosted_ice") {
         meta.texTop = meta.texSide = meta.texBottom = TEX_ICE;
+    } else if (meta.isWater) {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_WATER;
     } else if (meta.isPlant || meta.name == "grass" || meta.name == "tall_grass"
                || meta.name == "fern" || meta.name == "large_fern") {
         meta.texTop = meta.texSide = meta.texBottom = TEX_GRASS_PLANT;

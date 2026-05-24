@@ -28,6 +28,7 @@ struct BlockMetadata {
     bool isGrassBlock = false;
     bool isLeaves = false;
     bool isSnow = false;
+    bool isWater = false;
     bool isFullBlock = true;
 };
 

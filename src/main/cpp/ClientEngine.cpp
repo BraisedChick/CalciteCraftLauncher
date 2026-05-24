@@ -299,6 +299,16 @@ void ClientEngine::handlePlayPacket(NetworkManager& net, int packetId,
                                                     biomeEntry.fixedFoliageB = color & 0xFF;
                                                 }
 
+                                                // 固定水颜色
+                                                auto waterColorIt = effects.find("water_color");
+                                                if (waterColorIt != effects.end() && waterColorIt->second.is<int>()) {
+                                                    int color = waterColorIt->second.get<int>();
+                                                    biomeEntry.hasFixedWaterColor = true;
+                                                    biomeEntry.fixedWaterR = (color >> 16) & 0xFF;
+                                                    biomeEntry.fixedWaterG = (color >> 8) & 0xFF;
+                                                    biomeEntry.fixedWaterB = color & 0xFF;
+                                                }
+
                                                 // grass_color_modifier（沼泽、黑森林等）
                                                 auto modifierIt = effects.find("grass_color_modifier");
                                                 if (modifierIt != effects.end() && modifierIt->second.is<ProtocolCraft::NBT::TagString>()) {

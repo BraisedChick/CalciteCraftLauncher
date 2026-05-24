@@ -151,11 +151,43 @@ bool GLRenderer::initialize(ANativeWindow* window) {
 
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
-    
+
     // 启用背面剔除，减少渲染的面数
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);  // 逆时针为正面
+
+    // ===== 加载水纹理（water_still.png，16x512，32 帧动画）=====
+    glGenTextures(1, &waterTextureID);
+    glBindTexture(GL_TEXTURE_2D, waterTextureID);
+    {
+        TextureData waterTex = TextureLoader::loadImage("water_still.png");
+        if (waterTex.data) {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+                         waterTex.width, waterTex.height, 0,
+                         GL_RGBA, GL_UNSIGNED_BYTE, waterTex.data);
+            LOGI("Loaded water_still.png: %dx%d", waterTex.width, waterTex.height);
+        } else {
+            // 兜底：生成 16x512 蓝色占位纹理
+            LOGW("water_still.png not found, using placeholder");
+            std::vector<uint8_t> placeholder(16 * 512 * 4, 0);
+            for (int y = 0; y < 512; y++) {
+                for (int x = 0; x < 16; x++) {
+                    int p = (y * 16 + x) * 4;
+                    placeholder[p + 0] = 0x3F;
+                    placeholder[p + 1] = 0x76;
+                    placeholder[p + 2] = 0xE4;
+                    placeholder[p + 3] = 255;
+                }
+            }
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+                         16, 512, 0, GL_RGBA, GL_UNSIGNED_BYTE, placeholder.data());
+        }
+    }
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
     // 强制清空旧缓存，重新构建（确保使用最新的 MeshGenerator 代码）
     LOGI("Clearing chunk render cache...");
@@ -323,9 +355,13 @@ bool GLRenderer::createShaders() {
     uniformView = glGetUniformLocation(shaderProgram, "view");
     uniformProj = glGetUniformLocation(shaderProgram, "proj");
     uniformTexture = glGetUniformLocation(shaderProgram, "textureSampler");
+    uniformWaterTexture = glGetUniformLocation(shaderProgram, "waterTexture");
+    uniformWaterTime = glGetUniformLocation(shaderProgram, "waterTime");
+    uniformUseWaterTexture = glGetUniformLocation(shaderProgram, "useWaterTexture");
 
-    LOGI("Uniform locations: model=%d, view=%d, proj=%d, texture=%d",
-         uniformModel, uniformView, uniformProj, uniformTexture);
+    LOGI("Uniform locations: model=%d, view=%d, proj=%d, texture=%d, waterTex=%d, waterTime=%d, useWater=%d",
+         uniformModel, uniformView, uniformProj, uniformTexture,
+         uniformWaterTexture, uniformWaterTime, uniformUseWaterTexture);
 
     LOGI("Shaders compiled and linked successfully");
     return true;
@@ -529,8 +565,9 @@ void GLRenderer::workerLoop() {
         }
 
         std::vector<Vertex> vertices;
-        std::vector<uint32_t> indices;
+        std::vector<uint32_t> baseIndices, overlayIndices, waterIndices;
         uint32_t totalOverlayIndexCount = 0;
+        uint32_t totalWaterIndexCount = 0;
 
         for (size_t sectionIdx = 0; sectionIdx < chunk->sections.size(); ++sectionIdx) {
             const auto& section = chunk->sections[sectionIdx];
@@ -540,12 +577,33 @@ void GLRenderer::workerLoop() {
                 *section, item.chunkX, section->y, item.chunkZ, chunkManager);
 
             uint32_t vertexOffset = static_cast<uint32_t>(vertices.size());
-            for (uint32_t idx : meshOut.indices) {
-                indices.push_back(vertexOffset + idx);
+            size_t regularCount = meshOut.indices.size()
+                - meshOut.overlayIndexCount - meshOut.waterIndexCount;
+
+            // 按类别分离索引，确保所有 base → overlay → water 跨 section 连续排列
+            for (size_t i = 0; i < regularCount; i++) {
+                baseIndices.push_back(vertexOffset + meshOut.indices[i]);
             }
+            size_t ovStart = regularCount;
+            for (size_t i = 0; i < meshOut.overlayIndexCount; i++) {
+                overlayIndices.push_back(vertexOffset + meshOut.indices[ovStart + i]);
+            }
+            size_t watStart = ovStart + meshOut.overlayIndexCount;
+            for (size_t i = 0; i < meshOut.waterIndexCount; i++) {
+                waterIndices.push_back(vertexOffset + meshOut.indices[watStart + i]);
+            }
+
             vertices.insert(vertices.end(), meshOut.vertices.begin(), meshOut.vertices.end());
             totalOverlayIndexCount += meshOut.overlayIndexCount;
+            totalWaterIndexCount += meshOut.waterIndexCount;
         }
+
+        // 合并为 [base | overlay | water]，匹配渲染循环的索引划分
+        std::vector<uint32_t> indices;
+        indices.reserve(baseIndices.size() + overlayIndices.size() + waterIndices.size());
+        indices.insert(indices.end(), baseIndices.begin(), baseIndices.end());
+        indices.insert(indices.end(), overlayIndices.begin(), overlayIndices.end());
+        indices.insert(indices.end(), waterIndices.begin(), waterIndices.end());
 
         // 推入完成队列
         ChunkMeshResult result;
@@ -553,6 +611,7 @@ void GLRenderer::workerLoop() {
         result.vertices = std::move(vertices);
         result.indices = std::move(indices);
         result.overlayIndexCount = totalOverlayIndexCount;
+        result.waterIndexCount = totalWaterIndexCount;
 
         {
             std::lock_guard<std::mutex> lock(resultMutex);
@@ -592,6 +651,7 @@ void GLRenderer::processCompletedWork() {
                 renderData.vertexCount = static_cast<uint32_t>(result.vertices.size());
                 renderData.indexCount = static_cast<uint32_t>(result.indices.size());
                 renderData.overlayIndexCount = result.overlayIndexCount;
+                renderData.waterIndexCount = result.waterIndexCount;
                 renderData.needsUpdate = false;
                 renderData.pending = false;
             }
@@ -841,6 +901,24 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
 
     glUseProgram(shaderProgram);
 
+    // ===== 水动画时间（帧率无关）=====
+    {
+        auto now = std::chrono::steady_clock::now();
+        float deltaSec = std::chrono::duration<float>(now - lastFrameTime).count();
+        lastFrameTime = now;
+        if (deltaSec > 0.0f && deltaSec < 1.0f) {
+            waterAnimTime = fmodf(waterAnimTime + deltaSec / 3.2f, 1.0f);
+        }
+    }
+
+    // ===== 绑定水纹理到 GL_TEXTURE1 =====
+    if (waterTextureID != 0) {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, waterTextureID);
+        if (uniformWaterTexture != -1) glUniform1i(uniformWaterTexture, 1);
+        if (uniformWaterTime != -1) glUniform1f(uniformWaterTime, waterAnimTime);
+    }
+
     // 设置矩阵 uniform
     float modelMatrix[16] = {
             1, 0, 0, 0,
@@ -874,6 +952,9 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     // ===== 合批渲染所有可见区块 =====
     int chunksRendered = 0;
     int totalTriangles = 0;
+
+    // 默认使用主纹理数组
+    if (uniformUseWaterTexture != -1) glUniform1i(uniformUseWaterTexture, 0);
 
     // 获取维度 Y 范围用于 chunk AABB
     const auto& dim = VersionManager::getInstance().getDimensionConfig();
@@ -913,27 +994,86 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex), (void*)(offsetof(Vertex, color)));
         glEnableVertexAttribArray(3);
 
-        // 第一遍：绘制不透明几何体（含草方块侧面基础层）
-        uint32_t baseIndexCount = renderData.indexCount - renderData.overlayIndexCount;
-        glDrawElements(GL_TRIANGLES, baseIndexCount, GL_UNSIGNED_INT, 0);
+        // 索引区域划分：[不透明基体 | 草覆盖层(共面，需 LEQUAL) | 水(透明)]
+        uint32_t baseEnd = renderData.indexCount - renderData.overlayIndexCount - renderData.waterIndexCount;
+        uint32_t grassEnd = baseEnd + renderData.overlayIndexCount;
 
-        // 第二遍：绘制 overlay 几何体（草方块侧面染色覆盖层，需 alpha blend）
+        // 第一遍：不透明几何体（写深度，LESS）
+        glDrawElements(GL_TRIANGLES, baseEnd, GL_UNSIGNED_INT, 0);
+
+        // 第二遍：草覆盖层（与基础层共面，LEQUAL 覆盖但不写深度，避免 z-fighting）
         if (renderData.overlayIndexCount > 0) {
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glDepthFunc(GL_LEQUAL);
             glDepthMask(GL_FALSE);
-
             glDrawElements(GL_TRIANGLES, renderData.overlayIndexCount, GL_UNSIGNED_INT,
-                           (const GLvoid*)(uintptr_t)(baseIndexCount * sizeof(uint32_t)));
-
+                           (const GLvoid*)(uintptr_t)(baseEnd * sizeof(uint32_t)));
             glDepthMask(GL_TRUE);
             glDepthFunc(GL_LESS);
-            glDisable(GL_BLEND);
         }
 
         chunksRendered++;
         totalTriangles += renderData.indexCount / 3;
+    }
+
+    // ===== 第二阶段：所有区块的水（在所有不透明几何体之后统一渲染）=====
+    // 先设好 blend 和水纹理状态（一次性，避免每 chunk 切换）
+    bool anyWater = false;
+    for (auto& [chunkKey, renderData] : chunkRenderCache) {
+        if (!renderData.visible || renderData.indexCount == 0) continue;
+        if (renderData.waterIndexCount == 0) continue;
+        // 视锥体测试
+        float minX = renderData.position.x;
+        float maxX = minX + 16.0f;
+        float minZ = renderData.position.z;
+        float maxZ = minZ + 16.0f;
+        if (!isAABBInFrustum(minX, worldMinY, minZ, maxX, worldMaxY, maxZ)) continue;
+        anyWater = true;
+        break;
+    }
+
+    if (anyWater) {
+        glEnable(GL_BLEND);
+        glBlendColor(1.0f, 1.0f, 1.0f, 0.5f);  // alpha=0.5，水下块更可见
+        glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
+        glDepthFunc(GL_LEQUAL);
+        glDepthMask(GL_FALSE);
+        if (uniformUseWaterTexture != -1) glUniform1i(uniformUseWaterTexture, 1);
+
+        for (auto& [chunkKey, renderData] : chunkRenderCache) {
+            if (!renderData.visible || renderData.indexCount == 0) continue;
+            if (renderData.waterIndexCount == 0) continue;
+
+            float minX = renderData.position.x;
+            float maxX = minX + 16.0f;
+            float minZ = renderData.position.z;
+            float maxZ = minZ + 16.0f;
+            if (!isAABBInFrustum(minX, worldMinY, minZ, maxX, worldMaxY, maxZ)) continue;
+
+            glBindVertexArray(vao);
+            glBindBuffer(GL_ARRAY_BUFFER, renderData.vbo);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderData.ebo);
+
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float)));
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(5 * sizeof(float)));
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex), (void*)(offsetof(Vertex, color)));
+            glEnableVertexAttribArray(3);
+
+            uint32_t baseEnd = renderData.indexCount - renderData.overlayIndexCount - renderData.waterIndexCount;
+            uint32_t grassEnd = baseEnd + renderData.overlayIndexCount;
+
+            glDrawElements(GL_TRIANGLES, renderData.waterIndexCount, GL_UNSIGNED_INT,
+                           (const GLvoid*)(uintptr_t)(grassEnd * sizeof(uint32_t)));
+        }
+
+        // 恢复状态
+        if (uniformUseWaterTexture != -1) glUniform1i(uniformUseWaterTexture, 0);
+        glDepthMask(GL_TRUE);
+        glDepthFunc(GL_LESS);
+        glDisable(GL_BLEND);
     }
 
     glBindVertexArray(0);
@@ -975,6 +1115,12 @@ void GLRenderer::cleanup() {
     if (textureArrayID != 0) {
         glDeleteTextures(1, &textureArrayID);
         textureArrayID = 0;
+    }
+
+    // 清理水纹理
+    if (waterTextureID != 0) {
+        glDeleteTextures(1, &waterTextureID);
+        waterTextureID = 0;
     }
     
     // 清理所有区块的渲染数据

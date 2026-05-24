@@ -103,32 +103,32 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateMes
 }
 
 MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkSection& section,
-                                                        int chunkX, int sectionY, int chunkZ,
-                                                        const ChunkManager* chunkManager) {
-    std::vector<Vertex> vertices;
-    std::vector<uint32_t> indices;
-    uint32_t overlayIndexCount = 0;
-    // overlay 顶点/索引暂存区，最后合并到主缓冲区末尾（确保 base 在前 overlay 在后）
-    std::vector<Vertex> overlayVertices;
+                                                                    int chunkX, int sectionY, int chunkZ,
+                                                                    const ChunkManager* chunkManager) {
+    // ===== 三类几何体分开存储 =====
+    std::vector<Vertex> baseVertices;      // 不透明方块（草、沙、石等）
+    std::vector<uint32_t> baseIndices;
+
+    std::vector<Vertex> overlayVertices;   // 草覆盖层（染色层）
     std::vector<uint32_t> overlayIndices;
 
+    std::vector<Vertex> waterVertices;     // 水方块（半透明）
+    std::vector<uint32_t> waterIndices;
+
     float baseX = chunkX * CHUNK_WIDTH;
-    float baseY = static_cast<float>(sectionY);  // sectionY 已经是绝对坐标
+    float baseY = static_cast<float>(sectionY);
     float baseZ = chunkZ * CHUNK_DEPTH;
-    
-    // ---- 相邻 Section blockStates 缓存（优化不可见面剔除）----
-    // 预先加载 6 个相邻方向的 blockStates，避免逐方块重复跨区块查询
+
+    // ---- 相邻 Section blockStates 缓存 ----
     const int32_t* const selfData = section.blockStates.data();
     const size_t selfSize = section.blockStates.size();
     const int32_t* aboveData = nullptr;
     size_t aboveSize = 0;
     const int32_t* belowData = nullptr;
     size_t belowSize = 0;
-    // 4 个水平方向：0=+X, 1=-X, 2=+Z, 3=-Z
     struct { const int32_t* data = nullptr; size_t size = 0; } horizCache[4];
 
     if (chunkManager) {
-        // 垂直方向：同 chunk 的上下 section
         auto thisChunk = chunkManager->getChunk(chunkX, chunkZ);
         if (thisChunk && thisChunk->isLoaded) {
             for (const auto& s : thisChunk->sections) {
@@ -143,7 +143,6 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
             }
         }
 
-        // 水平方向：相邻 chunk 的同一层 section
         auto preloadHoriz = [&](int idx, int cx, int cz) {
             auto chunk = chunkManager->getChunk(cx, cz);
             if (!chunk || !chunk->isLoaded) return;
@@ -162,18 +161,13 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         preloadHoriz(3, chunkX, chunkZ - 1);
     }
 
-    // 获取局部坐标的 blockState（使用缓存，避免跨区块查询开销）
+    // 获取局部坐标的 blockState
     auto getLocalBlockState = [&](int x, int y, int z) -> int32_t {
-        // 在当前 Section 范围内 → 直接数组访问
-        if (x >= 0 && x < CHUNK_WIDTH &&
-            y >= 0 && y < SECTION_HEIGHT &&
-            z >= 0 && z < CHUNK_DEPTH) {
+        if (x >= 0 && x < CHUNK_WIDTH && y >= 0 && y < SECTION_HEIGHT && z >= 0 && z < CHUNK_DEPTH) {
             int idx = (y * CHUNK_DEPTH + z) * CHUNK_WIDTH + x;
             if (idx < static_cast<int>(selfSize)) return selfData[idx];
             return 0;
         }
-
-        // Y 轴越界 → 查询同 chunk 的上下 section（已缓存）
         if (x >= 0 && x < CHUNK_WIDTH && z >= 0 && z < CHUNK_DEPTH) {
             if (y < 0 && belowData) {
                 int localY = y + SECTION_HEIGHT;
@@ -193,15 +187,12 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
             }
             return 0;
         }
-
-        // X 或 Z 越界 → 查询水平相邻 chunk 的缓存
         int cacheIdx = -1;
         int localX = x, localZ = z;
         if (x < 0)                 { cacheIdx = 1; localX = x + CHUNK_WIDTH; }
         else if (x >= CHUNK_WIDTH) { cacheIdx = 0; localX = x - CHUNK_WIDTH; }
         if (z < 0)                 { cacheIdx = 3; localZ = z + CHUNK_DEPTH; }
         else if (z >= CHUNK_DEPTH) { cacheIdx = 2; localZ = z - CHUNK_DEPTH; }
-
         if (cacheIdx >= 0 && horizCache[cacheIdx].data &&
             localX >= 0 && localX < CHUNK_WIDTH &&
             y >= 0 && y < SECTION_HEIGHT &&
@@ -211,8 +202,6 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                 return horizCache[cacheIdx].data[idx];
             }
         }
-
-        // 回退（极少触发：相邻 chunk 未加载或对角越界）
         if (chunkManager) {
             int globalX = chunkX * CHUNK_WIDTH + x;
             int globalY = sectionY + y;
@@ -222,152 +211,187 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         return 0;
     };
 
+    // 辅助函数：判断是否为完整方块
+    auto isSolid = [&](int32_t state) -> bool {
+        if (state == 0) return false;
+        auto& meta = BlockRegistry::getInstance().getBlockMetadata(state);
+        return meta.isFullBlock;
+    };
 
-    // 遍历截面中的所有方块 (16x16x16)
+    // 遍历所有方块
     for (int localY = 0; localY < SECTION_HEIGHT; localY++) {
         for (int z = 0; z < CHUNK_DEPTH; z++) {
             for (int x = 0; x < CHUNK_WIDTH; x++) {
-                // 计算在 blockStates 数组中的索引
                 int index = (localY * CHUNK_DEPTH + z) * CHUNK_WIDTH + x;
-                
-                if (index >= static_cast<int>(section.blockStates.size())) {
-                    continue;
-                }
-                
-                int32_t blockState = section.blockStates[index];
-                
-                
-                // 跳过空气方块 (block state 为 0)
-                if (blockState == 0) {
-                    continue;
-                }
-                
+                if (index >= static_cast<int>(section.blockStates.size())) continue;
 
-                // ===== 生物群系染色与方块元数据（一次性预计算，避免重复字符串解析）=====
-                uint8_t tintR = 255, tintG = 255, tintB = 255;
+                int32_t blockState = section.blockStates[index];
+                if (blockState == 0) continue;
+
                 auto& registry = BlockRegistry::getInstance();
                 const auto& blockMeta = registry.getBlockMetadata(blockState);
-                {
-                    int biomeIdx = ((localY >> 2) << 4) | ((z >> 2) << 2) | (x >> 2);
-                    int32_t biomeId = 0;
-                    if (biomeIdx < static_cast<int>(section.biomes.size())) {
-                        biomeId = section.biomes[biomeIdx];
-                    }
-                    if (blockMeta.isGrassBlock) {
-                        BiomeColorManager::getInstance().getGrassColor(biomeId, tintR, tintG, tintB);
-                    } else if (blockMeta.isLeaves) {
-                        BiomeColorManager::getInstance().getFoliageColor(biomeId, tintR, tintG, tintB);
-                    } else if (blockMeta.name == "grass" || blockMeta.name == "tall_grass" || blockMeta.name == "fern" || blockMeta.name == "large_fern") {
-                        BiomeColorManager::getInstance().getGrassColor(biomeId, tintR, tintG, tintB);
-                    }
+
+                // 获取生物群系颜色
+                uint8_t tintR = 255, tintG = 255, tintB = 255;
+                int biomeIdx = ((localY >> 2) << 4) | ((z >> 2) << 2) | (x >> 2);
+                int32_t biomeId = 0;
+                if (biomeIdx < static_cast<int>(section.biomes.size())) {
+                    biomeId = section.biomes[biomeIdx];
+                }
+                if (blockMeta.isGrassBlock) {
+                    BiomeColorManager::getInstance().getGrassColor(biomeId, tintR, tintG, tintB);
+                } else if (blockMeta.isLeaves) {
+                    BiomeColorManager::getInstance().getFoliageColor(biomeId, tintR, tintG, tintB);
                 }
 
-                // 查询方块纹理配置（各面的纹理层索引）
                 BlockTextureConfig tex{blockMeta.texTop, blockMeta.texSide, blockMeta.texBottom};
-
-                // 查询方块高度（完整方块=1.0，雪片<1.0）
                 float blockHeight = blockMeta.height;
                 bool isFullBlockHeight = blockMeta.height >= 1.0f;
 
-                // 计算方块的绝对坐标
                 float posX = baseX + x;
                 float posY = baseY + localY;
                 float posZ = baseZ + z;
 
-                // ===== 植物类方块：十字交叉渲染（两个垂直四边形交叉成 X 形）=====
+                // 获取6个邻居
+                int32_t n[6];
+                n[0] = getLocalBlockState(x, localY + 1, z);
+                n[1] = getLocalBlockState(x, localY - 1, z);
+                n[2] = getLocalBlockState(x + 1, localY, z);
+                n[3] = getLocalBlockState(x - 1, localY, z);
+                n[4] = getLocalBlockState(x, localY, z + 1);
+                n[5] = getLocalBlockState(x, localY, z - 1);
+
+                // ===== 植物 =====
+                // ===== 植物类方块 =====
                 if (blockMeta.isPlant) {
+                    // 获取植物颜色（使用草的颜色算法）
+                    uint8_t plantR = 255, plantG = 255, plantB = 255;
+                    BiomeColorManager::getInstance().getGrassColor(biomeId, plantR, plantG, plantB);
+
                     float plantTexIndex = static_cast<float>(tex.top);
-                    uint32_t baseIdx = static_cast<uint32_t>(vertices.size());
+                    uint32_t baseIdx = static_cast<uint32_t>(baseVertices.size());
 
-                    // 四边形1：沿 X 轴方向（在 z+0.5 位置）
-                    vertices.push_back({{posX, posY, posZ + 0.5f}, {0.0f, 1.0f}, plantTexIndex, {tintR, tintG, tintB, 255}});
-                    vertices.push_back({{posX + 1.0f, posY, posZ + 0.5f}, {1.0f, 1.0f}, plantTexIndex, {tintR, tintG, tintB, 255}});
-                    vertices.push_back({{posX + 1.0f, posY + 1.0f, posZ + 0.5f}, {1.0f, 0.0f}, plantTexIndex, {tintR, tintG, tintB, 255}});
-                    vertices.push_back({{posX, posY + 1.0f, posZ + 0.5f}, {0.0f, 0.0f}, plantTexIndex, {tintR, tintG, tintB, 255}});
+                    // 四边形1
+                    baseVertices.push_back({{posX, posY, posZ + 0.5f}, {0.0f, 1.0f}, plantTexIndex, {plantR, plantG, plantB, 255}});
+                    baseVertices.push_back({{posX + 1.0f, posY, posZ + 0.5f}, {1.0f, 1.0f}, plantTexIndex, {plantR, plantG, plantB, 255}});
+                    baseVertices.push_back({{posX + 1.0f, posY + 1.0f, posZ + 0.5f}, {1.0f, 0.0f}, plantTexIndex, {plantR, plantG, plantB, 255}});
+                    baseVertices.push_back({{posX, posY + 1.0f, posZ + 0.5f}, {0.0f, 0.0f}, plantTexIndex, {plantR, plantG, plantB, 255}});
 
-                    // 正面 (CCW)
-                    indices.push_back(baseIdx + 0);
-                    indices.push_back(baseIdx + 1);
-                    indices.push_back(baseIdx + 2);
-                    indices.push_back(baseIdx + 0);
-                    indices.push_back(baseIdx + 2);
-                    indices.push_back(baseIdx + 3);
-
-                    // 背面 (CW) — 双面可见，不依赖 GL_CULL_FACE 关闭
-                    indices.push_back(baseIdx + 2);
-                    indices.push_back(baseIdx + 1);
-                    indices.push_back(baseIdx + 0);
-                    indices.push_back(baseIdx + 3);
-                    indices.push_back(baseIdx + 2);
-                    indices.push_back(baseIdx + 0);
+                    baseIndices.push_back(baseIdx); baseIndices.push_back(baseIdx + 1); baseIndices.push_back(baseIdx + 2);
+                    baseIndices.push_back(baseIdx); baseIndices.push_back(baseIdx + 2); baseIndices.push_back(baseIdx + 3);
+                    baseIndices.push_back(baseIdx + 2); baseIndices.push_back(baseIdx + 1); baseIndices.push_back(baseIdx + 0);
+                    baseIndices.push_back(baseIdx + 3); baseIndices.push_back(baseIdx + 2); baseIndices.push_back(baseIdx + 0);
 
                     baseIdx += 4;
 
-                    // 四边形2：沿 Z 轴方向（在 x+0.5 位置）
-                    vertices.push_back({{posX + 0.5f, posY, posZ}, {0.0f, 1.0f}, plantTexIndex, {tintR, tintG, tintB, 255}});
-                    vertices.push_back({{posX + 0.5f, posY, posZ + 1.0f}, {1.0f, 1.0f}, plantTexIndex, {tintR, tintG, tintB, 255}});
-                    vertices.push_back({{posX + 0.5f, posY + 1.0f, posZ + 1.0f}, {1.0f, 0.0f}, plantTexIndex, {tintR, tintG, tintB, 255}});
-                    vertices.push_back({{posX + 0.5f, posY + 1.0f, posZ}, {0.0f, 0.0f}, plantTexIndex, {tintR, tintG, tintB, 255}});
+                    // 四边形2
+                    baseVertices.push_back({{posX + 0.5f, posY, posZ}, {0.0f, 1.0f}, plantTexIndex, {plantR, plantG, plantB, 255}});
+                    baseVertices.push_back({{posX + 0.5f, posY, posZ + 1.0f}, {1.0f, 1.0f}, plantTexIndex, {plantR, plantG, plantB, 255}});
+                    baseVertices.push_back({{posX + 0.5f, posY + 1.0f, posZ + 1.0f}, {1.0f, 0.0f}, plantTexIndex, {plantR, plantG, plantB, 255}});
+                    baseVertices.push_back({{posX + 0.5f, posY + 1.0f, posZ}, {0.0f, 0.0f}, plantTexIndex, {plantR, plantG, plantB, 255}});
 
-                    // 正面 (CCW)
-                    indices.push_back(baseIdx + 0);
-                    indices.push_back(baseIdx + 1);
-                    indices.push_back(baseIdx + 2);
-                    indices.push_back(baseIdx + 0);
-                    indices.push_back(baseIdx + 2);
-                    indices.push_back(baseIdx + 3);
+                    baseIndices.push_back(baseIdx); baseIndices.push_back(baseIdx + 1); baseIndices.push_back(baseIdx + 2);
+                    baseIndices.push_back(baseIdx); baseIndices.push_back(baseIdx + 2); baseIndices.push_back(baseIdx + 3);
+                    baseIndices.push_back(baseIdx + 2); baseIndices.push_back(baseIdx + 1); baseIndices.push_back(baseIdx + 0);
+                    baseIndices.push_back(baseIdx + 3); baseIndices.push_back(baseIdx + 2); baseIndices.push_back(baseIdx + 0);
 
-                    // 背面 (CW)
-                    indices.push_back(baseIdx + 2);
-                    indices.push_back(baseIdx + 1);
-                    indices.push_back(baseIdx + 0);
-                    indices.push_back(baseIdx + 3);
-                    indices.push_back(baseIdx + 2);
-                    indices.push_back(baseIdx + 0);
-
-                    continue; // 跳过下方的立方体面渲染逻辑
+                    continue;
                 }
 
-                // 一次性获取 6 个邻居的 blockState，避免逐面重复调用
-                int32_t n[6];
-                n[0] = getLocalBlockState(x, localY + 1, z);  // 上
-                n[1] = getLocalBlockState(x, localY - 1, z);  // 下
-                n[2] = getLocalBlockState(x + 1, localY, z);  // 右
-                n[3] = getLocalBlockState(x - 1, localY, z);  // 左
-                n[4] = getLocalBlockState(x, localY, z + 1);  // 前
-                n[5] = getLocalBlockState(x, localY, z - 1);  // 后
+                // ===== 水 =====
+                if (blockMeta.isWater) {
+                    float waterTexIndex = static_cast<float>(tex.top);
+                    uint8_t waterR = 255, waterG = 255, waterB = 255;
+                    BiomeColorManager::getInstance().getWaterColor(biomeId, waterR, waterG, waterB);
 
-                // ===== 上面 (y+) =====
-                bool renderTop = (n[0] == 0) || !isFullBlock(n[0]);
-                bool isSnowCovered = (blockMeta.isGrassBlock && n[0] != 0 && registry.getBlockMetadata(n[0]).isSnow);
+                    auto isWaterBlock = [&](int32_t state) -> bool {
+                        return state != 0 && BlockRegistry::getInstance().getBlockMetadata(state).isWater;
+                    };
+
+                    auto addWaterFace = [&](float x1, float y1, float z1, float x2, float y2, float z2,
+                                            float x3, float y3, float z3, float x4, float y4, float z4) {
+                        uint32_t ob = static_cast<uint32_t>(waterVertices.size());
+                        waterVertices.push_back({{x1, y1, z1}, {0.0f, 1.0f}, waterTexIndex, {waterR, waterG, waterB, 180}});
+                        waterVertices.push_back({{x2, y2, z2}, {1.0f, 1.0f}, waterTexIndex, {waterR, waterG, waterB, 180}});
+                        waterVertices.push_back({{x3, y3, z3}, {1.0f, 0.0f}, waterTexIndex, {waterR, waterG, waterB, 180}});
+                        waterVertices.push_back({{x4, y4, z4}, {0.0f, 0.0f}, waterTexIndex, {waterR, waterG, waterB, 180}});
+                        waterIndices.push_back(ob); waterIndices.push_back(ob + 1); waterIndices.push_back(ob + 2);
+                        waterIndices.push_back(ob); waterIndices.push_back(ob + 2); waterIndices.push_back(ob + 3);
+                    };
+
+                    // 顶面
+                    if (!isWaterBlock(n[0])) {
+                        addWaterFace(posX, posY + 1.0f, posZ + 1.0f,
+                                     posX + 1.0f, posY + 1.0f, posZ + 1.0f,
+                                     posX + 1.0f, posY + 1.0f, posZ,
+                                     posX, posY + 1.0f, posZ);
+                    }
+                    // 前面
+                    if (!isWaterBlock(n[4]) && (n[4] == 0 || !isSolid(n[4]))) {
+                        addWaterFace(posX, posY, posZ + 1.0f,
+                                     posX + 1.0f, posY, posZ + 1.0f,
+                                     posX + 1.0f, posY + 1.0f, posZ + 1.0f,
+                                     posX, posY + 1.0f, posZ + 1.0f);
+                    }
+                    // 后面
+                    if (!isWaterBlock(n[5]) && (n[5] == 0 || !isSolid(n[5]))) {
+                        addWaterFace(posX + 1.0f, posY, posZ,
+                                     posX, posY, posZ,
+                                     posX, posY + 1.0f, posZ,
+                                     posX + 1.0f, posY + 1.0f, posZ);
+                    }
+                    // 右面
+                    if (!isWaterBlock(n[2]) && (n[2] == 0 || !isSolid(n[2]))) {
+                        addWaterFace(posX + 1.0f, posY, posZ + 1.0f,
+                                     posX + 1.0f, posY, posZ,
+                                     posX + 1.0f, posY + 1.0f, posZ,
+                                     posX + 1.0f, posY + 1.0f, posZ + 1.0f);
+                    }
+                    // 左面
+                    if (!isWaterBlock(n[3]) && (n[3] == 0 || !isSolid(n[3]))) {
+                        addWaterFace(posX, posY, posZ,
+                                     posX, posY, posZ + 1.0f,
+                                     posX, posY + 1.0f, posZ + 1.0f,
+                                     posX, posY + 1.0f, posZ);
+                    }
+                    continue;
+                }
+
+                // ===== 普通不透明方块 =====
+                bool renderTop = (n[0] == 0) || !isSolid(n[0]);
+                bool isSnowCovered = (blockMeta.isGrassBlock && n[0] != 0 &&
+                                      BlockRegistry::getInstance().getBlockMetadata(n[0]).isSnow);
                 int sideTexIndex = isSnowCovered ? TEX_GRASS_BLOCK_SNOW : tex.side;
+
+                // 顶面
                 if (renderTop) {
                     float texIndex = static_cast<float>(tex.top);
-                    vertices.push_back({{posX, posY + blockHeight, posZ + 1.0f}, {0.0f, 0.0f}, texIndex, {tintR, tintG, tintB, 255}});
-                    vertices.push_back({{posX + 1.0f, posY + blockHeight, posZ + 1.0f}, {1.0f, 0.0f}, texIndex, {tintR, tintG, tintB, 255}});
-                    vertices.push_back({{posX + 1.0f, posY + blockHeight, posZ}, {1.0f, 1.0f}, texIndex, {tintR, tintG, tintB, 255}});
-                    vertices.push_back({{posX, posY + blockHeight, posZ}, {0.0f, 1.0f}, texIndex, {tintR, tintG, tintB, 255}});
-                    uint32_t faceBase = static_cast<uint32_t>(vertices.size()) - 4;
-                    indices.push_back(faceBase); indices.push_back(faceBase + 1); indices.push_back(faceBase + 2);
-                    indices.push_back(faceBase); indices.push_back(faceBase + 2); indices.push_back(faceBase + 3);
+                    uint32_t faceBase = static_cast<uint32_t>(baseVertices.size());
+                    baseVertices.push_back({{posX, posY + blockHeight, posZ + 1.0f}, {0.0f, 0.0f}, texIndex, {tintR, tintG, tintB, 255}});
+                    baseVertices.push_back({{posX + 1.0f, posY + blockHeight, posZ + 1.0f}, {1.0f, 0.0f}, texIndex, {tintR, tintG, tintB, 255}});
+                    baseVertices.push_back({{posX + 1.0f, posY + blockHeight, posZ}, {1.0f, 1.0f}, texIndex, {tintR, tintG, tintB, 255}});
+                    baseVertices.push_back({{posX, posY + blockHeight, posZ}, {0.0f, 1.0f}, texIndex, {tintR, tintG, tintB, 255}});
+                    baseIndices.push_back(faceBase); baseIndices.push_back(faceBase + 1); baseIndices.push_back(faceBase + 2);
+                    baseIndices.push_back(faceBase); baseIndices.push_back(faceBase + 2); baseIndices.push_back(faceBase + 3);
                 }
 
-                // ===== 下面 (y-) =====
-                if (isFullBlockHeight && (n[1] == 0 || !isFullBlock(n[1]))) {
+                // 底面
+                if (isFullBlockHeight && (n[1] == 0 || !isSolid(n[1]))) {
                     float texIndex = static_cast<float>(tex.bottom);
-                    vertices.push_back({{posX, posY, posZ}, {0.0f, 1.0f}, texIndex, {tintR, tintG, tintB, 255}});
-                    vertices.push_back({{posX + 1.0f, posY, posZ}, {1.0f, 1.0f}, texIndex, {tintR, tintG, tintB, 255}});
-                    vertices.push_back({{posX + 1.0f, posY, posZ + 1.0f}, {1.0f, 0.0f}, texIndex, {tintR, tintG, tintB, 255}});
-                    vertices.push_back({{posX, posY, posZ + 1.0f}, {0.0f, 0.0f}, texIndex, {tintR, tintG, tintB, 255}});
-                    uint32_t faceBase = static_cast<uint32_t>(vertices.size()) - 4;
-                    indices.push_back(faceBase); indices.push_back(faceBase + 1); indices.push_back(faceBase + 2);
-                    indices.push_back(faceBase); indices.push_back(faceBase + 2); indices.push_back(faceBase + 3);
+                    uint32_t faceBase = static_cast<uint32_t>(baseVertices.size());
+                    baseVertices.push_back({{posX, posY, posZ}, {0.0f, 1.0f}, texIndex, {tintR, tintG, tintB, 255}});
+                    baseVertices.push_back({{posX + 1.0f, posY, posZ}, {1.0f, 1.0f}, texIndex, {tintR, tintG, tintB, 255}});
+                    baseVertices.push_back({{posX + 1.0f, posY, posZ + 1.0f}, {1.0f, 0.0f}, texIndex, {tintR, tintG, tintB, 255}});
+                    baseVertices.push_back({{posX, posY, posZ + 1.0f}, {0.0f, 0.0f}, texIndex, {tintR, tintG, tintB, 255}});
+                    baseIndices.push_back(faceBase); baseIndices.push_back(faceBase + 1); baseIndices.push_back(faceBase + 2);
+                    baseIndices.push_back(faceBase); baseIndices.push_back(faceBase + 2); baseIndices.push_back(faceBase + 3);
                 }
 
-                // ===== 草方块侧面覆盖层（overlay）准备 =====
+                // 草覆盖层标志
+                bool needsGrassOverlay = false;
                 float baseSideTexIndex;
                 uint8_t baseSideColor[4];
-                bool needsOverlay = false;
+
                 if (blockMeta.isGrassBlock) {
                     if (isSnowCovered) {
                         baseSideTexIndex = static_cast<float>(TEX_GRASS_BLOCK_SNOW);
@@ -375,96 +399,105 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     } else {
                         baseSideTexIndex = static_cast<float>(TEX_GRASS_SIDE);
                         baseSideColor[0] = 255; baseSideColor[1] = 255; baseSideColor[2] = 255; baseSideColor[3] = 255;
-                        needsOverlay = true;
+                        needsGrassOverlay = true;
                     }
                 } else {
                     baseSideTexIndex = static_cast<float>(sideTexIndex);
                     baseSideColor[0] = tintR; baseSideColor[1] = tintG; baseSideColor[2] = tintB; baseSideColor[3] = 255;
                 }
 
-                auto addOverlaySide = [&](float x1, float y1, float z1,
-                                          float x2, float y2, float z2,
-                                          float x3, float y3, float z3,
-                                          float x4, float y4, float z4) {
-                    float overlayTex = static_cast<float>(TEX_GRASS_SIDE_OVERLAY);
-                    uint32_t ob = static_cast<uint32_t>(overlayVertices.size());
-                    overlayVertices.push_back({{x1, y1, z1}, {0.0f, 1.0f}, overlayTex, {tintR, tintG, tintB, 255}});
-                    overlayVertices.push_back({{x2, y2, z2}, {1.0f, 1.0f}, overlayTex, {tintR, tintG, tintB, 255}});
-                    overlayVertices.push_back({{x3, y3, z3}, {1.0f, 0.0f}, overlayTex, {tintR, tintG, tintB, 255}});
-                    overlayVertices.push_back({{x4, y4, z4}, {0.0f, 0.0f}, overlayTex, {tintR, tintG, tintB, 255}});
-                    overlayIndices.push_back(ob); overlayIndices.push_back(ob + 1); overlayIndices.push_back(ob + 2);
-                    overlayIndices.push_back(ob); overlayIndices.push_back(ob + 2); overlayIndices.push_back(ob + 3);
-                    overlayIndexCount += 6;
+                // 侧面生成
+                auto addSide = [&](int neighborIdx, bool isNeighborSolid,
+                                   float x1, float y1, float z1,
+                                   float x2, float y2, float z2,
+                                   float x3, float y3, float z3,
+                                   float x4, float y4, float z4) {
+                    if (n[neighborIdx] != 0 && isNeighborSolid) return;
+
+                    uint32_t faceBase = static_cast<uint32_t>(baseVertices.size());
+                    baseVertices.push_back({{x1, y1, z1}, {0.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
+                    baseVertices.push_back({{x2, y2, z2}, {1.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
+                    baseVertices.push_back({{x3, y3, z3}, {1.0f, 0.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
+                    baseVertices.push_back({{x4, y4, z4}, {0.0f, 0.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
+                    baseIndices.push_back(faceBase); baseIndices.push_back(faceBase + 1); baseIndices.push_back(faceBase + 2);
+                    baseIndices.push_back(faceBase); baseIndices.push_back(faceBase + 2); baseIndices.push_back(faceBase + 3);
+
+                    if (needsGrassOverlay) {
+                        float overlayTex = static_cast<float>(TEX_GRASS_SIDE_OVERLAY);
+                        uint32_t ob = static_cast<uint32_t>(overlayVertices.size());
+                        overlayVertices.push_back({{x1, y1, z1}, {0.0f, 1.0f}, overlayTex, {tintR, tintG, tintB, 255}});
+                        overlayVertices.push_back({{x2, y2, z2}, {1.0f, 1.0f}, overlayTex, {tintR, tintG, tintB, 255}});
+                        overlayVertices.push_back({{x3, y3, z3}, {1.0f, 0.0f}, overlayTex, {tintR, tintG, tintB, 255}});
+                        overlayVertices.push_back({{x4, y4, z4}, {0.0f, 0.0f}, overlayTex, {tintR, tintG, tintB, 255}});
+                        overlayIndices.push_back(ob); overlayIndices.push_back(ob + 1); overlayIndices.push_back(ob + 2);
+                        overlayIndices.push_back(ob); overlayIndices.push_back(ob + 2); overlayIndices.push_back(ob + 3);
+                    }
                 };
 
-                // ===== 四个侧面 =====
+                bool neighborSolid[6];
+                for (int i = 0; i < 6; i++) {
+                    neighborSolid[i] = (n[i] != 0) && isSolid(n[i]);
+                }
+
                 // 前面 (z+)
-                if (n[4] == 0 || !isFullBlock(n[4])) {
-                    vertices.push_back({{posX, posY, posZ + 1.0f}, {0.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
-                    vertices.push_back({{posX + 1.0f, posY, posZ + 1.0f}, {1.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
-                    vertices.push_back({{posX + 1.0f, posY + blockHeight, posZ + 1.0f}, {1.0f, 0.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
-                    vertices.push_back({{posX, posY + blockHeight, posZ + 1.0f}, {0.0f, 0.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
-                    uint32_t faceBase = static_cast<uint32_t>(vertices.size()) - 4;
-                    indices.push_back(faceBase); indices.push_back(faceBase + 1); indices.push_back(faceBase + 2);
-                    indices.push_back(faceBase); indices.push_back(faceBase + 2); indices.push_back(faceBase + 3);
-                    if (needsOverlay) addOverlaySide(posX, posY, posZ + 1.0f, posX + 1.0f, posY, posZ + 1.0f,
-                                                     posX + 1.0f, posY + blockHeight, posZ + 1.0f,
-                                                     posX, posY + blockHeight, posZ + 1.0f);
-                }
+                addSide(4, neighborSolid[4],
+                        posX, posY, posZ + 1.0f,
+                        posX + 1.0f, posY, posZ + 1.0f,
+                        posX + 1.0f, posY + blockHeight, posZ + 1.0f,
+                        posX, posY + blockHeight, posZ + 1.0f);
                 // 后面 (z-)
-                if (n[5] == 0 || !isFullBlock(n[5])) {
-                    vertices.push_back({{posX + 1.0f, posY, posZ}, {0.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
-                    vertices.push_back({{posX, posY, posZ}, {1.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
-                    vertices.push_back({{posX, posY + blockHeight, posZ}, {1.0f, 0.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
-                    vertices.push_back({{posX + 1.0f, posY + blockHeight, posZ}, {0.0f, 0.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
-                    uint32_t faceBase = static_cast<uint32_t>(vertices.size()) - 4;
-                    indices.push_back(faceBase); indices.push_back(faceBase + 1); indices.push_back(faceBase + 2);
-                    indices.push_back(faceBase); indices.push_back(faceBase + 2); indices.push_back(faceBase + 3);
-                    if (needsOverlay) addOverlaySide(posX + 1.0f, posY, posZ, posX, posY, posZ,
-                                                     posX, posY + blockHeight, posZ,
-                                                     posX + 1.0f, posY + blockHeight, posZ);
-                }
+                addSide(5, neighborSolid[5],
+                        posX + 1.0f, posY, posZ,
+                        posX, posY, posZ,
+                        posX, posY + blockHeight, posZ,
+                        posX + 1.0f, posY + blockHeight, posZ);
                 // 右面 (x+)
-                if (n[2] == 0 || !isFullBlock(n[2])) {
-                    vertices.push_back({{posX + 1.0f, posY, posZ + 1.0f}, {0.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
-                    vertices.push_back({{posX + 1.0f, posY, posZ}, {1.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
-                    vertices.push_back({{posX + 1.0f, posY + blockHeight, posZ}, {1.0f, 0.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
-                    vertices.push_back({{posX + 1.0f, posY + blockHeight, posZ + 1.0f}, {0.0f, 0.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
-                    uint32_t faceBase = static_cast<uint32_t>(vertices.size()) - 4;
-                    indices.push_back(faceBase); indices.push_back(faceBase + 1); indices.push_back(faceBase + 2);
-                    indices.push_back(faceBase); indices.push_back(faceBase + 2); indices.push_back(faceBase + 3);
-                    if (needsOverlay) addOverlaySide(posX + 1.0f, posY, posZ + 1.0f, posX + 1.0f, posY, posZ,
-                                                     posX + 1.0f, posY + blockHeight, posZ,
-                                                     posX + 1.0f, posY + blockHeight, posZ + 1.0f);
-                }
+                addSide(2, neighborSolid[2],
+                        posX + 1.0f, posY, posZ + 1.0f,
+                        posX + 1.0f, posY, posZ,
+                        posX + 1.0f, posY + blockHeight, posZ,
+                        posX + 1.0f, posY + blockHeight, posZ + 1.0f);
                 // 左面 (x-)
-                if (n[3] == 0 || !isFullBlock(n[3])) {
-                    vertices.push_back({{posX, posY, posZ}, {0.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
-                    vertices.push_back({{posX, posY, posZ + 1.0f}, {1.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
-                    vertices.push_back({{posX, posY + blockHeight, posZ + 1.0f}, {1.0f, 0.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
-                    vertices.push_back({{posX, posY + blockHeight, posZ}, {0.0f, 0.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
-                    uint32_t faceBase = static_cast<uint32_t>(vertices.size()) - 4;
-                    indices.push_back(faceBase); indices.push_back(faceBase + 1); indices.push_back(faceBase + 2);
-                    indices.push_back(faceBase); indices.push_back(faceBase + 2); indices.push_back(faceBase + 3);
-                    if (needsOverlay) addOverlaySide(posX, posY, posZ, posX, posY, posZ + 1.0f,
-                                                     posX, posY + blockHeight, posZ + 1.0f,
-                                                     posX, posY + blockHeight, posZ);
-                }
+                addSide(3, neighborSolid[3],
+                        posX, posY, posZ,
+                        posX, posY, posZ + 1.0f,
+                        posX, posY + blockHeight, posZ + 1.0f,
+                        posX, posY + blockHeight, posZ);
             }
         }
     }
-    
-    // 合并 overlay 几何体到主缓冲区末尾（所有 base 在前，overlay 在后）
-    if (!overlayIndices.empty()) {
-        uint32_t baseVertexCount = static_cast<uint32_t>(vertices.size());
-        for (auto& idx : overlayIndices) {
-            idx += baseVertexCount;
+
+    // ===== 按顺序合并：base → grass_overlay → water =====
+    std::vector<Vertex> allVertices;
+    std::vector<uint32_t> allIndices;
+
+    // 1. 基础不透明方块
+    uint32_t baseVertexCount = static_cast<uint32_t>(baseVertices.size());
+    allVertices.insert(allVertices.end(), baseVertices.begin(), baseVertices.end());
+    allIndices.insert(allIndices.end(), baseIndices.begin(), baseIndices.end());
+
+    // 2. 草覆盖层（需要调整索引偏移）
+    if (!overlayVertices.empty()) {
+        uint32_t overlayStart = static_cast<uint32_t>(allVertices.size());
+        for (uint32_t idx : overlayIndices) {
+            allIndices.push_back(overlayStart + idx);
         }
-        vertices.insert(vertices.end(), overlayVertices.begin(), overlayVertices.end());
-        indices.insert(indices.end(), overlayIndices.begin(), overlayIndices.end());
+        allVertices.insert(allVertices.end(), overlayVertices.begin(), overlayVertices.end());
+    }
+    uint32_t overlayIndexCount = static_cast<uint32_t>(overlayIndices.size());
+
+    // 3. 水（需要调整索引偏移）
+    uint32_t waterIndexCount = 0;
+    if (!waterVertices.empty()) {
+        uint32_t waterStart = static_cast<uint32_t>(allVertices.size());
+        for (uint32_t idx : waterIndices) {
+            allIndices.push_back(waterStart + idx);
+        }
+        allVertices.insert(allVertices.end(), waterVertices.begin(), waterVertices.end());
+        waterIndexCount = static_cast<uint32_t>(waterIndices.size());
     }
 
-    return {std::move(vertices), std::move(indices), overlayIndexCount};
+    return {std::move(allVertices), std::move(allIndices), overlayIndexCount, waterIndexCount};
 }
 
 void MeshGenerator::addFace(std::vector<Vertex>& vertices, float x, float y, float z,
