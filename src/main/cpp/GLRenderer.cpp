@@ -8,6 +8,7 @@
 #include "MeshGenerator.h"
 #include "TextureAtlas.h"
 #include "BiomeColorManager.h"
+#include "MinecraftVersion.h"
 
 #define LOG_TAG "GLRenderer"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -24,7 +25,8 @@ void GLRenderer::setChunkManager(ChunkManager* manager) {
     chunkManager.store(manager);
 
     // 标记需要重建网格，在渲染线程中执行
-    // 已有缓存的区块也会标记 needsUpdate，确保所有区块使用最新的网格生成逻辑
+    // 注意：不要遍历旧缓存设置 needsUpdate = true，
+    // 新区块在 rebuildMeshFromChunks 中创建时已经自动标记了 needsUpdate
     if (manager && display != EGL_NO_DISPLAY) {
         needRebuildMesh.store(true);
     }
@@ -416,7 +418,7 @@ bool GLRenderer::rebuildMeshFromChunks() {
                 renderData = &insertIt->second;
             } else {
                 renderData = &it->second;
-                // 强制重新生成网格（修复旧 overlay 索引布局等需要重建的场景）
+                // 强制旧缓存区块重新生成网格（确保使用最新的索引布局）
                 if (!renderData->pending) {
                     renderData->needsUpdate = true;
                 }
@@ -731,7 +733,87 @@ void GLRenderer::releaseCurrent() {
         LOGI("EGL context released");
     }
 }
+void GLRenderer::computeFrustumPlanes(const glm::mat4& viewProj) {
+    // 提取视锥体的 6 个平面（列主序矩阵）
+    // 左平面
+    frustumPlanes[0] = glm::vec4(
+            viewProj[0][3] + viewProj[0][0],
+            viewProj[1][3] + viewProj[1][0],
+            viewProj[2][3] + viewProj[2][0],
+            viewProj[3][3] + viewProj[3][0]
+    );
+    // 右平面
+    frustumPlanes[1] = glm::vec4(
+            viewProj[0][3] - viewProj[0][0],
+            viewProj[1][3] - viewProj[1][0],
+            viewProj[2][3] - viewProj[2][0],
+            viewProj[3][3] - viewProj[3][0]
+    );
+    // 底平面
+    frustumPlanes[2] = glm::vec4(
+            viewProj[0][3] + viewProj[0][1],
+            viewProj[1][3] + viewProj[1][1],
+            viewProj[2][3] + viewProj[2][1],
+            viewProj[3][3] + viewProj[3][1]
+    );
+    // 顶平面
+    frustumPlanes[3] = glm::vec4(
+            viewProj[0][3] - viewProj[0][1],
+            viewProj[1][3] - viewProj[1][1],
+            viewProj[2][3] - viewProj[2][1],
+            viewProj[3][3] - viewProj[3][1]
+    );
+    // 近平面
+    frustumPlanes[4] = glm::vec4(
+            viewProj[0][3] + viewProj[0][2],
+            viewProj[1][3] + viewProj[1][2],
+            viewProj[2][3] + viewProj[2][2],
+            viewProj[3][3] + viewProj[3][2]
+    );
+    // 远平面
+    frustumPlanes[5] = glm::vec4(
+            viewProj[0][3] - viewProj[0][2],
+            viewProj[1][3] - viewProj[1][2],
+            viewProj[2][3] - viewProj[2][2],
+            viewProj[3][3] - viewProj[3][2]
+    );
 
+    // 归一化所有平面
+    for (int i = 0; i < 6; i++) {
+        float len = glm::length(glm::vec3(frustumPlanes[i]));
+        if (len > 0.001f) {
+            frustumPlanes[i] /= len;
+        }
+    }
+}
+
+bool GLRenderer::isAABBInFrustum(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) const {
+    // 检查 AABB 的 8 个顶点是否完全在某个平面的外侧
+    glm::vec3 corners[8] = {
+            {minX, minY, minZ}, {maxX, minY, minZ},
+            {minX, maxY, minZ}, {maxX, maxY, minZ},
+            {minX, minY, maxZ}, {maxX, minY, maxZ},
+            {minX, maxY, maxZ}, {maxX, maxY, maxZ}
+    };
+
+    for (int p = 0; p < 6; p++) {
+        int outsideCount = 0;
+        for (int c = 0; c < 8; c++) {
+            float dist = frustumPlanes[p].x * corners[c].x +
+                         frustumPlanes[p].y * corners[c].y +
+                         frustumPlanes[p].z * corners[c].z +
+                         frustumPlanes[p].w;
+            if (dist < 0) {
+                outsideCount++;
+            }
+        }
+        // 如果所有顶点都在平面外侧，AABB 不可见
+        if (outsideCount == 8) {
+            return false;
+        }
+    }
+    return true;
+}
 void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     if (!display || !context) {
         LOGE("EGL not initialized");
@@ -753,9 +835,12 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     frameCount++;
 
     updateCamera(cx, cy, cz, pitch, yaw);
+    glm::mat4 viewMatrix = glm::make_mat4(cameraMatrix);
+    glm::mat4 projMatrix = glm::make_mat4(projectionMatrix);
+    computeFrustumPlanes(projMatrix * viewMatrix);
 
     glUseProgram(shaderProgram);
-    
+
     // 设置矩阵 uniform
     float modelMatrix[16] = {
             1, 0, 0, 0,
@@ -772,7 +857,7 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayID);
         glUniform1i(uniformTexture, 0);
-        
+
         // 启用纹理采样
         GLint useTextureLoc = glGetUniformLocation(shaderProgram, "useTexture");
         if (useTextureLoc != -1) {
@@ -790,18 +875,34 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     int chunksRendered = 0;
     int totalTriangles = 0;
 
+    // 获取维度 Y 范围用于 chunk AABB
+    const auto& dim = VersionManager::getInstance().getDimensionConfig();
+    float worldMinY = (float)dim.minY;
+    float worldMaxY = (float)dim.maxY;
+
     // 加锁保护 chunkRenderCache，防止网络线程的 markChunkForUpdate 并发修改
     std::lock_guard<std::mutex> renderLock(cacheMutex);
     for (auto& [chunkKey, renderData] : chunkRenderCache) {
+
         if (!renderData.visible || renderData.indexCount == 0) {
             continue;
         }
-        
+
+        // ===== 视锥体裁剪：检查区块 AABB 是否在视锥体内 =====
+        float minX = renderData.position.x;
+        float maxX = minX + 16.0f;
+        float minZ = renderData.position.z;
+        float maxZ = minZ + 16.0f;
+        if (!isAABBInFrustum(minX, worldMinY, minZ, maxX, worldMaxY, maxZ)) {
+            // 区块不在视锥体内，跳过渲染
+            continue;
+        }
+
         // 绑定该区块的 VBO/EBO
         glBindVertexArray(vao);
         glBindBuffer(GL_ARRAY_BUFFER, renderData.vbo);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderData.ebo);
-        
+
         // 重新设置顶点属性（因为 VBO 变了）
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
         glEnableVertexAttribArray(0);
@@ -811,7 +912,7 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         glEnableVertexAttribArray(2);
         glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex), (void*)(offsetof(Vertex, color)));
         glEnableVertexAttribArray(3);
-        
+
         // 第一遍：绘制不透明几何体（含草方块侧面基础层）
         uint32_t baseIndexCount = renderData.indexCount - renderData.overlayIndexCount;
         glDrawElements(GL_TRIANGLES, baseIndexCount, GL_UNSIGNED_INT, 0);
@@ -824,22 +925,22 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
             glDepthMask(GL_FALSE);
 
             glDrawElements(GL_TRIANGLES, renderData.overlayIndexCount, GL_UNSIGNED_INT,
-                          (const GLvoid*)(uintptr_t)(baseIndexCount * sizeof(uint32_t)));
+                           (const GLvoid*)(uintptr_t)(baseIndexCount * sizeof(uint32_t)));
 
             glDepthMask(GL_TRUE);
             glDepthFunc(GL_LESS);
             glDisable(GL_BLEND);
         }
-        
+
         chunksRendered++;
         totalTriangles += renderData.indexCount / 3;
     }
-    
+
     glBindVertexArray(0);
-    
+
     // 每 60 帧打印一次统计信息
     if (frameCount % 60 == 0) {
-        LOGI("Frame %u: Rendered %d chunks, %d triangles", 
+        LOGI("Frame %u: Rendered %d chunks, %d triangles",
              frameCount, chunksRendered, totalTriangles);
     }
 

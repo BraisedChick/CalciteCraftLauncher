@@ -116,7 +116,14 @@ private:
     std::string loadShaderFile(const std::string& filename);
     GLuint compileShader(GLenum type, const std::string& source);
     GLuint createProgram(const std::string& vertSource, const std::string& fragSource);
+    // 从视图和投影矩阵计算视锥体平面
+    void computeFrustumPlanes(const glm::mat4& viewProj);
 
+    // 检查 AABB 是否在视锥体内
+    bool isAABBInFrustum(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) const;
+
+    // 视锥体平面（6 个，格式为 Ax+By+Cz+D=0）
+    glm::vec4 frustumPlanes[6];
     void rebuildMesh();
     void addBlockToMesh(std::vector<Vertex>& vertices,
                        std::vector<uint32_t>& indices,

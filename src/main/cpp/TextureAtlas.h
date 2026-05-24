@@ -219,14 +219,7 @@ inline bool isPlant(int32_t blockState) {
 // 判断一个 blockState 是否为完整方块（不透明、遮挡相邻面）
 inline bool isFullBlock(int32_t blockState) {
     if (blockState == 0) return false;
-    if (isPlant(blockState)) return false; // 植物不遮挡相邻面
-
-    auto& registry = BlockRegistry::getInstance();
-    std::string name = registry.getBlockName(blockState);
-    // 树叶不遮挡相邻面（使被树叶包围的木头等方块正常渲染）
-    if (name.find("leaves") != std::string::npos) return false;
-
-    return getBlockHeight(blockState) >= 1.0f;
+    return BlockRegistry::getInstance().getBlockMetadata(blockState).isFullBlock;
 }
 
 // ============================================================

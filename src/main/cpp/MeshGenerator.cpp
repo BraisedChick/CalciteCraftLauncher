@@ -116,57 +116,103 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
     float baseY = static_cast<float>(sectionY);  // sectionY 已经是绝对坐标
     float baseZ = chunkZ * CHUNK_DEPTH;
     
-    int blocksRendered = 0;
-    int grassBlocksRendered = 0;
-    
-    // 统计 texIndex 分布
-    int texIndexCount[3] = {0, 0, 0};  // layer 0, 1, 2 的数量
-    
-    // 统计 blockState ID 分布（用于调试）
-    std::map<int32_t, int> blockStateCount;
-    
-    // 辅助函数：检查某个位置是否是空气（支持跨区块/跨 Section 查询）
-    auto isAir = [&](int x, int y, int z) -> bool {
-        // 如果在当前 Section 范围内，直接查询
-        if (x >= 0 && x < CHUNK_WIDTH && 
-            y >= 0 && y < SECTION_HEIGHT && 
-            z >= 0 && z < CHUNK_DEPTH) {
-            int idx = (y * CHUNK_DEPTH + z) * CHUNK_WIDTH + x;
-            if (idx >= 0 && idx < static_cast<int>(section.blockStates.size())) {
-                return section.blockStates[idx] == 0;
+    // ---- 相邻 Section blockStates 缓存（优化不可见面剔除）----
+    // 预先加载 6 个相邻方向的 blockStates，避免逐方块重复跨区块查询
+    const int32_t* const selfData = section.blockStates.data();
+    const size_t selfSize = section.blockStates.size();
+    const int32_t* aboveData = nullptr;
+    size_t aboveSize = 0;
+    const int32_t* belowData = nullptr;
+    size_t belowSize = 0;
+    // 4 个水平方向：0=+X, 1=-X, 2=+Z, 3=-Z
+    struct { const int32_t* data = nullptr; size_t size = 0; } horizCache[4];
+
+    if (chunkManager) {
+        // 垂直方向：同 chunk 的上下 section
+        auto thisChunk = chunkManager->getChunk(chunkX, chunkZ);
+        if (thisChunk && thisChunk->isLoaded) {
+            for (const auto& s : thisChunk->sections) {
+                if (!s || s->isEmpty) continue;
+                if (s->y == sectionY + SECTION_HEIGHT) {
+                    aboveData = s->blockStates.data();
+                    aboveSize = s->blockStates.size();
+                } else if (s->y == sectionY - SECTION_HEIGHT) {
+                    belowData = s->blockStates.data();
+                    belowSize = s->blockStates.size();
+                }
             }
-            return true;
         }
-        
-        // 超出当前 Section，需要查询相邻区块/Section
-        if (chunkManager) {
-            // 计算全局坐标
-            int globalX = chunkX * CHUNK_WIDTH + x;
-            int globalY = sectionY + y;
-            int globalZ = chunkZ * CHUNK_DEPTH + z;
-            
-            int32_t blockState = getBlockStateAt(globalX, globalY, globalZ, chunkManager);
-            
 
+        // 水平方向：相邻 chunk 的同一层 section
+        auto preloadHoriz = [&](int idx, int cx, int cz) {
+            auto chunk = chunkManager->getChunk(cx, cz);
+            if (!chunk || !chunk->isLoaded) return;
+            for (const auto& s : chunk->sections) {
+                if (!s || s->isEmpty) continue;
+                if (s->y == sectionY) {
+                    horizCache[idx].data = s->blockStates.data();
+                    horizCache[idx].size = s->blockStates.size();
+                    break;
+                }
+            }
+        };
+        preloadHoriz(0, chunkX + 1, chunkZ);
+        preloadHoriz(1, chunkX - 1, chunkZ);
+        preloadHoriz(2, chunkX, chunkZ + 1);
+        preloadHoriz(3, chunkX, chunkZ - 1);
+    }
 
-            return blockState == 0;
-        }
-        
-        // 没有 ChunkManager，视为空气
-        return true;
-    };
-
-    // 获取局部坐标的 blockState（用于非完整方块的面剔除判断）
+    // 获取局部坐标的 blockState（使用缓存，避免跨区块查询开销）
     auto getLocalBlockState = [&](int x, int y, int z) -> int32_t {
+        // 在当前 Section 范围内 → 直接数组访问
         if (x >= 0 && x < CHUNK_WIDTH &&
             y >= 0 && y < SECTION_HEIGHT &&
             z >= 0 && z < CHUNK_DEPTH) {
             int idx = (y * CHUNK_DEPTH + z) * CHUNK_WIDTH + x;
-            if (idx >= 0 && idx < static_cast<int>(section.blockStates.size())) {
-                return section.blockStates[idx];
+            if (idx < static_cast<int>(selfSize)) return selfData[idx];
+            return 0;
+        }
+
+        // Y 轴越界 → 查询同 chunk 的上下 section（已缓存）
+        if (x >= 0 && x < CHUNK_WIDTH && z >= 0 && z < CHUNK_DEPTH) {
+            if (y < 0 && belowData) {
+                int localY = y + SECTION_HEIGHT;
+                if (localY >= 0 && localY < SECTION_HEIGHT) {
+                    int idx = (localY * CHUNK_DEPTH + z) * CHUNK_WIDTH + x;
+                    if (idx < static_cast<int>(belowSize)) return belowData[idx];
+                }
+                return 0;
+            }
+            if (y >= SECTION_HEIGHT && aboveData) {
+                int localY = y - SECTION_HEIGHT;
+                if (localY >= 0 && localY < SECTION_HEIGHT) {
+                    int idx = (localY * CHUNK_DEPTH + z) * CHUNK_WIDTH + x;
+                    if (idx < static_cast<int>(aboveSize)) return aboveData[idx];
+                }
+                return 0;
             }
             return 0;
         }
+
+        // X 或 Z 越界 → 查询水平相邻 chunk 的缓存
+        int cacheIdx = -1;
+        int localX = x, localZ = z;
+        if (x < 0)                 { cacheIdx = 1; localX = x + CHUNK_WIDTH; }
+        else if (x >= CHUNK_WIDTH) { cacheIdx = 0; localX = x - CHUNK_WIDTH; }
+        if (z < 0)                 { cacheIdx = 3; localZ = z + CHUNK_DEPTH; }
+        else if (z >= CHUNK_DEPTH) { cacheIdx = 2; localZ = z - CHUNK_DEPTH; }
+
+        if (cacheIdx >= 0 && horizCache[cacheIdx].data &&
+            localX >= 0 && localX < CHUNK_WIDTH &&
+            y >= 0 && y < SECTION_HEIGHT &&
+            localZ >= 0 && localZ < CHUNK_DEPTH) {
+            int idx = (y * CHUNK_DEPTH + localZ) * CHUNK_WIDTH + localX;
+            if (idx < static_cast<int>(horizCache[cacheIdx].size)) {
+                return horizCache[cacheIdx].data[idx];
+            }
+        }
+
+        // 回退（极少触发：相邻 chunk 未加载或对角越界）
         if (chunkManager) {
             int globalX = chunkX * CHUNK_WIDTH + x;
             int globalY = sectionY + y;
@@ -176,11 +222,6 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         return 0;
     };
 
-    // 判断相邻位置是否非完整方块（用于侧面/底面剔除：仅完整方块能遮挡相邻面）
-    auto isNotFullSolid = [&](int x, int y, int z) -> bool {
-        int32_t state = getLocalBlockState(x, y, z);
-        return state == 0 || !isFullBlock(state);
-    };
 
     // 遍历截面中的所有方块 (16x16x16)
     for (int localY = 0; localY < SECTION_HEIGHT; localY++) {
@@ -195,41 +236,38 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                 
                 int32_t blockState = section.blockStates[index];
                 
-                // 统计 blockState ID
-                blockStateCount[blockState]++;
                 
                 // 跳过空气方块 (block state 为 0)
                 if (blockState == 0) {
                     continue;
                 }
                 
-                blocksRendered++;
 
-                // ===== 生物群系染色计算 =====
+                // ===== 生物群系染色与方块元数据（一次性预计算，避免重复字符串解析）=====
                 uint8_t tintR = 255, tintG = 255, tintB = 255;
                 auto& registry = BlockRegistry::getInstance();
-                std::string blockName = registry.getBlockName(blockState);
+                const auto& blockMeta = registry.getBlockMetadata(blockState);
                 {
                     int biomeIdx = ((localY >> 2) << 4) | ((z >> 2) << 2) | (x >> 2);
                     int32_t biomeId = 0;
                     if (biomeIdx < static_cast<int>(section.biomes.size())) {
                         biomeId = section.biomes[biomeIdx];
                     }
-                    if (blockName == "grass_block") {
+                    if (blockMeta.isGrassBlock) {
                         BiomeColorManager::getInstance().getGrassColor(biomeId, tintR, tintG, tintB);
-                    } else if (blockName.find("leaves") != std::string::npos) {
+                    } else if (blockMeta.isLeaves) {
                         BiomeColorManager::getInstance().getFoliageColor(biomeId, tintR, tintG, tintB);
-                    } else if (blockName == "grass" || blockName == "tall_grass" || blockName == "fern" || blockName == "large_fern") {
+                    } else if (blockMeta.name == "grass" || blockMeta.name == "tall_grass" || blockMeta.name == "fern" || blockMeta.name == "large_fern") {
                         BiomeColorManager::getInstance().getGrassColor(biomeId, tintR, tintG, tintB);
                     }
                 }
 
                 // 查询方块纹理配置（各面的纹理层索引）
-                BlockTextureConfig tex = getBlockTexture(blockState);
+                BlockTextureConfig tex{blockMeta.texTop, blockMeta.texSide, blockMeta.texBottom};
 
                 // 查询方块高度（完整方块=1.0，雪片<1.0）
-                float blockHeight = getBlockHeight(blockState);
-                bool isFullBlockHeight = blockHeight >= 1.0f;
+                float blockHeight = blockMeta.height;
+                bool isFullBlockHeight = blockMeta.height >= 1.0f;
 
                 // 计算方块的绝对坐标
                 float posX = baseX + x;
@@ -237,7 +275,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                 float posZ = baseZ + z;
 
                 // ===== 植物类方块：十字交叉渲染（两个垂直四边形交叉成 X 形）=====
-                if (isPlant(blockState)) {
+                if (blockMeta.isPlant) {
                     float plantTexIndex = static_cast<float>(tex.top);
                     uint32_t baseIdx = static_cast<uint32_t>(vertices.size());
 
@@ -290,94 +328,60 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     continue; // 跳过下方的立方体面渲染逻辑
                 }
 
-                uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
+                // 一次性获取 6 个邻居的 blockState，避免逐面重复调用
+                int32_t n[6];
+                n[0] = getLocalBlockState(x, localY + 1, z);  // 上
+                n[1] = getLocalBlockState(x, localY - 1, z);  // 下
+                n[2] = getLocalBlockState(x + 1, localY, z);  // 右
+                n[3] = getLocalBlockState(x - 1, localY, z);  // 左
+                n[4] = getLocalBlockState(x, localY, z + 1);  // 前
+                n[5] = getLocalBlockState(x, localY, z - 1);  // 后
 
-                // 检查 6 个方向的相邻方块，只渲染暴露的面
-                
-                // 上面 (y+) - 上方是空气或非完整方块（如透明植物、雪片）时渲染顶面
-                int32_t aboveState = getLocalBlockState(x, localY + 1, z);
-                bool renderTop = (aboveState == 0) || !isFullBlock(aboveState);
-
-                // ===== 草方块雪覆盖：上方有雪片时侧面使用雪纹理 =====
-                bool isSnowCovered = (blockName == "grass_block" && aboveState != 0 && registry.getBlockName(aboveState) == "snow");
+                // ===== 上面 (y+) =====
+                bool renderTop = (n[0] == 0) || !isFullBlock(n[0]);
+                bool isSnowCovered = (blockMeta.isGrassBlock && n[0] != 0 && registry.getBlockMetadata(n[0]).isSnow);
                 int sideTexIndex = isSnowCovered ? TEX_GRASS_BLOCK_SNOW : tex.side;
                 if (renderTop) {
                     float texIndex = static_cast<float>(tex.top);
-                    texIndexCount[0]++;  // 统计 layer 0
-                    
-                    // 调试日志：TOP 面
-                    if (blockState == 2 && x == 8 && z == 8) {
-                        LOGI("Grass block TOP at (%.1f, %.1f, %.1f): texIndex=%.1f", posX, posY+1.0f, posZ, texIndex);
-                    }
-                    
                     vertices.push_back({{posX, posY + blockHeight, posZ + 1.0f}, {0.0f, 0.0f}, texIndex, {tintR, tintG, tintB, 255}});
                     vertices.push_back({{posX + 1.0f, posY + blockHeight, posZ + 1.0f}, {1.0f, 0.0f}, texIndex, {tintR, tintG, tintB, 255}});
                     vertices.push_back({{posX + 1.0f, posY + blockHeight, posZ}, {1.0f, 1.0f}, texIndex, {tintR, tintG, tintB, 255}});
                     vertices.push_back({{posX, posY + blockHeight, posZ}, {0.0f, 1.0f}, texIndex, {tintR, tintG, tintB, 255}});
-                    
                     uint32_t faceBase = static_cast<uint32_t>(vertices.size()) - 4;
-                    indices.push_back(faceBase);
-                    indices.push_back(faceBase + 1);
-                    indices.push_back(faceBase + 2);
-                    indices.push_back(faceBase);
-                    indices.push_back(faceBase + 2);
-                    indices.push_back(faceBase + 3);
+                    indices.push_back(faceBase); indices.push_back(faceBase + 1); indices.push_back(faceBase + 2);
+                    indices.push_back(faceBase); indices.push_back(faceBase + 2); indices.push_back(faceBase + 3);
                 }
-                
-                // 下面 (y-) - 仅完整方块渲染，且下方不是完整方块时
-                if (isFullBlockHeight && isNotFullSolid(x, localY - 1, z)) {
-                    // 根据方块纹理配置查询底面纹理
+
+                // ===== 下面 (y-) =====
+                if (isFullBlockHeight && (n[1] == 0 || !isFullBlock(n[1]))) {
                     float texIndex = static_cast<float>(tex.bottom);
-                    
-                    // 统计 texIndex
-                    texIndexCount[2]++;
-                    
-                    // 调试日志：BOTTOM 面
-                    if (blockState == 2 && x == 8 && z == 8) {
-                        LOGI("Grass block BOTTOM at (%.1f, %.1f, %.1f): texIndex=%.1f", posX, posY, posZ, texIndex);
-                    }
-                    
-                    // V 坐标翻转：0→1, 1→0
                     vertices.push_back({{posX, posY, posZ}, {0.0f, 1.0f}, texIndex, {tintR, tintG, tintB, 255}});
                     vertices.push_back({{posX + 1.0f, posY, posZ}, {1.0f, 1.0f}, texIndex, {tintR, tintG, tintB, 255}});
                     vertices.push_back({{posX + 1.0f, posY, posZ + 1.0f}, {1.0f, 0.0f}, texIndex, {tintR, tintG, tintB, 255}});
                     vertices.push_back({{posX, posY, posZ + 1.0f}, {0.0f, 0.0f}, texIndex, {tintR, tintG, tintB, 255}});
-                    
                     uint32_t faceBase = static_cast<uint32_t>(vertices.size()) - 4;
-                    indices.push_back(faceBase);
-                    indices.push_back(faceBase + 1);
-                    indices.push_back(faceBase + 2);
-                    indices.push_back(faceBase);
-                    indices.push_back(faceBase + 2);
-                    indices.push_back(faceBase + 3);
+                    indices.push_back(faceBase); indices.push_back(faceBase + 1); indices.push_back(faceBase + 2);
+                    indices.push_back(faceBase); indices.push_back(faceBase + 2); indices.push_back(faceBase + 3);
                 }
 
                 // ===== 草方块侧面覆盖层（overlay）准备 =====
-                // 原版 Minecraft 中，草方块侧面由两层组成：
-                //   基础层：grass_block_side.png（泥土+草皮底层，不染色）
-                //   覆盖层：grass_block_side_overlay.png（顶部草皮层，染色后 alpha blend）
                 float baseSideTexIndex;
                 uint8_t baseSideColor[4];
                 bool needsOverlay = false;
-
-                if (blockName == "grass_block") {
+                if (blockMeta.isGrassBlock) {
                     if (isSnowCovered) {
-                        // 雪覆盖时：使用雪纹理，不染色，无 overlay
                         baseSideTexIndex = static_cast<float>(TEX_GRASS_BLOCK_SNOW);
                         baseSideColor[0] = 255; baseSideColor[1] = 255; baseSideColor[2] = 255; baseSideColor[3] = 255;
                     } else {
-                        // 普通草方块：基础层不染色 + overlay 染色
                         baseSideTexIndex = static_cast<float>(TEX_GRASS_SIDE);
                         baseSideColor[0] = 255; baseSideColor[1] = 255; baseSideColor[2] = 255; baseSideColor[3] = 255;
                         needsOverlay = true;
                     }
                 } else {
-                    // 其他方块：直接使用原有纹理 + tint 染色
                     baseSideTexIndex = static_cast<float>(sideTexIndex);
                     baseSideColor[0] = tintR; baseSideColor[1] = tintG; baseSideColor[2] = tintB; baseSideColor[3] = 255;
                 }
 
-                // 辅助 lambda：为草方块生成一层 overlay 侧面（4 顶点 + 6 索引）
                 auto addOverlaySide = [&](float x1, float y1, float z1,
                                           float x2, float y2, float z2,
                                           float x3, float y3, float z3,
@@ -388,20 +392,14 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     overlayVertices.push_back({{x2, y2, z2}, {1.0f, 1.0f}, overlayTex, {tintR, tintG, tintB, 255}});
                     overlayVertices.push_back({{x3, y3, z3}, {1.0f, 0.0f}, overlayTex, {tintR, tintG, tintB, 255}});
                     overlayVertices.push_back({{x4, y4, z4}, {0.0f, 0.0f}, overlayTex, {tintR, tintG, tintB, 255}});
-
-                    overlayIndices.push_back(ob);
-                    overlayIndices.push_back(ob + 1);
-                    overlayIndices.push_back(ob + 2);
-                    overlayIndices.push_back(ob);
-                    overlayIndices.push_back(ob + 2);
-                    overlayIndices.push_back(ob + 3);
-
+                    overlayIndices.push_back(ob); overlayIndices.push_back(ob + 1); overlayIndices.push_back(ob + 2);
+                    overlayIndices.push_back(ob); overlayIndices.push_back(ob + 2); overlayIndices.push_back(ob + 3);
                     overlayIndexCount += 6;
                 };
 
-                // 前面 (z+) - 邻居非完整方块时渲染（深度测试处理交叠）
-                if (isNotFullSolid(x, localY, z + 1)) {
-                    texIndexCount[1]++;
+                // ===== 四个侧面 =====
+                // 前面 (z+)
+                if (n[4] == 0 || !isFullBlock(n[4])) {
                     vertices.push_back({{posX, posY, posZ + 1.0f}, {0.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
                     vertices.push_back({{posX + 1.0f, posY, posZ + 1.0f}, {1.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
                     vertices.push_back({{posX + 1.0f, posY + blockHeight, posZ + 1.0f}, {1.0f, 0.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
@@ -409,17 +407,12 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     uint32_t faceBase = static_cast<uint32_t>(vertices.size()) - 4;
                     indices.push_back(faceBase); indices.push_back(faceBase + 1); indices.push_back(faceBase + 2);
                     indices.push_back(faceBase); indices.push_back(faceBase + 2); indices.push_back(faceBase + 3);
-
-                    if (needsOverlay) {
-                        addOverlaySide(posX, posY, posZ + 1.0f, posX + 1.0f, posY, posZ + 1.0f,
-                                       posX + 1.0f, posY + blockHeight, posZ + 1.0f,
-                                       posX, posY + blockHeight, posZ + 1.0f);
-                    }
+                    if (needsOverlay) addOverlaySide(posX, posY, posZ + 1.0f, posX + 1.0f, posY, posZ + 1.0f,
+                                                     posX + 1.0f, posY + blockHeight, posZ + 1.0f,
+                                                     posX, posY + blockHeight, posZ + 1.0f);
                 }
-                
-                // 后面 (z-) - 邻居非完整方块时渲染（深度测试处理交叠）
-                if (isNotFullSolid(x, localY, z - 1)) {
-                    texIndexCount[1]++;
+                // 后面 (z-)
+                if (n[5] == 0 || !isFullBlock(n[5])) {
                     vertices.push_back({{posX + 1.0f, posY, posZ}, {0.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
                     vertices.push_back({{posX, posY, posZ}, {1.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
                     vertices.push_back({{posX, posY + blockHeight, posZ}, {1.0f, 0.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
@@ -427,17 +420,12 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     uint32_t faceBase = static_cast<uint32_t>(vertices.size()) - 4;
                     indices.push_back(faceBase); indices.push_back(faceBase + 1); indices.push_back(faceBase + 2);
                     indices.push_back(faceBase); indices.push_back(faceBase + 2); indices.push_back(faceBase + 3);
-
-                    if (needsOverlay) {
-                        addOverlaySide(posX + 1.0f, posY, posZ, posX, posY, posZ,
-                                       posX, posY + blockHeight, posZ,
-                                       posX + 1.0f, posY + blockHeight, posZ);
-                    }
+                    if (needsOverlay) addOverlaySide(posX + 1.0f, posY, posZ, posX, posY, posZ,
+                                                     posX, posY + blockHeight, posZ,
+                                                     posX + 1.0f, posY + blockHeight, posZ);
                 }
-                
-                // 右面 (x+) - 邻居非完整方块时渲染（深度测试处理交叠）
-                if (isNotFullSolid(x + 1, localY, z)) {
-                    texIndexCount[1]++;
+                // 右面 (x+)
+                if (n[2] == 0 || !isFullBlock(n[2])) {
                     vertices.push_back({{posX + 1.0f, posY, posZ + 1.0f}, {0.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
                     vertices.push_back({{posX + 1.0f, posY, posZ}, {1.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
                     vertices.push_back({{posX + 1.0f, posY + blockHeight, posZ}, {1.0f, 0.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
@@ -445,17 +433,12 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     uint32_t faceBase = static_cast<uint32_t>(vertices.size()) - 4;
                     indices.push_back(faceBase); indices.push_back(faceBase + 1); indices.push_back(faceBase + 2);
                     indices.push_back(faceBase); indices.push_back(faceBase + 2); indices.push_back(faceBase + 3);
-
-                    if (needsOverlay) {
-                        addOverlaySide(posX + 1.0f, posY, posZ + 1.0f, posX + 1.0f, posY, posZ,
-                                       posX + 1.0f, posY + blockHeight, posZ,
-                                       posX + 1.0f, posY + blockHeight, posZ + 1.0f);
-                    }
+                    if (needsOverlay) addOverlaySide(posX + 1.0f, posY, posZ + 1.0f, posX + 1.0f, posY, posZ,
+                                                     posX + 1.0f, posY + blockHeight, posZ,
+                                                     posX + 1.0f, posY + blockHeight, posZ + 1.0f);
                 }
-                
-                // 左面 (x-) - 邻居非完整方块时渲染（深度测试处理交叠）
-                if (isNotFullSolid(x - 1, localY, z)) {
-                    texIndexCount[1]++;
+                // 左面 (x-)
+                if (n[3] == 0 || !isFullBlock(n[3])) {
                     vertices.push_back({{posX, posY, posZ}, {0.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
                     vertices.push_back({{posX, posY, posZ + 1.0f}, {1.0f, 1.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
                     vertices.push_back({{posX, posY + blockHeight, posZ + 1.0f}, {1.0f, 0.0f}, baseSideTexIndex, {baseSideColor[0], baseSideColor[1], baseSideColor[2], baseSideColor[3]}});
@@ -463,36 +446,14 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     uint32_t faceBase = static_cast<uint32_t>(vertices.size()) - 4;
                     indices.push_back(faceBase); indices.push_back(faceBase + 1); indices.push_back(faceBase + 2);
                     indices.push_back(faceBase); indices.push_back(faceBase + 2); indices.push_back(faceBase + 3);
-
-                    if (needsOverlay) {
-                        addOverlaySide(posX, posY, posZ, posX, posY, posZ + 1.0f,
-                                       posX, posY + blockHeight, posZ + 1.0f,
-                                       posX, posY + blockHeight, posZ);
-                    }
+                    if (needsOverlay) addOverlaySide(posX, posY, posZ, posX, posY, posZ + 1.0f,
+                                                     posX, posY + blockHeight, posZ + 1.0f,
+                                                     posX, posY + blockHeight, posZ);
                 }
             }
         }
     }
     
-    if (blocksRendered > 0) {
-        LOGI("Section (%d, %d, %d): %d blocks rendered, %d grass blocks", 
-             chunkX, sectionY, chunkZ, blocksRendered, grassBlocksRendered);
-        LOGI("  texIndex distribution: layer0=%d, layer1=%d, layer2=%d",
-             texIndexCount[0], texIndexCount[1], texIndexCount[2]);
-        
-        // 打印 blockState ID 分布（前 10 个最多的）
-        if (BlockRegistry::getInstance().isLoaded()) {
-            LOGI("  BlockState ID distribution:");
-            int count = 0;
-            for (auto it = blockStateCount.rbegin(); it != blockStateCount.rend() && count < 10; ++it, ++count) {
-                std::string blockName = BlockRegistry::getInstance().getBlockName(it->first);
-                LOGI("    blockState=%d (%s): %d blocks", it->first, blockName.c_str(), it->second);
-            }
-        } else {
-            LOGE("  BlockRegistry not loaded, skipping block name lookup");
-        }
-    }
-
     // 合并 overlay 几何体到主缓冲区末尾（所有 base 在前，overlay 在后）
     if (!overlayIndices.empty()) {
         uint32_t baseVertexCount = static_cast<uint32_t>(vertices.size());
