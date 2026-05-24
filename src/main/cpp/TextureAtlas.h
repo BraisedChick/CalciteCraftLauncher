@@ -58,8 +58,10 @@ enum TextureLayer : int {
 
     // ---- 其他 ----
     TEX_SNOW_BLOCK = 39,              // snow_block.png
+    TEX_AMETHYST_BLOCK = 40,          // amethyst_block.png
+    TEX_CALCITE = 41,                 // calcite.png
 
-    TEXTURE_LAYER_COUNT,  // 纹理层总数（当前 = 40）
+    TEXTURE_LAYER_COUNT,  // 纹理层总数（当前 = 42）
 };
 
 // ============================================================
@@ -93,8 +95,18 @@ inline BlockTextureConfig getBlockTexture(int32_t blockState) {
     if (name == "stone" || name == "andesite"
         || name == "diorite" || name == "granite"
         || name == "deepslate" || name == "tuff"
-        || name == "calcite" || name == "dripstone_block") {
+        || name == "dripstone_block") {
         return {TEX_STONE, TEX_STONE, TEX_STONE};
+    }
+
+    // 紫水晶块
+    if (name == "amethyst_block" || name == "budding_amethyst") {
+        return {TEX_AMETHYST_BLOCK, TEX_AMETHYST_BLOCK, TEX_AMETHYST_BLOCK};
+    }
+
+    // 方解石
+    if (name == "calcite") {
+        return {TEX_CALCITE, TEX_CALCITE, TEX_CALCITE};
     }
 
     // 圆石
@@ -256,69 +268,10 @@ inline BlockTextureConfig getBlockTexture(int32_t blockState) {
     return {texIndex, texIndex, texIndex};
 }
 
-// ============================================================
-// 获取方块高度比例（1.0 = 完整方块，<1.0 = 不完整方块如雪片）
-// ============================================================
-inline float getBlockHeight(int32_t blockState) {
-    if (blockState == 0) return 0.0f;
-
-    auto& registry = BlockRegistry::getInstance();
-    std::string name = registry.getBlockName(blockState);
-
-    // 雪片：根据 blockState 在 "snow" 范围内的偏移量计算层数
-    if (name == "snow") {
-        auto* info = registry.getBlockInfo(blockState);
-        if (info) {
-            int stateCount = info->maxStateId - info->minStateId + 1;
-            if (stateCount >= 8) {
-                int layers = (blockState - info->minStateId) + 1;
-                if (layers < 1) layers = 1;
-                if (layers > 8) layers = 8;
-                return layers / 8.0f;
-            }
-        }
-        return 0.5f; // 无法确定层数，默认半格
-    }
-
-    return 1.0f; // 默认为完整方块
-}
-
-// 判断是否为植物类不完整方块（草、花、蕨等），需要十字交叉渲染
-inline bool isPlant(int32_t blockState) {
-    if (blockState == 0) return false;
-    auto& registry = BlockRegistry::getInstance();
-    std::string name = registry.getBlockName(blockState);
-    return name == "grass" || name == "tall_grass"
-        || name == "fern" || name == "large_fern"
-        || name == "dead_bush" || name == "vine"
-        || name == "lily_pad" || name == "sugar_cane"
-        || name == "brown_mushroom" || name == "red_mushroom"
-        || name == "dandelion" || name == "poppy" || name == "blue_orchid"
-        || name == "allium" || name == "azure_bluet" || name == "oxeye_daisy"
-        || name == "cornflower" || name == "lily_of_the_valley"
-        || name == "wither_rose" || name == "sunflower"
-        || name == "lilac" || name == "rose_bush" || name == "peony";
-}
-
 // 判断一个 blockState 是否为完整方块（不透明、遮挡相邻面）
 inline bool isFullBlock(int32_t blockState) {
     if (blockState == 0) return false;
     return BlockRegistry::getInstance().getBlockMetadata(blockState).isFullBlock;
-}
-
-// ============================================================
-// 生物群系着色：根据 biome ID 返回草/树叶的 tint color
-// 使用 BiomeColorManager 从 colormap PNG + biome JSON 采样
-// ============================================================
-
-// 获取 biome 的草染色（委托给 BiomeColorManager）
-inline void getBiomeGrassColor(int32_t biomeId, uint8_t& r, uint8_t& g, uint8_t& b) {
-    BiomeColorManager::getInstance().getGrassColor(biomeId, r, g, b);
-}
-
-// 获取 biome 的树叶染色
-inline void getBiomeFoliageColor(int32_t biomeId, uint8_t& r, uint8_t& g, uint8_t& b) {
-    BiomeColorManager::getInstance().getFoliageColor(biomeId, r, g, b);
 }
 
 // ============================================================
@@ -345,6 +298,8 @@ inline std::string getTextureFileName(int layer) {
         case TEX_GRASS_BLOCK_SNOW: return "grass_block_snow.png";
         case TEX_SNOW:           return "snow.png";
         case TEX_SNOW_BLOCK:     return "powder_snow.png";
+        case TEX_AMETHYST_BLOCK: return "amethyst_block.png";
+        case TEX_CALCITE:        return "calcite.png";
         case TEX_ICE:            return "ice.png";
         case TEX_GRASS_PLANT:    return "grass.png";
         case TEX_GRASS_SIDE_OVERLAY: return "grass_block_side_overlay.png";
@@ -373,49 +328,6 @@ inline std::string getTextureFileName(int layer) {
 // ============================================================
 // 获取第 i 层的占位纹理颜色（当 PNG 文件不存在时使用）
 // ============================================================
-inline void getPlaceholderColor(int layer, uint8_t& r, uint8_t& g, uint8_t& b) {
-    switch (layer) {
-        case TEX_GRASS_TOP:      r = 0x7C; g = 0xB3; b = 0x42; break; // 草绿
-        case TEX_GRASS_SIDE:     r = 0x55; g = 0x8B; b = 0x2F; break; // 深绿
-        case TEX_DIRT:           r = 0x79; g = 0x55; b = 0x48; break; // 棕色
-        case TEX_STONE:          r = 0x9E; g = 0x9E; b = 0x9E; break; // 灰色
-        case TEX_COBBLESTONE:    r = 0x75; g = 0x75; b = 0x75; break; // 深灰
-        case TEX_OAK_PLANKS:     r = 0xBC; g = 0xAA; b = 0xA4; break; // 浅木色
-        case TEX_OAK_LOG_TOP:    r = 0x8D; g = 0x6B; b = 0x4E; break; // 年轮色
-        case TEX_OAK_LOG_SIDE:   r = 0x6D; g = 0x4F; b = 0x3A; break; // 树皮色
-        case TEX_SPRUCE_PLANKS:  r = 0x6D; g = 0x5E; b = 0x4B; break; // 深木色
-        case TEX_SPRUCE_LOG_TOP: r = 0x5D; g = 0x4B; b = 0x3A; break; // 深年轮色
-        case TEX_SPRUCE_LOG_SIDE: r = 0x3D; g = 0x2F; b = 0x23; break; // 深树皮色
-        case TEX_SAND:           r = 0xE8; g = 0xDB; b = 0xA0; break; // 沙色
-        case TEX_GRAVEL:         r = 0x85; g = 0x7F; b = 0x74; break; // 砂砾色
-        case TEX_WATER:          r = 0x3F; g = 0x76; b = 0xE4; break; // 蓝色
-        case TEX_OAK_LEAVES:     r = 0x47; g = 0xA0; b = 0x36; break; // 树叶绿
-        case TEX_SPRUCE_LEAVES:  r = 0x2D; g = 0x6B; b = 0x21; break; // 深树叶绿
-        case TEX_GRASS_BLOCK_SNOW: r = 0xF0; g = 0xF0; b = 0xF0; break; // 雪白
-        case TEX_SNOW:           r = 0xF0; g = 0xF8; b = 0xFF; break; // 雪片白
-        case TEX_SNOW_BLOCK:     r = 0xF5; g = 0xF5; b = 0xF5; break; // 雪块白
-        case TEX_ICE:            r = 0xA0; g = 0xD8; b = 0xF0; break; // 冰蓝
-        case TEX_GRASS_PLANT:    r = 0x5B; g = 0x8E; b = 0x2D; break; // 草绿
-        case TEX_GRASS_SIDE_OVERLAY: r = 0x7C; g = 0xB3; b = 0x42; break; // 与 grass_top 相同
-        // ---- 矿石占位色 ----
-        case TEX_COAL_ORE:           r = 0x2D; g = 0x2D; b = 0x2D; break; // 深灰
-        case TEX_DEEPSLATE_COAL_ORE: r = 0x1A; g = 0x1A; b = 0x1A; break; // 极深灰
-        case TEX_COPPER_ORE:         r = 0xCC; g = 0x77; b = 0x33; break; // 铜橙色
-        case TEX_DEEPSLATE_COPPER_ORE: r = 0x99; g = 0x55; b = 0x22; break; // 深铜色
-        case TEX_DIAMOND_ORE:        r = 0x55; g = 0xCC; b = 0xEE; break; // 青
-        case TEX_DEEPSLATE_DIAMOND_ORE: r = 0x33; g = 0x88; b = 0xAA; break; // 深青
-        case TEX_EMERALD_ORE:        r = 0x44; g = 0xCC; b = 0x44; break; // 绿
-        case TEX_DEEPSLATE_EMERALD_ORE: r = 0x22; g = 0x88; b = 0x22; break; // 深绿
-        case TEX_GOLD_ORE:           r = 0xFF; g = 0xCC; b = 0x44; break; // 金
-        case TEX_DEEPSLATE_GOLD_ORE: r = 0xBB; g = 0x99; b = 0x22; break; // 暗金
-        case TEX_IRON_ORE:           r = 0xCC; g = 0xBB; b = 0x99; break; // 米色
-        case TEX_DEEPSLATE_IRON_ORE: r = 0x99; g = 0x88; b = 0x66; break; // 深米
-        case TEX_LAPIS_ORE:          r = 0x33; g = 0x66; b = 0xCC; break; // 蓝
-        case TEX_DEEPSLATE_LAPIS_ORE: r = 0x22; g = 0x44; b = 0x99; break; // 深蓝
-        case TEX_REDSTONE_ORE:       r = 0xCC; g = 0x33; b = 0x33; break; // 红
-        case TEX_DEEPSLATE_REDSTONE_ORE: r = 0x88; g = 0x22; b = 0x22; break; // 深红
-        case TEX_NETHER_GOLD_ORE:    r = 0xCC; g = 0x88; b = 0x22; break; // 金褐
-        case TEX_NETHER_QUARTZ_ORE:  r = 0xDD; g = 0xCC; b = 0xBB; break; // 白
-        default:                     r = 0xAA; g = 0x44; b = 0xAA; break; // 紫色（未知）
-    }
+inline void getPlaceholderColor(int /*layer*/, uint8_t& r, uint8_t& g, uint8_t& b) {
+    r = 0xAA; g = 0x44; b = 0xAA; // 紫色（缺少纹理时的占位色）
 }

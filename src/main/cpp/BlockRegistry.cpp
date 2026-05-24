@@ -233,8 +233,12 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
     } else if (meta.name == "stone" || meta.name == "andesite"
                || meta.name == "diorite" || meta.name == "granite"
                || meta.name == "deepslate" || meta.name == "tuff"
-               || meta.name == "calcite" || meta.name == "dripstone_block") {
+               || meta.name == "dripstone_block") {
         meta.texTop = meta.texSide = meta.texBottom = TEX_STONE;
+    } else if (meta.name == "amethyst_block" || meta.name == "budding_amethyst") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_AMETHYST_BLOCK;
+    } else if (meta.name == "calcite") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_CALCITE;
     } else if (meta.name == "cobblestone" || meta.name == "mossy_cobblestone"
                || meta.name == "stone_bricks" || meta.name == "cracked_stone_bricks"
                || meta.name == "mossy_stone_bricks") {
