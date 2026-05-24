@@ -44,62 +44,6 @@ void NetworkManager::disconnect() {
     connected = false;
 }
 
-bool NetworkManager::sendPacket(int packetId, const std::vector<uint8_t>& payload) {
-    if (!connected) return false;
-
-    std::vector<uint8_t> packetData;
-
-    if (Compression::isEnabled()) {
-        int threshold = Compression::getThreshold();
-        LOGI("Sending packet %d, payload size=%d, compression enabled, threshold=%d",
-             packetId, static_cast<int>(payload.size()), threshold);
-
-        // 构建未压缩的包内容：包ID + payload
-        ProtocolCraft::WriteContainer idBytes;
-        ProtocolCraft::WriteData<int, ProtocolCraft::VarInt>(packetId, idBytes);
-        packetData.insert(packetData.end(), idBytes.begin(), idBytes.end());
-        packetData.insert(packetData.end(), payload.begin(), payload.end());
-
-        if ((int)packetData.size() >= threshold) {
-            // 需要压缩
-            LOGI("Compressing packet %d, uncompressed size=%d", packetId, static_cast<int>(packetData.size()));
-            std::vector<uint8_t> compressed = Compression::compress(packetData);
-            if (compressed.empty()) return false;
-
-            // 压缩后的结构：[原始长度VarInt] [压缩数据]
-            ProtocolCraft::WriteContainer originalLenBytes;
-            ProtocolCraft::WriteData<int, ProtocolCraft::VarInt>(static_cast<int>(packetData.size()), originalLenBytes);
-            packetData.clear();
-            packetData.insert(packetData.end(), originalLenBytes.begin(), originalLenBytes.end());
-            packetData.insert(packetData.end(), compressed.begin(), compressed.end());
-        } else {
-            // 未压缩，结构：[VarInt(0)] [包ID] [payload]
-            LOGI("Packet %d below threshold, sending uncompressed", packetId);
-            std::vector<uint8_t> uncompressed;
-            uncompressed.push_back(0); // VarInt(0)
-            uncompressed.insert(uncompressed.end(), packetData.begin(), packetData.end());
-            packetData = uncompressed;
-        }
-    } else {
-        // 未启用压缩，结构：[包ID] [payload]
-        ProtocolCraft::WriteContainer idBytes;
-        ProtocolCraft::WriteData<int, ProtocolCraft::VarInt>(packetId, idBytes);
-        packetData.insert(packetData.end(), idBytes.begin(), idBytes.end());
-        packetData.insert(packetData.end(), payload.begin(), payload.end());
-    }
-
-    // 手动添加包长度前缀
-    ProtocolCraft::WriteContainer lenBytes;
-    ProtocolCraft::WriteData<int, ProtocolCraft::VarInt>(static_cast<int>(packetData.size()), lenBytes);
-    std::vector<uint8_t> fullPacket;
-    fullPacket.insert(fullPacket.end(), lenBytes.begin(), lenBytes.end());
-    fullPacket.insert(fullPacket.end(), packetData.begin(), packetData.end());
-
-    printBytes(fullPacket, "Sending");
-    int sent = send(sock, fullPacket.data(), fullPacket.size(), 0);
-    return sent == (int)fullPacket.size();
-}
-
 bool NetworkManager::sendRawPacket(const std::vector<uint8_t>& fullPacketData) {
     if (!connected || fullPacketData.empty()) return false;
 
