@@ -15,9 +15,7 @@
 - OpenGL ES 3.0 兼容的 GPU（Vulkan 可选）
 - 推荐 2GB RAM 以上
 
-## 🚀 构建指南
-
-1. **克隆仓库**
-   ```bash
-   git clone https://github.com/BraisedChick/CalciteCraftLauncher.git
-   cd CalciteCraftLauncher
+📜 开源协议
+本项目采用 GPL-3.0 License 授权
+使用的第三方库
+- [Botcraft](https://github.com/adepierre/Botcraft)
