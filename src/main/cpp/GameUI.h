@@ -26,6 +26,9 @@ public:
     // 触摸输入（来自 Java JNI）
     void queueTouchEvent(float x, float y, int action);
 
+    // 多点触控入口（由 JNI 路由调用）
+    void onTouchEvent(int pointerId, float x, float y, int action);
+
     // 键盘输入（来自 Java JNI）
     void addInputCharacter(unsigned int c);
     bool wantsTextInput();
@@ -43,7 +46,30 @@ private:
     void renderMainMenu();
     void renderMultiplayer();
     void renderConnecting();
+    void renderInGameUI();
     void processTouchEvents();
+
+    // 多点触控
+    struct TouchPoint {
+        int id = -1;
+        bool active = false;
+        enum Role { NONE, JOYSTICK, CAMERA, UP_BUTTON, DOWN_BUTTON };
+        Role role = NONE;
+        float cameraLastX = 0, cameraLastY = 0;
+    };
+    static const int MAX_TOUCH_POINTS = 4;
+    TouchPoint touchPoints[MAX_TOUCH_POINTS];
+
+    TouchPoint* findTouchPoint(int id);
+    TouchPoint* allocTouchPoint(int id);
+    void freeTouchPoint(int id);
+    bool isRoleTaken(TouchPoint::Role role) const;
+
+    void handleJoystickTouch(int pointerId, float x, float y, int action);
+    void handleCameraTouch(int pointerId, float x, float y, int action);
+    bool isInJoystickArea(float x, float y) const;
+    bool isInUpButtonArea(float x, float y) const;
+    bool isInDownButtonArea(float x, float y) const;
 
     UIState currentState = UIState::MAIN_MENU;
     ConnectCallback connectCallback;
@@ -55,8 +81,19 @@ private:
 
     struct TouchEvent {
         float x, y;
-        int action; // 0=down, 1=up, 2=move
+        int action;
     };
     std::vector<TouchEvent> touchEvents;
     std::mutex touchMutex;
+
+    // 游戏内 UI 状态
+    struct {
+        bool active = false;
+        float knobX = 0, knobY = 0;
+    } joystick;
+
+    struct {
+        bool upPressed = false;
+        bool downPressed = false;
+    } buttons;
 };

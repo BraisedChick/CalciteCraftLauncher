@@ -7,10 +7,29 @@
 #include <GLES3/gl3.h>
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
+#include "CameraController.h"
 
 #define LOG_TAG "GameUI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+// 按键码（与 CameraController.cpp 一致）
+#define GAMEKEY_W    0
+#define GAMEKEY_S    1
+#define GAMEKEY_A    2
+#define GAMEKEY_D    3
+#define GAMEKEY_UP   4
+#define GAMEKEY_DOWN 5
+
+// 游戏内 UI 布局常量
+#define JOYSTICK_CENTER_X  170.0f
+#define JOYSTICK_CENTER_Y_OFFSET 160.0f  // 距屏幕底部
+#define JOYSTICK_RADIUS    110.0f
+#define JOYSTICK_KNOB_RADIUS 38.0f
+#define JOYSTICK_MAX_DIST  65.0f
+#define BTN_RADIUS         38.0f
+#define BTN_RIGHT_MARGIN   90.0f
+#define BTN_VERTICAL_SPACING 85.0f
 
 GameUI& GameUI::getInstance() {
     static GameUI instance;
@@ -29,7 +48,6 @@ bool GameUI::init() {
     io.LogFilename = nullptr;
 
     // 加载支持中文的字体
-    // Android 系统通常有以下中文字体
     static const char* fontPaths[] = {
         "/system/fonts/NotoSansSC-Regular.otf",
         "/system/fonts/NotoSansCJK-Regular.ttc",
@@ -49,15 +67,12 @@ bool GameUI::init() {
         }
     }
     if (!font) {
-        // 没有中文字体，使用默认字体（中文会显示为方块）
         font = io.Fonts->AddFontDefault();
         LOGE("No CJK font found, Chinese text may display as boxes");
     }
 
-    // 设置字体缩放（适配移动端高 DPI）
     io.FontGlobalScale = 2.0f;
 
-    // 设置样式
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowRounding = 0.0f;
     style.FrameRounding = 4.0f;
@@ -69,7 +84,6 @@ bool GameUI::init() {
     style.Colors[ImGuiCol_FrameBg] = ImVec4(0.12f, 0.12f, 0.16f, 1.0f);
     style.Colors[ImGuiCol_Text] = ImVec4(0.95f, 0.95f, 0.95f, 1.0f);
 
-    // 初始化 OpenGL3 后端
     if (!ImGui_ImplOpenGL3_Init("#version 300 es")) {
         LOGE("Failed to initialize ImGui OpenGL3 backend");
         return false;
@@ -105,13 +119,10 @@ void GameUI::processTouchEvents() {
     for (const auto& e : events) {
         io.AddMousePosEvent(e.x, e.y);
         if (e.action == 0) {
-            // down
             io.AddMouseButtonEvent(0, true);
         } else if (e.action == 1) {
-            // up
             io.AddMouseButtonEvent(0, false);
         }
-        // move: 坐标已经通过 AddMousePosEvent 更新
     }
 }
 
@@ -119,7 +130,6 @@ void GameUI::addInputCharacter(unsigned int c) {
     if (!initialized) return;
     ImGuiIO& io = ImGui::GetIO();
     if (c == 127 || c == 8) {
-        // 退格键：AddInputCharacter 无法处理控制字符，需要发送 key event
         io.AddKeyEvent(ImGuiKey_Backspace, true);
         io.AddKeyEvent(ImGuiKey_Backspace, false);
     } else {
@@ -151,12 +161,15 @@ void GameUI::render() {
             renderConnecting();
             break;
         case UIState::IN_GAME:
+            renderInGameUI();
             break;
     }
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
+
+// ===== 菜单 UI =====
 
 void GameUI::renderMainMenu() {
     ImGuiIO& io = ImGui::GetIO();
@@ -170,7 +183,6 @@ void GameUI::renderMainMenu() {
                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
                  ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-    // 标题
     ImGui::SetCursorPos(ImVec2(w * 0.5f - 120.0f, h * 0.12f));
     ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "MINECRAFT");
 
@@ -179,25 +191,19 @@ void GameUI::renderMainMenu() {
     float startY = h * 0.38f;
     float spacing = 12.0f;
 
-    // 多人游戏
     ImGui::SetCursorPos(ImVec2(w * 0.5f - btnW * 0.5f, startY));
     if (ImGui::Button("多人游戏", ImVec2(btnW, btnH))) {
         currentState = UIState::MULTIPLAYER;
     }
 
-    // 选项
     ImGui::SetCursorPos(ImVec2(w * 0.5f - btnW * 0.5f, startY + (btnH + spacing) * 1));
     if (ImGui::Button("选项", ImVec2(btnW, btnH))) {
-        // 暂不实现
     }
 
-    // 退出游戏
     ImGui::SetCursorPos(ImVec2(w * 0.5f - btnW * 0.5f, startY + (btnH + spacing) * 2));
     if (ImGui::Button("退出游戏", ImVec2(btnW, btnH))) {
-        // 退出到桌面
     }
 
-    // 底部小字：版本信息
     ImGui::SetCursorPos(ImVec2(w * 0.5f - 80.0f, h - 40.0f));
     ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "v1.18.2");
 
@@ -216,7 +222,6 @@ void GameUI::renderMultiplayer() {
                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
                  ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-    // 返回按钮
     ImGui::SetCursorPos(ImVec2(20, 20));
     if (ImGui::Button("< 返回", ImVec2(100, 40))) {
         currentState = UIState::MAIN_MENU;
@@ -225,20 +230,17 @@ void GameUI::renderMultiplayer() {
     float cx = w * 0.5f;
     float startY = h * 0.18f;
 
-    // 服务器地址
     ImGui::SetCursorPos(ImVec2(cx - 170.0f, startY));
     ImGui::Text("服务器地址");
     ImGui::SetCursorPos(ImVec2(cx - 170.0f, startY + 32.0f));
     ImGui::PushItemWidth(340.0f);
     ImGui::InputText("##ip", ipBuffer, sizeof(ipBuffer));
 
-    // 端口
     ImGui::SetCursorPos(ImVec2(cx - 170.0f, startY + 90.0f));
     ImGui::Text("端口");
     ImGui::SetCursorPos(ImVec2(cx - 170.0f, startY + 122.0f));
     ImGui::InputText("##port", portBuffer, sizeof(portBuffer));
 
-    // 连接按钮
     ImGui::SetCursorPos(ImVec2(cx - 100.0f, startY + 180.0f));
     if (ImGui::Button("连接服务器", ImVec2(200, 50))) {
         int port = 25565;
@@ -278,4 +280,249 @@ void GameUI::renderConnecting() {
     ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", ipBuffer);
 
     ImGui::End();
+}
+
+// ===== 游戏内 UI =====
+
+void GameUI::renderInGameUI() {
+    ImGuiIO& io = ImGui::GetIO();
+    float w = io.DisplaySize.x;
+    float h = io.DisplaySize.y;
+
+    // 使用背景绘制列表（在所有 ImGui 窗口之下）
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+
+    // 摇杆底座（左下角）
+    float jx = JOYSTICK_CENTER_X;
+    float jy = h - JOYSTICK_CENTER_Y_OFFSET;
+
+    draw->AddCircleFilled(ImVec2(jx, jy), JOYSTICK_RADIUS, IM_COL32(255, 255, 255, 30));
+    draw->AddCircle(ImVec2(jx, jy), JOYSTICK_RADIUS, IM_COL32(255, 255, 255, 60));
+
+    // 摇杆摇柄
+    float knobX = jx + joystick.knobX;
+    float knobY = jy + joystick.knobY;
+    draw->AddCircleFilled(ImVec2(knobX, knobY), JOYSTICK_KNOB_RADIUS, IM_COL32(255, 255, 255, 100));
+    draw->AddCircle(ImVec2(knobX, knobY), JOYSTICK_KNOB_RADIUS, IM_COL32(255, 255, 255, 160));
+
+    // 上升/下降按钮（右侧居中）
+    float btnX = w - BTN_RIGHT_MARGIN;
+    float btnUpY = h * 0.5f - BTN_VERTICAL_SPACING;
+    float btnDownY = h * 0.5f;
+
+    // 上升按钮
+    ImU32 upCol = buttons.upPressed ? IM_COL32(255, 255, 255, 200) : IM_COL32(255, 255, 255, 60);
+    draw->AddCircleFilled(ImVec2(btnX, btnUpY), BTN_RADIUS, upCol);
+    draw->AddCircle(ImVec2(btnX, btnUpY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
+    // 上箭头 △
+    draw->AddTriangleFilled(
+        ImVec2(btnX, btnUpY - 10),
+        ImVec2(btnX - 10, btnUpY + 6),
+        ImVec2(btnX + 10, btnUpY + 6),
+        IM_COL32(255, 255, 255, 180));
+
+    // 下降按钮
+    ImU32 downCol = buttons.downPressed ? IM_COL32(255, 255, 255, 200) : IM_COL32(255, 255, 255, 60);
+    draw->AddCircleFilled(ImVec2(btnX, btnDownY), BTN_RADIUS, downCol);
+    draw->AddCircle(ImVec2(btnX, btnDownY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
+    // 下箭头 ▽
+    draw->AddTriangleFilled(
+        ImVec2(btnX, btnDownY + 10),
+        ImVec2(btnX - 10, btnDownY - 6),
+        ImVec2(btnX + 10, btnDownY - 6),
+        IM_COL32(255, 255, 255, 180));
+}
+
+bool GameUI::isInJoystickArea(float x, float y) const {
+    ImGuiIO& io = ImGui::GetIO();
+    float jx = JOYSTICK_CENTER_X;
+    float jy = io.DisplaySize.y - JOYSTICK_CENTER_Y_OFFSET;
+    float dx = x - jx;
+    float dy = y - jy;
+    return (dx * dx + dy * dy) <= (JOYSTICK_RADIUS * JOYSTICK_RADIUS * 2.25f); // 1.5x radius
+}
+
+bool GameUI::isInUpButtonArea(float x, float y) const {
+    ImGuiIO& io = ImGui::GetIO();
+    float bx = io.DisplaySize.x - BTN_RIGHT_MARGIN;
+    float by = io.DisplaySize.y * 0.5f - BTN_VERTICAL_SPACING;
+    float dx = x - bx;
+    float dy = y - by;
+    return (dx * dx + dy * dy) <= (BTN_RADIUS * BTN_RADIUS * 1.5f);
+}
+
+bool GameUI::isInDownButtonArea(float x, float y) const {
+    ImGuiIO& io = ImGui::GetIO();
+    float bx = io.DisplaySize.x - BTN_RIGHT_MARGIN;
+    float by = io.DisplaySize.y * 0.5f;
+    float dx = x - bx;
+    float dy = y - by;
+    return (dx * dx + dy * dy) <= (BTN_RADIUS * BTN_RADIUS * 1.5f);
+}
+
+GameUI::TouchPoint* GameUI::findTouchPoint(int id) {
+    for (int i = 0; i < MAX_TOUCH_POINTS; i++) {
+        if (touchPoints[i].active && touchPoints[i].id == id)
+            return &touchPoints[i];
+    }
+    return nullptr;
+}
+
+GameUI::TouchPoint* GameUI::allocTouchPoint(int id) {
+    for (int i = 0; i < MAX_TOUCH_POINTS; i++) {
+        if (!touchPoints[i].active) {
+            touchPoints[i].active = true;
+            touchPoints[i].id = id;
+            touchPoints[i].role = TouchPoint::NONE;
+            return &touchPoints[i];
+        }
+    }
+    return nullptr;
+}
+
+void GameUI::freeTouchPoint(int id) {
+    for (int i = 0; i < MAX_TOUCH_POINTS; i++) {
+        if (touchPoints[i].active && touchPoints[i].id == id) {
+            touchPoints[i].active = false;
+            touchPoints[i].role = TouchPoint::NONE;
+            return;
+        }
+    }
+}
+
+bool GameUI::isRoleTaken(TouchPoint::Role role) const {
+    for (int i = 0; i < MAX_TOUCH_POINTS; i++) {
+        if (touchPoints[i].active && touchPoints[i].role == role)
+            return true;
+    }
+    return false;
+}
+
+// ===== 多点触控入口 =====
+
+void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
+    if (action == 0) {
+        // DOWN：分配触摸点，根据位置分配角色
+        auto* pt = allocTouchPoint(pointerId);
+        if (!pt) return;
+
+        if (!isRoleTaken(TouchPoint::JOYSTICK) && isInJoystickArea(x, y)) {
+            pt->role = TouchPoint::JOYSTICK;
+            handleJoystickTouch(pointerId, x, y, action);
+        } else if (!isRoleTaken(TouchPoint::UP_BUTTON) && isInUpButtonArea(x, y)) {
+            pt->role = TouchPoint::UP_BUTTON;
+            CameraController::getInstance().setKeyState(GAMEKEY_UP, true);
+            buttons.upPressed = true;
+        } else if (!isRoleTaken(TouchPoint::DOWN_BUTTON) && isInDownButtonArea(x, y)) {
+            pt->role = TouchPoint::DOWN_BUTTON;
+            CameraController::getInstance().setKeyState(GAMEKEY_DOWN, true);
+            buttons.downPressed = true;
+        } else {
+            pt->role = TouchPoint::CAMERA;
+            handleCameraTouch(pointerId, x, y, action);
+        }
+    } else if (action == 2) {
+        // MOVE：按角色处理
+        auto* pt = findTouchPoint(pointerId);
+        if (!pt || !pt->active) return;
+
+        switch (pt->role) {
+            case TouchPoint::JOYSTICK:
+                handleJoystickTouch(pointerId, x, y, action);
+                break;
+            case TouchPoint::CAMERA:
+                handleCameraTouch(pointerId, x, y, action);
+                break;
+            default:
+                break;
+        }
+    } else if (action == 1) {
+        // UP：释放触摸点和角色
+        auto* pt = findTouchPoint(pointerId);
+        if (!pt) return;
+
+        switch (pt->role) {
+            case TouchPoint::JOYSTICK:
+                handleJoystickTouch(pointerId, x, y, action);
+                break;
+            case TouchPoint::CAMERA:
+                break;
+            case TouchPoint::UP_BUTTON:
+                CameraController::getInstance().setKeyState(GAMEKEY_UP, false);
+                buttons.upPressed = false;
+                break;
+            case TouchPoint::DOWN_BUTTON:
+                CameraController::getInstance().setKeyState(GAMEKEY_DOWN, false);
+                buttons.downPressed = false;
+                break;
+            default:
+                break;
+        }
+        freeTouchPoint(pointerId);
+    }
+}
+
+void GameUI::handleJoystickTouch(int pointerId, float x, float y, int action) {
+    ImGuiIO& io = ImGui::GetIO();
+    float jx = JOYSTICK_CENTER_X;
+    float jy = io.DisplaySize.y - JOYSTICK_CENTER_Y_OFFSET;
+
+    switch (action) {
+        case 0: { // DOWN
+            joystick.active = true;
+            float dx = x - jx;
+            float dy = y - jy;
+            float dist = sqrtf(dx * dx + dy * dy);
+            if (dist > JOYSTICK_MAX_DIST) {
+                dx = dx / dist * JOYSTICK_MAX_DIST;
+                dy = dy / dist * JOYSTICK_MAX_DIST;
+            }
+            joystick.knobX = dx;
+            joystick.knobY = dy;
+            CameraController::getInstance().setJoystickInput(dx / JOYSTICK_MAX_DIST, dy / JOYSTICK_MAX_DIST);
+            break;
+        }
+        case 2: { // MOVE
+            if (joystick.active) {
+                float dx = x - jx;
+                float dy = y - jy;
+                float dist = sqrtf(dx * dx + dy * dy);
+                if (dist > JOYSTICK_MAX_DIST) {
+                    dx = dx / dist * JOYSTICK_MAX_DIST;
+                    dy = dy / dist * JOYSTICK_MAX_DIST;
+                }
+                joystick.knobX = dx;
+                joystick.knobY = dy;
+                CameraController::getInstance().setJoystickInput(dx / JOYSTICK_MAX_DIST, dy / JOYSTICK_MAX_DIST);
+            }
+            break;
+        }
+        case 1: // UP
+        case 3: // CANCEL
+            joystick.active = false;
+            joystick.knobX = 0;
+            joystick.knobY = 0;
+            CameraController::getInstance().setJoystickInput(0, 0);
+            break;
+    }
+}
+
+void GameUI::handleCameraTouch(int pointerId, float x, float y, int action) {
+    auto* pt = findTouchPoint(pointerId);
+    if (!pt) return;
+
+    switch (action) {
+        case 0: // DOWN
+            pt->cameraLastX = x;
+            pt->cameraLastY = y;
+            break;
+        case 2: { // MOVE
+            float dx = x - pt->cameraLastX;
+            float dy = y - pt->cameraLastY;
+            CameraController::getInstance().updateRotation(dy * 0.005f, dx * 0.005f);
+            pt->cameraLastX = x;
+            pt->cameraLastY = y;
+            break;
+        }
+    }
 }

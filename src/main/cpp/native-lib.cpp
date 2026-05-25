@@ -280,7 +280,6 @@ Java_com_minecraft_MainActivity_initRenderer(
 
                 // start() 会阻塞直到断开连接，所以先切换到 IN_GAME
                 GameUI::getInstance().setState(UIState::IN_GAME);
-                callJavaVoidMethod("showInGameUI", "()V");
 
                 bool success = g_engine->start(ip, port, g_username);
 
@@ -293,7 +292,6 @@ Java_com_minecraft_MainActivity_initRenderer(
                     JNI_LOGI("Disconnected, returning to main menu");
                     GameUI::getInstance().setState(UIState::MAIN_MENU);
                 }
-                callJavaVoidMethod("hideInGameUI", "()V");
             }).detach();
         });
     }
@@ -379,14 +377,6 @@ Java_com_minecraft_MainActivity_setKeyState(
         jint key, jboolean pressed) {
 
     CameraController::getInstance().setKeyState((int)key, (bool)pressed);
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_setJoystickInput(
-        JNIEnv* env, jobject thiz,
-        jfloat dx, jfloat dy) {
-
-    CameraController::getInstance().setJoystickInput((float)dx, (float)dy);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -476,11 +466,20 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_minecraft_MainActivity_onTouchEventImGui(
         JNIEnv* env,
         jobject thiz,
+        jint pointerId,
         jfloat x,
         jfloat y,
         jint action) {
 
-    GameUI::getInstance().queueTouchEvent((float)x, (float)y, (int)action);
+    auto& ui = GameUI::getInstance();
+    if (ui.getState() == UIState::IN_GAME) {
+        ui.onTouchEvent((int)pointerId, (float)x, (float)y, (int)action);
+    } else {
+        // 菜单模式只处理第一个触摸点（模拟鼠标）
+        if (pointerId == 0) {
+            ui.queueTouchEvent((float)x, (float)y, (int)action);
+        }
+    }
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

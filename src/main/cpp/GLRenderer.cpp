@@ -1106,6 +1106,9 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
              frameCount, chunksRendered, totalTriangles);
     }
 
+    // 游戏内 UI 叠加（摇杆 + 升降按钮）
+    renderUI();
+
     eglSwapBuffers(display, surface);
 }
 

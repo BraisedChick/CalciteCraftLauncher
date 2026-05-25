@@ -13,9 +13,6 @@ import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.inputmethod.InputMethodManager;
-import android.widget.Button;
-import android.widget.FrameLayout;
-import android.widget.LinearLayout;
 
 public class MainActivity extends Activity {
     static {
@@ -23,33 +20,14 @@ public class MainActivity extends Activity {
     }
 
     private RendererSurfaceView rendererSurfaceView;
-    private FrameLayout joystickContainer;
-    private View joystickKnob;
 
-    // 按键码常量（与 C++ CameraController.h 中的定义对应）
+    // 按键码常量（与 C++ CameraController 中的定义对应）
     private static final int KEY_W = 0;
     private static final int KEY_S = 1;
     private static final int KEY_A = 2;
     private static final int KEY_D = 3;
     private static final int KEY_UP = 4;
     private static final int KEY_DOWN = 5;
-
-    // 摇杆控制
-    private boolean isJoystickActive = false;
-    private float joystickCenterX = 0;
-    private float joystickCenterY = 0;
-    private float joystickDX = 0;
-    private float joystickDY = 0;
-
-    // 触摸控制（视角）
-    private float lastTouchX = 0;
-    private float lastTouchY = 0;
-    private boolean isFirstTouch = true;
-    private boolean isDragging = false;
-
-    private LinearLayout elevationButtons;
-    private Button btnUp;
-    private Button btnDown;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -87,161 +65,47 @@ public class MainActivity extends Activity {
 
         // 初始化视图
         rendererSurfaceView = findViewById(R.id.gameSurface);
-        joystickContainer = findViewById(R.id.joystickContainer);
-        joystickKnob = findViewById(R.id.joystickKnob);
-        elevationButtons = findViewById(R.id.elevationButtons);
-        btnUp = findViewById(R.id.btnUp);
-        btnDown = findViewById(R.id.btnDown);
 
         // 设置 AssetManager（供 C++ 层加载纹理等资源）
         setAssetManager(getAssets());
 
-        // 设置上升按钮触摸监听
-        btnUp.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                switch (event.getAction()) {
-                    case MotionEvent.ACTION_DOWN:
-                        setKeyState(KEY_UP, true);
-                        return true;
-                    case MotionEvent.ACTION_UP:
-                    case MotionEvent.ACTION_CANCEL:
-                        setKeyState(KEY_UP, false);
-                        return true;
-                }
-                return false;
-            }
-        });
-
-        // 设置下降按钮触摸监听
-        btnDown.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                switch (event.getAction()) {
-                    case MotionEvent.ACTION_DOWN:
-                        setKeyState(KEY_DOWN, true);
-                        return true;
-                    case MotionEvent.ACTION_UP:
-                    case MotionEvent.ACTION_CANCEL:
-                        setKeyState(KEY_DOWN, false);
-                        return true;
-                }
-                return false;
-            }
-        });
-
-        // 设置触摸监听器（视角控制 + ImGui 转发）
+        // 设置触摸监听器（多点触控支持，统一转发到 C++）
         rendererSurfaceView.setOnTouchListener(new View.OnTouchListener() {
             @Override
             public boolean onTouch(View v, MotionEvent event) {
-                float x = event.getX();
-                float y = event.getY();
+                int actionMasked = event.getActionMasked();
 
-                // 检查 UI 状态
-                if (isUIDisplayed()) {
-                    // 菜单界面：触摸事件转发给 ImGui
-                    int action;
-                    switch (event.getAction()) {
-                        case MotionEvent.ACTION_DOWN:    action = 0; break;
-                        case MotionEvent.ACTION_UP:      action = 1; break;
-                        case MotionEvent.ACTION_MOVE:    action = 2; break;
-                        default:                         action = 1; break;
+                if (actionMasked == MotionEvent.ACTION_MOVE) {
+                    // MOVE：遍历所有 active 指针
+                    for (int i = 0; i < event.getPointerCount(); i++) {
+                        int pid = event.getPointerId(i);
+                        float x = event.getX(i);
+                        float y = event.getY(i);
+                        onTouchEventImGui(pid, x, y, 2);
                     }
-                    onTouchEventImGui(x, y, action);
-                    return true;
+                } else {
+                    int pointerIndex = event.getActionIndex();
+                    int pid = event.getPointerId(pointerIndex);
+                    float x = event.getX(pointerIndex);
+                    float y = event.getY(pointerIndex);
+                    int mappedAction;
+                    switch (actionMasked) {
+                        case MotionEvent.ACTION_DOWN:
+                        case MotionEvent.ACTION_POINTER_DOWN:
+                            mappedAction = 0; break;
+                        case MotionEvent.ACTION_UP:
+                        case MotionEvent.ACTION_POINTER_UP:
+                            mappedAction = 1; break;
+                        default:
+                            mappedAction = 1; break;
+                    }
+                    onTouchEventImGui(pid, x, y, mappedAction);
                 }
-
-                // 游戏中：视角控制
-                switch (event.getAction()) {
-                    case MotionEvent.ACTION_DOWN:
-                        lastTouchX = x;
-                        lastTouchY = y;
-                        isDragging = true;
-                        break;
-
-                    case MotionEvent.ACTION_MOVE:
-                        if (isDragging) {
-                            float dx = x - lastTouchX;
-                            float dy = y - lastTouchY;
-
-                            float pitchDelta = dy * 0.005f;
-                            float yawDelta = dx * 0.005f;
-
-                            updateCameraAngle(pitchDelta, yawDelta);
-
-                            lastTouchX = x;
-                            lastTouchY = y;
-                        }
-                        break;
-
-                    case MotionEvent.ACTION_UP:
-                        isDragging = false;
-                        break;
-                }
-
-                return true;
-            }
-        });
-
-        // 设置摇杆触摸监听器
-        joystickContainer.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                float x = event.getX();
-                float y = event.getY();
-
-                switch (event.getAction()) {
-                    case MotionEvent.ACTION_DOWN:
-                        isJoystickActive = true;
-                        joystickCenterX = 75;
-                        joystickCenterY = 75;
-                        updateJoystickPosition(x, y);
-                        break;
-
-                    case MotionEvent.ACTION_MOVE:
-                        if (isJoystickActive) {
-                            updateJoystickPosition(x, y);
-                        }
-                        break;
-
-                    case MotionEvent.ACTION_UP:
-                    case MotionEvent.ACTION_CANCEL:
-                        isJoystickActive = false;
-                        joystickDX = 0;
-                        joystickDY = 0;
-                        joystickKnob.setTranslationX(0);
-                        joystickKnob.setTranslationY(0);
-                        setJoystickInput(0, 0);
-                        break;
-                }
-
                 return true;
             }
         });
 
         android.util.Log.i("MainActivity", "onCreate completed, surface view will trigger initRenderer");
-    }
-
-    private void updateJoystickPosition(float x, float y) {
-        float maxDistance = 45;
-
-        float dx = x - joystickCenterX;
-        float dy = y - joystickCenterY;
-        float distance = (float) Math.sqrt(dx * dx + dy * dy);
-
-        if (distance > maxDistance) {
-            float ratio = maxDistance / distance;
-            dx *= ratio;
-            dy *= ratio;
-        }
-
-        joystickKnob.setTranslationX(dx);
-        joystickKnob.setTranslationY(dy);
-
-        joystickDX = dx / maxDistance;
-        joystickDY = dy / maxDistance;
-
-        setJoystickInput(joystickDX, joystickDY);
     }
 
     @Override
@@ -351,38 +215,15 @@ public class MainActivity extends Activity {
     private native void initRenderer(android.view.Surface surface);
     private native void cleanupRenderer();
     private native void setAssetManager(AssetManager assetManager);
-    private native void updateCameraAngle(float pitchDelta, float yawDelta);
     private native void resizeRenderer(int width, int height);
     private native void setRendererType(boolean useVulkan);
     private native void setProtocolVersion(int version);
     private native void setUsername(String username);
-    private native void onTouchEventImGui(float x, float y, int action);
+    private native void onTouchEventImGui(int pointerId, float x, float y, int action);
     private native boolean isUIDisplayed();
     private native boolean onBackPressedNative();
     native void addImGuiCharacter(int c);
     private native void setKeyState(int key, boolean pressed);
-    private native void setJoystickInput(float dx, float dy);
-
-    // ===== UI 控制方法 =====
-    public void showInGameUI() {
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                elevationButtons.setVisibility(View.VISIBLE);
-                joystickContainer.setVisibility(View.VISIBLE);
-            }
-        });
-    }
-
-    public void hideInGameUI() {
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                elevationButtons.setVisibility(View.GONE);
-                joystickContainer.setVisibility(View.GONE);
-            }
-        });
-    }
 
     // ImGui 键盘显示/隐藏（从 C++ 渲染线程调用）
     public void showKeyboardImGui(final boolean show) {
