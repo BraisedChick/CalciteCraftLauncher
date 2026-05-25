@@ -14,6 +14,7 @@
 #include "MinecraftVersion.h"
 #include "BlockRegistry.h"
 #include "CameraController.h"
+#include "GameUI.h"
 
 #define JNI_LOG_TAG "JNI"
 #define JNI_LOGI(...) __android_log_print(ANDROID_LOG_INFO, JNI_LOG_TAG, __VA_ARGS__)
@@ -27,6 +28,7 @@ static ClientEngine* g_engine = nullptr;
 static bool g_initialized = false;
 static std::atomic<bool> g_rendering(false);
 static std::thread g_renderThread;
+static std::string g_username = "Player";
 
 // Java 虚拟机和对象引用，用于回调
 static JavaVM* g_jvm = nullptr;
@@ -101,6 +103,31 @@ static void renderLoop() {
 
         if (g_glRenderer) {
             g_glRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
+
+            // 检查 ImGui 是否需要键盘输入，通过 JNI 直接调用
+            static bool lastWantTextInput = false;
+            bool wantText = GameUI::getInstance().wantsTextInput();
+            if (wantText != lastWantTextInput) {
+                lastWantTextInput = wantText;
+                if (g_jvm && g_mainActivityObj) {
+                    JNIEnv* env;
+                    bool attached = false;
+                    int ger = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+                    if (ger == JNI_EDETACHED) {
+                        if (g_jvm->AttachCurrentThread(&env, nullptr) == JNI_OK) attached = true;
+                        else continue;
+                    } else if (ger != JNI_OK) {
+                        continue;
+                    }
+                    jclass clazz = env->GetObjectClass(g_mainActivityObj);
+                    jmethodID method = env->GetMethodID(clazz, "showKeyboardImGui", "(Z)V");
+                    if (method) {
+                        env->CallVoidMethod(g_mainActivityObj, method, wantText);
+                    }
+                    env->DeleteLocalRef(clazz);
+                    if (attached) g_jvm->DetachCurrentThread();
+                }
+            }
         } else if (g_useVulkan && g_vulkanRenderer) {
             g_vulkanRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
         }
@@ -111,11 +138,41 @@ static void renderLoop() {
     JNI_LOGI("Render thread stopped after %d frames", frameCount);
 }
 
+// 辅助函数：通过 JNI 调用 Java 层的 UI 方法（自动附加线程）
+static void callJavaVoidMethod(const char* methodName, const char* signature) {
+    if (!g_jvm || !g_mainActivityObj) return;
+    JNIEnv* env;
+    bool attached = false;
+    int getEnvResult = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+    if (getEnvResult == JNI_EDETACHED) {
+        if (g_jvm->AttachCurrentThread(&env, nullptr) != JNI_OK) return;
+        attached = true;
+    } else if (getEnvResult != JNI_OK) {
+        return;
+    }
+    jclass clazz = env->GetObjectClass(g_mainActivityObj);
+    jmethodID method = env->GetMethodID(clazz, methodName, signature);
+    if (method) {
+        env->CallVoidMethod(g_mainActivityObj, method);
+    }
+    env->DeleteLocalRef(clazz);
+    if (attached) {
+        g_jvm->DetachCurrentThread();
+    }
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_minecraft_MainActivity_initRenderer(
         JNIEnv* env, jobject thiz, jobject surface) {
 
     JNI_LOGI("=== initRenderer called ===");
+
+    // 保存 JavaVM 和 Activity 引用（用于回调控制 UI）
+    env->GetJavaVM(&g_jvm);
+    if (g_mainActivityObj) {
+        env->DeleteGlobalRef(g_mainActivityObj);
+    }
+    g_mainActivityObj = env->NewGlobalRef(thiz);
 
     // 加载 BlockRegistry（只加载一次）
     static bool blockRegistryLoaded = false;
@@ -207,6 +264,38 @@ Java_com_minecraft_MainActivity_initRenderer(
         }
 
         JNI_LOGI("OpenGL ES renderer initialized successfully");
+    }
+
+    // 设置 ImGui 连接回调（在任意渲染器初始化后）
+    if (g_glRenderer) {
+        GameUI::getInstance().setConnectCallback([](const std::string& ip, int port) {
+            JNI_LOGI("UI Connect: %s:%d user=%s", ip.c_str(), port, g_username.c_str());
+            std::thread([ip, port]() {
+                g_engine = new ClientEngine();
+                if (g_glRenderer) {
+                    g_glRenderer->setChunkManager(g_engine->getChunkManager());
+                    g_engine->setRenderer(g_glRenderer);
+                    JNI_LOGI("Engine and renderer linked");
+                }
+
+                // start() 会阻塞直到断开连接，所以先切换到 IN_GAME
+                GameUI::getInstance().setState(UIState::IN_GAME);
+                callJavaVoidMethod("showInGameUI", "()V");
+
+                bool success = g_engine->start(ip, port, g_username);
+
+                if (!success) {
+                    // 登录失败，回到多人游戏菜单
+                    JNI_LOGE("Connection failed, returning to menu");
+                    GameUI::getInstance().setState(UIState::MULTIPLAYER);
+                } else {
+                    // 正常断开连接，回到主菜单
+                    JNI_LOGI("Disconnected, returning to main menu");
+                    GameUI::getInstance().setState(UIState::MAIN_MENU);
+                }
+                callJavaVoidMethod("hideInGameUI", "()V");
+            }).detach();
+        });
     }
 
     g_initialized = true;
@@ -369,6 +458,60 @@ Java_com_minecraft_MainActivity_setProtocolVersion(
     JNI_LOGI("Protocol version set to: %d (%s)",
              protocolVersion,
              VersionManager::getInstance().getVersionName().c_str());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_minecraft_MainActivity_setUsername(
+        JNIEnv* env,
+        jobject thiz,
+        jstring username) {
+
+    const char* name = env->GetStringUTFChars(username, nullptr);
+    g_username = name;
+    JNI_LOGI("Username set: %s", g_username.c_str());
+    env->ReleaseStringUTFChars(username, name);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_minecraft_MainActivity_onTouchEventImGui(
+        JNIEnv* env,
+        jobject thiz,
+        jfloat x,
+        jfloat y,
+        jint action) {
+
+    GameUI::getInstance().queueTouchEvent((float)x, (float)y, (int)action);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_minecraft_MainActivity_onBackPressedNative(
+        JNIEnv* env,
+        jobject thiz) {
+
+    auto& ui = GameUI::getInstance();
+    if (ui.getState() == UIState::MULTIPLAYER) {
+        ui.setState(UIState::MAIN_MENU);
+        return JNI_TRUE; // 已处理
+    }
+    // MAIN_MENU 或 CONNECTING 或 IN_GAME 时，不处理（让系统默认行为退出）
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_minecraft_MainActivity_isUIDisplayed(
+        JNIEnv* env,
+        jobject thiz) {
+
+    return GameUI::getInstance().getState() != UIState::IN_GAME ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_minecraft_MainActivity_addImGuiCharacter(
+        JNIEnv* env,
+        jobject thiz,
+        jint c) {
+
+    GameUI::getInstance().addInputCharacter((unsigned int)c);
 }
 
 extern "C" JNIEXPORT void JNICALL

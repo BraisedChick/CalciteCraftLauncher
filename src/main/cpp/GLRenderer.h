@@ -18,7 +18,7 @@
 #include <atomic>
 #include <unordered_set>
 #include <chrono>
-
+#include "GameUI.h"
 // 添加 GLM 库
 #define GLM_FORCE_RADIANS
 #define GLM_ENABLE_EXPERIMENTAL
@@ -61,6 +61,10 @@ public:
     void updateCamera(float cameraX, float cameraY, float cameraZ, float pitch, float yaw);
     void makeCurrent();
     void releaseCurrent();
+
+    // ImGui 菜单
+    bool initImGui();
+    void renderUI();
 
     // 方块操作
     void addBlock(int x, int y, int z);

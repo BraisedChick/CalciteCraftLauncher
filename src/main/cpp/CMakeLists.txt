@@ -40,6 +40,12 @@ set(SOURCES
     BlockRegistry.cpp
     CameraController.cpp
     BiomeColorManager.cpp
+    GameUI.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_draw.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_widgets.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_tables.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends/imgui_impl_opengl3.cpp
 )
 
 add_library(minecraftclient SHARED ${SOURCES})
@@ -56,4 +62,6 @@ target_link_libraries(minecraftclient
 
 target_include_directories(minecraftclient PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/imgui
+    ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends
 )

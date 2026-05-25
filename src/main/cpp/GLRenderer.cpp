@@ -9,6 +9,7 @@
 #include "TextureAtlas.h"
 #include "BiomeColorManager.h"
 #include "MinecraftVersion.h"
+#include "imgui.h"
 
 #define LOG_TAG "GLRenderer"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -72,6 +73,16 @@ bool GLRenderer::initialize(ANativeWindow* window) {
 
     if (!createBuffers()) {
         return false;
+    }
+
+    // 初始化 ImGui
+    if (!initImGui()) {
+        LOGE("Failed to initialize ImGui");
+        // 不返回 false，ImGui 失败不该阻止游戏渲染
+    } else {
+        // 设置 ImGui 显示尺寸
+        ImGuiIO& io = ImGui::GetIO();
+        io.DisplaySize = ImVec2((float)screenWidth, (float)screenHeight);
     }
 
     // 加载纹理到纹理数组
@@ -880,6 +891,17 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         return;
     }
 
+    auto& ui = GameUI::getInstance();
+
+    // 菜单状态：只渲染 ImGui，不渲染 3D 场景
+    if (ui.getState() != UIState::IN_GAME) {
+        glClearColor(0.08f, 0.08f, 0.12f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        renderUI();
+        eglSwapBuffers(display, surface);
+        return;
+    }
+
     // 处理工作线程完成的网格结果（每帧优先上传）
     processCompletedWork();
 
@@ -1087,10 +1109,22 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     eglSwapBuffers(display, surface);
 }
 
+bool GLRenderer::initImGui() {
+    return GameUI::getInstance().init();
+}
+
+void GLRenderer::renderUI() {
+    GameUI::getInstance().render();
+}
+
 void GLRenderer::recreateSurface(int width, int height) {
     screenWidth = width;
     screenHeight = height;
     glViewport(0, 0, width, height);
+
+    // 更新 ImGui 显示尺寸
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2((float)width, (float)height);
 }
 
 void GLRenderer::cleanup() {
@@ -1167,6 +1201,9 @@ void GLRenderer::cleanup() {
         eglTerminate(display);
         display = EGL_NO_DISPLAY;
     }
+
+    // 关闭 ImGui
+    GameUI::getInstance().shutdown();
 
     LOGI("OpenGL ES renderer cleaned up");
 }

@@ -3,123 +3,13 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <!-- 登录界面 -->
-    <ScrollView
-        android:id="@+id/loginLayout"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:fillViewport="true"
-        android:background="#1a1a2e">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:padding="24dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Minecraft 客户端"
-                android:textSize="24sp"
-                android:textColor="#ffffff"
-                android:textStyle="bold"
-                android:layout_marginBottom="32dp"/>
-
-            <EditText
-                android:id="@+id/etGameName"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="游戏名"
-                android:textColor="#ffffff"
-                android:textColorHint="#999999"
-                android:backgroundTint="#ffffff"
-                android:padding="12dp"
-                android:layout_marginBottom="12dp"
-                android:maxLines="1"/>
-
-            <EditText
-                android:id="@+id/etServerIP"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="服务器IP"
-                android:textColor="#ffffff"
-                android:textColorHint="#999999"
-                android:backgroundTint="#ffffff"
-                android:padding="12dp"
-                android:layout_marginBottom="12dp"
-                android:maxLines="1"
-                android:inputType="textUri"/>
-
-            <EditText
-                android:id="@+id/etPort"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="端口"
-                android:textColor="#ffffff"
-                android:textColorHint="#999999"
-                android:backgroundTint="#ffffff"
-                android:padding="12dp"
-                android:layout_marginBottom="24dp"
-                android:maxLines="1"
-                android:inputType="number"/>
-
-            <!-- 渲染器选择 -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="选择渲染器"
-                android:textSize="16sp"
-                android:textColor="#ffffff"
-                android:layout_marginBottom="8dp"/>
-
-            <RadioGroup
-                android:id="@+id/rendererSelector"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center"
-                android:layout_marginBottom="24dp">
-
-                <RadioButton
-                    android:id="@+id/radioOpenGL"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="OpenGL ES"
-                    android:textColor="#ffffff"
-                    android:checked="true"
-                    android:layout_marginEnd="24dp"/>
-
-                <RadioButton
-                    android:id="@+id/radioVulkan"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Vulkan"
-                    android:textColor="#ffffff"/>
-
-            </RadioGroup>
-
-            <Button
-                android:id="@+id/btnStartGame"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="开始游戏"
-                android:textSize="16sp"
-                android:padding="12dp"
-                android:backgroundTint="#4CAF50"/>
-
-        </LinearLayout>
-
-    </ScrollView>
-
-    <!-- 渲染表面 -->
+    <!-- 渲染表面（始终可见，菜单和游戏都通过 OpenGL 渲染） -->
     <com.minecraft.RendererSurfaceView
         android:id="@+id/gameSurface"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- 虚拟摇杆（左侧） -->
+    <!-- 虚拟摇杆（左侧，游戏中可见） -->
     <FrameLayout
         android:id="@+id/joystickContainer"
         android:layout_width="150dp"
@@ -143,7 +33,7 @@
 
     </FrameLayout>
 
-    <!-- 上升/下降按钮（右侧） -->
+    <!-- 上升/下降按钮（右侧，游戏中可见） -->
     <LinearLayout
         android:id="@+id/elevationButtons"
         android:layout_width="wrap_content"
