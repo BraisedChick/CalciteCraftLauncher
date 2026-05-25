@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="32dp">
+
+    <LinearLayout
+        android:layout_width="300dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@android:color/transparent"
+        android:padding="20dp">
+
+        <com.minecraft.ui.MioTextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="渲染器"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="16dp" />
+
+        <RadioGroup
+            android:id="@+id/rgRenderer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="20dp">
+
+            <RadioButton
+                android:id="@+id/rbOpenGL"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="OpenGL ES"
+                android:textColor="#ffffff"
+                android:checked="true"
+                android:padding="8dp" />
+
+            <RadioButton
+                android:id="@+id/rbVulkan"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Vulkan"
+                android:textColor="#ffffff"
+                android:enabled="false"
+                android:alpha="0.5"
+                android:padding="8dp" />
+        </RadioGroup>
+
+        <com.minecraft.ui.MioButton
+            android:id="@+id/btnSaveRenderer"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:text="保存"
+            android:textSize="14sp" />
+
+    </LinearLayout>
+
+</LinearLayout>

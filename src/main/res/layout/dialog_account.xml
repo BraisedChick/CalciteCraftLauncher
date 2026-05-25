@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="300dp"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/card_bg"
+    android:padding="20dp">
+
+    <com.minecraft.ui.MioTextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="账号"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="16dp" />
+
+    <RadioGroup
+        android:id="@+id/rgLoginType"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="12dp">
+
+        <RadioButton
+            android:id="@+id/rbOffline"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="离线登录"
+            android:textColor="#ffffff"
+            android:checked="true"
+            android:padding="8dp" />
+
+        <RadioButton
+            android:id="@+id/rbPremium"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="正版登录"
+            android:textColor="#ffffff"
+            android:enabled="false"
+            android:alpha="0.5"
+            android:padding="8dp" />
+    </RadioGroup>
+
+    <com.minecraft.ui.MioEditText
+        android:id="@+id/etUsername"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="用户名"
+        android:textColorHint="#555555"
+        android:padding="12dp"
+        android:maxLines="1"
+        android:inputType="text"
+        android:layout_marginBottom="16dp" />
+
+    <com.minecraft.ui.MioButton
+        android:id="@+id/btnConfirmAccount"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:text="确定"
+        android:textSize="14sp" />
+
+</LinearLayout>

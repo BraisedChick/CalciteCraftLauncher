@@ -4,207 +4,190 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="horizontal"
-    android:background="@drawable/background_light"
-    android:weightSum="10">
+    android:background="@drawable/background_light">
 
-    <!-- 左侧：品牌/标题区域 -->
+    <!-- 左侧菜单栏 -->
     <LinearLayout
-        android:layout_width="0dp"
+        android:layout_width="52dp"
         android:layout_height="match_parent"
-        android:layout_weight="3"
         android:orientation="vertical"
-        android:gravity="center"
-        android:background="#8a1f1f38">
+        android:gravity="center_horizontal"
+        android:paddingTop="24dp"
+        android:background="@drawable/bg_left_menu"
+        android:layout_marginVertical="12dp"
+        android:layout_marginStart="8dp">
 
-        <com.minecraft.ui.MioTextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Minecraft"
-            android:textSize="48sp"
-            android:textStyle="bold" />
+        <com.minecraft.ui.MioButton
+            android:id="@+id/btnHome"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:text="主页"
+            android:textSize="10sp"
+            android:layout_marginBottom="12dp"
+            app:mioShape="oval" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="启动器 · 1.8 - 1.26"
-            android:textSize="14sp"
-            android:textColor="#666688"
-            android:layout_marginTop="8dp" />
+        <com.minecraft.ui.MioButton
+            android:id="@+id/btnAccount"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:text="账号"
+            android:textSize="10sp"
+            android:layout_marginBottom="12dp"
+            app:mioShape="oval" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Powered by ProtocolCraft"
-            android:textSize="11sp"
-            android:textColor="#444466"
-            android:layout_marginTop="24dp" />
+        <com.minecraft.ui.MioButton
+            android:id="@+id/btnVersion"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:text="版本"
+            android:textSize="10sp"
+            android:layout_marginBottom="12dp"
+            app:mioShape="oval" />
+
+        <com.minecraft.ui.MioButton
+            android:id="@+id/btnRenderer"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:text="渲染"
+            android:textSize="10sp"
+            app:mioShape="oval" />
 
     </LinearLayout>
 
-    <!-- 右侧：表单区域 -->
-    <ScrollView
+    <!-- 右侧区域：内容 + 启动面板 -->
+    <LinearLayout
         android:layout_width="0dp"
         android:layout_height="match_parent"
-        android:layout_weight="7"
-        android:padding="24dp"
-        android:fillViewport="true">
+        android:layout_weight="1"
+        android:orientation="horizontal"
+        android:layout_margin="12dp"
+        android:layout_marginStart="4dp"
+        android:weightSum="5">
 
+        <!-- 中间内容区 (4/5) -->
+        <FrameLayout
+            android:id="@+id/contentArea"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="4">
+
+            <include
+                android:id="@+id/pageHome"
+                layout="@layout/page_home" />
+
+            <include
+                android:id="@+id/pageAccount"
+                layout="@layout/page_account"
+                android:visibility="gone" />
+
+            <include
+                android:id="@+id/pageVersion"
+                layout="@layout/page_version"
+                android:visibility="gone" />
+
+            <include
+                android:id="@+id/pageRenderer"
+                layout="@layout/page_renderer"
+                android:visibility="gone" />
+
+        </FrameLayout>
+
+        <!-- 右侧启动面板 (1/5) -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
+            android:id="@+id/launchPanel"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
+            android:background="@drawable/bg_right_panel"
+            android:padding="12dp">
 
-            <!-- 登录卡片 -->
-            <LinearLayout
+            <View
                 android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+
+            <com.minecraft.ui.MioTextView
+                android:id="@+id/panelDisplayName"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:background="@drawable/card_bg"
-                android:padding="16dp"
-                android:layout_marginBottom="12dp">
+                android:text="Player"
+                android:textSize="16sp"
+                android:textStyle="bold" />
 
-                <com.minecraft.ui.MioTextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="登录"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:layout_marginBottom="12dp" />
-
-                <RadioGroup
-                    android:id="@+id/rgLoginType"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginBottom="12dp">
-
-                    <RadioButton
-                        android:id="@+id/rbOffline"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="离线登录"
-                        android:textColor="#ffffff"
-                        android:checked="true"
-                        android:padding="8dp" />
-
-                    <RadioButton
-                        android:id="@+id/rbPremium"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="正版登录"
-                        android:textColor="#ffffff"
-                        android:enabled="false"
-                        android:alpha="0.5"
-                        android:padding="8dp" />
-                </RadioGroup>
-
-                <com.minecraft.ui.MioEditText
-                    android:id="@+id/etUsername"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:hint="用户名"
-                    android:textColorHint="#555555"
-                    android:padding="12dp"
-                    android:maxLines="1"
-                    android:inputType="text" />
-            </LinearLayout>
-
-            <!-- 设置卡片 -->
-            <LinearLayout
-                android:layout_width="match_parent"
+            <com.minecraft.ui.MioTextView
+                android:id="@+id/panelLoginType"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:background="@drawable/card_bg"
-                android:padding="16dp"
-                android:layout_marginBottom="16dp">
+                android:text="离线登录"
+                android:textSize="11sp"
+                android:layout_marginTop="2dp" />
 
-                <com.minecraft.ui.MioTextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="设置"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:layout_marginBottom="12dp" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginBottom="12dp">
-
-                    <com.minecraft.ui.MioTextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="游戏版本"
-                        android:textSize="14sp"
-                        android:layout_marginEnd="12dp"
-                        android:gravity="center_vertical" />
-
-                    <Spinner
-                        android:id="@+id/spinnerVersion"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal">
-
-                    <com.minecraft.ui.MioTextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="渲染器"
-                        android:textSize="14sp"
-                        android:layout_marginEnd="12dp"
-                        android:gravity="center_vertical" />
-
-                    <RadioGroup
-                        android:id="@+id/rgRenderer"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="horizontal">
-
-                        <RadioButton
-                            android:id="@+id/rbOpenGL"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="OpenGL ES"
-                            android:textColor="#ffffff"
-                            android:checked="true"
-                            android:padding="4dp" />
-
-                        <RadioButton
-                            android:id="@+id/rbVulkan"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="Vulkan"
-                            android:textColor="#ffffff"
-                            android:enabled="false"
-                            android:alpha="0.5"
-                            android:padding="4dp" />
-                    </RadioGroup>
-                </LinearLayout>
-            </LinearLayout>
-
-            <!-- 启动按钮 -->
             <com.minecraft.ui.MioButton
                 android:id="@+id/btnLaunch"
                 android:layout_width="match_parent"
-                android:layout_height="48dp"
+                android:layout_height="44dp"
                 android:text="启动游戏"
-                android:textSize="16sp"
+                android:textSize="13sp"
                 android:textStyle="bold"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="4dp" />
+
+            <View
+                android:layout_width="32dp"
+                android:layout_height="1dp"
+                android:background="#444466"
                 android:layout_marginBottom="8dp" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <com.minecraft.ui.MioTextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="版本"
+                    android:textSize="10sp" />
+
+                <com.minecraft.ui.MioTextView
+                    android:id="@+id/panelVersion"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="1.18"
+                    android:textSize="10sp"
+                    android:layout_marginStart="4dp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="2dp">
+
+                <com.minecraft.ui.MioTextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="渲染"
+                    android:textSize="10sp" />
+
+                <com.minecraft.ui.MioTextView
+                    android:id="@+id/panelRenderer"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="OpenGL"
+                    android:textSize="10sp"
+                    android:layout_marginStart="4dp" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
 
         </LinearLayout>
 
-    </ScrollView>
+    </LinearLayout>
 
 </LinearLayout>
