@@ -19,8 +19,6 @@ public class LauncherActivity extends Activity {
     
     private static final String PREFS_NAME = "launcher_prefs";
     private static final String KEY_USERNAME = "username";
-    private static final String KEY_SERVER_IP = "server_ip";
-    private static final String KEY_PORT = "port";
     private static final String KEY_VERSION = "version";
     private static final String KEY_RENDERER = "renderer";
     private static final String KEY_LOGIN_TYPE = "login_type";
@@ -32,10 +30,6 @@ public class LauncherActivity extends Activity {
     
     // 用户名输入
     private EditText etUsername;
-    
-    // 服务器配置
-    private EditText etServerIP;
-    private EditText etPort;
     
     // 版本选择
     private Spinner spinnerVersion;
@@ -68,10 +62,37 @@ public class LauncherActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_launcher);
-        
+
+        enableImmersiveMode();
         initViews();
         loadPreferences();
         setupListeners();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_FULLSCREEN
+            );
+        }
+    }
+
+    private void enableImmersiveMode() {
+        getWindow().getDecorView().setOnSystemUiVisibilityChangeListener(
+            visibility -> {
+                if ((visibility & View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {
+                    getWindow().getDecorView().setSystemUiVisibility(
+                        View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                    );
+                }
+            }
+        );
     }
     
     private void initViews() {
@@ -82,11 +103,7 @@ public class LauncherActivity extends Activity {
         
         // 用户名
         etUsername = findViewById(R.id.etUsername);
-        
-        // 服务器配置
-        etServerIP = findViewById(R.id.etServerIP);
-        etPort = findViewById(R.id.etPort);
-        
+
         // 版本选择
         spinnerVersion = findViewById(R.id.spinnerVersion);
         ArrayAdapter<String> versionAdapter = new ArrayAdapter<>(
@@ -112,13 +129,6 @@ public class LauncherActivity extends Activity {
         // 加载用户名
         String username = prefs.getString(KEY_USERNAME, "Player");
         etUsername.setText(username);
-        
-        // 加载服务器配置
-        String serverIP = prefs.getString(KEY_SERVER_IP, "127.0.0.1");
-        etServerIP.setText(serverIP);
-        
-        String port = prefs.getString(KEY_PORT, "25565");
-        etPort.setText(port);
         
         // 加载版本选择
         String savedVersion = prefs.getString(KEY_VERSION, "1.18");
@@ -152,15 +162,11 @@ public class LauncherActivity extends Activity {
         
         // 保存用户名
         editor.putString(KEY_USERNAME, etUsername.getText().toString().trim());
-        
-        // 保存服务器配置
-        editor.putString(KEY_SERVER_IP, etServerIP.getText().toString().trim());
-        editor.putString(KEY_PORT, etPort.getText().toString().trim());
-        
+
         // 保存版本选择
         String selectedVersion = VERSIONS[spinnerVersion.getSelectedItemPosition()];
         editor.putString(KEY_VERSION, selectedVersion);
-        
+
         // 保存渲染器选择
         String renderer = rbVulkan.isChecked() ? "vulkan" : "opengl";
         editor.putString(KEY_RENDERER, renderer);
@@ -209,49 +215,29 @@ public class LauncherActivity extends Activity {
             Toast.makeText(this, "请输入用户名", Toast.LENGTH_SHORT).show();
             return;
         }
-        
-        String serverIP = etServerIP.getText().toString().trim();
-        if (serverIP.isEmpty()) {
-            Toast.makeText(this, "请输入服务器IP", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        
-        String portStr = etPort.getText().toString().trim();
-        int port;
-        try {
-            port = Integer.parseInt(portStr);
-            if (port < 1 || port > 65535) {
-                throw new NumberFormatException();
-            }
-        } catch (NumberFormatException e) {
-            Toast.makeText(this, "端口号无效 (1-65535)", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        
+
         // 获取选择的版本和协议号
         int versionIndex = spinnerVersion.getSelectedItemPosition();
         String versionName = VERSIONS[versionIndex];
         int protocolVersion = PROTOCOL_VERSIONS[versionIndex];
-        
+
         // 获取渲染器类型
         boolean useVulkan = rbVulkan.isChecked();
-        
+
         // 保存配置
         savePreferences();
-        
+
         // 显示启动信息
         String message = String.format(
-            "启动游戏\n用户名: %s\n版本: %s (协议 %d)\n服务器: %s:%d\n渲染器: %s",
-            username, versionName, protocolVersion, serverIP, port,
+            "启动游戏\n用户名: %s\n版本: %s (协议 %d)\n渲染器: %s",
+            username, versionName, protocolVersion,
             useVulkan ? "Vulkan" : "OpenGL ES"
         );
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-        
+
         // 启动游戏 Activity
         Intent intent = new Intent(this, MainActivity.class);
         intent.putExtra("username", username);
-        intent.putExtra("server_ip", serverIP);
-        intent.putExtra("port", port);
         intent.putExtra("protocol_version", protocolVersion);
         intent.putExtra("use_vulkan", useVulkan);
         startActivity(intent);
