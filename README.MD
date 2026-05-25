@@ -6,7 +6,7 @@
 ![OpenGL ES](https://img.shields.io/badge/OpenGL%20ES-3.0-red)
 ![Vulkan](https://img.shields.io/badge/Vulkan-1.0-orange)
 
-**Calcite Craft Launcher** 是一个为 Android 平台设计的 Minecraft 风格客户端/启动器，完全使用 **C++** 编写核心渲染与游戏逻辑，并与 Java/Kotlin 层高效协作。
+**Calcite Craft Launcher** 是一个为 Android 平台设计的 Minecraft 客户端/启动器，我们的目的旨在让玩家可以使用原生C++客户端连接Java版服务器。完全使用 **C++** 编写核心渲染与游戏逻辑，并与 Java/Kotlin 层高效协作。
 。
 
 ## 📱 系统要求
