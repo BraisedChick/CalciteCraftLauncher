@@ -1,5 +1,8 @@
 #include "GameUI.h"
 #include <android/log.h>
+#include <fstream>
+#include <sstream>
+#include <cstdio>
 
 // ImGui 配置：OpenGL ES3 + 自定义加载器（使用 Android NDK 的 GLES3 头文件）
 #define IMGUI_IMPL_OPENGL_ES3
@@ -20,6 +23,9 @@
 #define GAMEKEY_D    3
 #define GAMEKEY_UP   4
 #define GAMEKEY_DOWN 5
+
+// 服务器列表文件路径
+#define SERVERS_FILE_PATH "/data/data/com.minecraft/files/servers.txt"
 
 // 游戏内 UI 布局常量
 #define JOYSTICK_CENTER_X  170.0f
@@ -91,12 +97,18 @@ bool GameUI::init() {
 
     initialized = true;
     LOGI("ImGui initialized successfully");
+
+    loadServerList();
+    LOGI("Loaded %zu servers", servers.size());
     return true;
 }
 
 void GameUI::shutdown() {
     if (!initialized) return;
     LOGI("Shutting down ImGui...");
+
+    saveServerList();
+
     ImGui_ImplOpenGL3_Shutdown();
     ImGui::DestroyContext();
     initialized = false;
@@ -222,43 +234,192 @@ void GameUI::renderMultiplayer() {
                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
                  ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-    ImGui::SetCursorPos(ImVec2(20, 20));
-    if (ImGui::Button("< 返回", ImVec2(100, 40))) {
+    // 标题
+    ImGui::SetCursorPos(ImVec2(w * 0.5f - 80.0f, 25));
+    ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "多人游戏");
+
+    // 服务器列表 - 可滚动区域（居中，留空白边距）
+    float listStartY = 75.0f;
+    float listEndY = h - 90.0f;
+    float listHeight = listEndY - listStartY;
+    float listWidth = w * 0.7f;
+    float listLeft = w * 0.5f - listWidth * 0.5f;
+
+    ImGui::SetCursorPos(ImVec2(listLeft, listStartY));
+    ImGui::BeginChild("ServerList", ImVec2(listWidth, listHeight), true);
+
+    if (servers.empty()) {
+        ImGui::SetCursorPos(ImVec2(w * 0.5f - 120.0f, listHeight * 0.4f));
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "暂无保存的服务器");
+    } else {
+        if (ImGui::BeginTable("servers", 1,
+            ImGuiTableFlags_NoBordersInBody | ImGuiTableFlags_RowBg))
+        {
+            ImGui::TableSetupColumn("info", ImGuiTableColumnFlags_WidthStretch);
+
+            for (size_t i = 0; i < servers.size(); i++) {
+                ImGui::TableNextRow(ImGuiTableRowFlags_None, 56.0f);
+
+                // 服务器信息列（可点击选择 / 双击连接）
+                ImGui::TableNextColumn();
+                ImGui::PushID((int)i);
+
+                char label[96];
+                snprintf(label, sizeof(label), "%s", servers[i].name.c_str());
+
+                bool isSelected = (selectedServer == (int)i);
+                if (ImGui::Selectable(label, isSelected,
+                    ImGuiSelectableFlags_AllowDoubleClick,
+                    ImVec2(0, 50.0f)))
+                {
+                    if (ImGui::IsMouseDoubleClicked(0)) {
+                        connectToServer(servers[i]);
+                    } else {
+                        selectedServer = (int)i;
+                    }
+                }
+
+                ImGui::PopID();
+            }
+
+            ImGui::EndTable();
+        }
+    }
+
+    ImGui::EndChild();
+
+    // 底部按钮行：连接服务器 + 添加服务器 + 删除 + 返回
+    float btnW = 130.0f;
+    float btnGap = 12.0f;
+    float totalW = btnW * 4 + btnGap * 3;
+    float startX = w * 0.5f - totalW * 0.5f;
+    float btnY = h - 70.0f;
+
+    // 连接服务器
+    bool noSel = (selectedServer < 0);
+    ImGui::SetCursorPos(ImVec2(startX, btnY));
+    if (noSel) ImGui::BeginDisabled();
+    if (ImGui::Button("连接服务器", ImVec2(btnW, 50))) {
+        if (selectedServer >= 0 && selectedServer < (int)servers.size()) {
+            connectToServer(servers[selectedServer]);
+        }
+    }
+    if (noSel) ImGui::EndDisabled();
+
+    // 添加服务器
+    ImGui::SameLine();
+    ImGui::SetCursorPos(ImVec2(startX + (btnW + btnGap), btnY));
+    if (ImGui::Button("添加服务器", ImVec2(btnW, 50))) {
+        memset(addServerName, 0, sizeof(addServerName));
+        memset(addServerIp, 0, sizeof(addServerIp));
+        strncpy(addServerPort, "25565", sizeof(addServerPort) - 1);
+        addServerPort[sizeof(addServerPort) - 1] = '\0';
+        ImGui::OpenPopup("添加服务器");
+    }
+
+    // 删除服务器
+    ImGui::SameLine();
+    ImGui::SetCursorPos(ImVec2(startX + (btnW + btnGap) * 2, btnY));
+    if (noSel) ImGui::BeginDisabled();
+    if (ImGui::Button("删除", ImVec2(btnW, 50))) {
+        if (selectedServer >= 0 && selectedServer < (int)servers.size()) {
+            servers.erase(servers.begin() + selectedServer);
+            selectedServer = -1;
+            saveServerList();
+        }
+    }
+    if (noSel) ImGui::EndDisabled();
+
+    // 返回
+    ImGui::SameLine();
+    ImGui::SetCursorPos(ImVec2(startX + (btnW + btnGap) * 3, btnY));
+    if (ImGui::Button("取消", ImVec2(btnW, 50))) {
         currentState = UIState::MAIN_MENU;
     }
 
-    float cx = w * 0.5f;
-    float startY = h * 0.18f;
+    // 添加服务器弹窗
+    ImGui::SetNextWindowPos(ImVec2(w * 0.5f, h * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(350, 280));
+    if (ImGui::BeginPopupModal("添加服务器", nullptr, ImGuiWindowFlags_NoResize)) {
+        ImGui::Text("名称");
+        ImGui::PushItemWidth(320);
+        ImGui::InputText("##name", addServerName, sizeof(addServerName));
+        ImGui::Text("地址");
+        ImGui::InputText("##ip", addServerIp, sizeof(addServerIp));
+        ImGui::Text("端口");
+        ImGui::InputText("##port", addServerPort, sizeof(addServerPort));
+        ImGui::PopItemWidth();
 
-    ImGui::SetCursorPos(ImVec2(cx - 170.0f, startY));
-    ImGui::Text("服务器地址");
-    ImGui::SetCursorPos(ImVec2(cx - 170.0f, startY + 32.0f));
-    ImGui::PushItemWidth(340.0f);
-    ImGui::InputText("##ip", ipBuffer, sizeof(ipBuffer));
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 15);
 
-    ImGui::SetCursorPos(ImVec2(cx - 170.0f, startY + 90.0f));
-    ImGui::Text("端口");
-    ImGui::SetCursorPos(ImVec2(cx - 170.0f, startY + 122.0f));
-    ImGui::InputText("##port", portBuffer, sizeof(portBuffer));
-
-    ImGui::SetCursorPos(ImVec2(cx - 100.0f, startY + 180.0f));
-    if (ImGui::Button("连接服务器", ImVec2(200, 50))) {
-        int port = 25565;
-        try {
-            port = std::stoi(portBuffer);
-        } catch (...) {
-            port = 25565;
+        ImGui::SetCursorPosX(50);
+        if (ImGui::Button("保存", ImVec2(100, 40)) && strlen(addServerName) > 0 && strlen(addServerIp) > 0) {
+            ServerInfo server;
+            server.name = addServerName;
+            server.ip = addServerIp;
+            int port = 25565;
+            try { port = std::stoi(addServerPort); } catch (...) { port = 25565; }
+            if (port <= 0) port = 25565;
+            if (port > 65535) port = 25565;
+            server.port = port;
+            servers.push_back(server);
+            selectedServer = (int)servers.size() - 1;
+            saveServerList();
+            ImGui::CloseCurrentPopup();
         }
-        if (port <= 0) port = 25565;
-        if (port > 65535) port = 25565;
-
-        if (connectCallback) {
-            currentState = UIState::CONNECTING;
-            connectCallback(std::string(ipBuffer), port);
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(200);
+        if (ImGui::Button("取消", ImVec2(100, 40))) {
+            ImGui::CloseCurrentPopup();
         }
+
+        ImGui::EndPopup();
     }
 
     ImGui::End();
+}
+
+void GameUI::connectToServer(const ServerInfo& server) {
+    if (connectCallback) {
+        connectingAddress = server.ip + ":" + std::to_string(server.port);
+        currentState = UIState::CONNECTING;
+        connectCallback(server.ip, server.port);
+    }
+}
+
+void GameUI::loadServerList() {
+    servers.clear();
+    std::ifstream file(SERVERS_FILE_PATH);
+    if (!file.is_open()) {
+        LOGI("No server list file found, starting fresh");
+        return;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        std::istringstream ss(line);
+        std::string name, ip, portStr;
+        if (!std::getline(ss, name, '\t')) continue;
+        if (!std::getline(ss, ip, '\t')) continue;
+        if (!std::getline(ss, portStr, '\t')) continue;
+        int port = 25565;
+        try { port = std::stoi(portStr); } catch (...) { port = 25565; }
+        servers.push_back({name, ip, port});
+    }
+    file.close();
+}
+
+void GameUI::saveServerList() {
+    std::ofstream file(SERVERS_FILE_PATH, std::ios::trunc);
+    if (!file.is_open()) {
+        LOGE("Failed to save server list");
+        return;
+    }
+    for (const auto& s : servers) {
+        file << s.name << '\t' << s.ip << '\t' << s.port << '\n';
+    }
+    file.close();
+    LOGI("Saved %zu servers", servers.size());
 }
 
 void GameUI::renderConnecting() {
@@ -277,7 +438,7 @@ void GameUI::renderConnecting() {
     ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "正在连接...");
 
     ImGui::SetCursorPos(ImVec2(w * 0.5f - 120.0f, h * 0.4f + 40.0f));
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", ipBuffer);
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", connectingAddress.c_str());
 
     ImGui::End();
 }

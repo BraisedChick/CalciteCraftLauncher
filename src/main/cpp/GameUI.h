@@ -43,11 +43,21 @@ private:
     GameUI() = default;
     ~GameUI() = default;
 
+    struct ServerInfo {
+        std::string name;
+        std::string ip;
+        int port = 25565;
+    };
+
     void renderMainMenu();
     void renderMultiplayer();
     void renderConnecting();
     void renderInGameUI();
     void processTouchEvents();
+
+    void loadServerList();
+    void saveServerList();
+    void connectToServer(const ServerInfo& server);
 
     // 多点触控
     struct TouchPoint {
@@ -73,9 +83,14 @@ private:
 
     UIState currentState = UIState::MAIN_MENU;
     ConnectCallback connectCallback;
+    std::string connectingAddress;
 
-    char ipBuffer[64] = "127.0.0.1";
-    char portBuffer[16] = "25565";
+    // 服务器列表
+    std::vector<ServerInfo> servers;
+    int selectedServer = -1;
+    char addServerName[64] = "";
+    char addServerIp[64] = "";
+    char addServerPort[16] = "25565";
 
     bool initialized = false;
 
