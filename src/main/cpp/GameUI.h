@@ -55,6 +55,7 @@ private:
 
     void renderMainMenu();
     void renderMultiplayer();
+    void renderAddServer();
     void renderConnecting();
     void renderInGameUI();
     void processTouchEvents();
@@ -93,6 +94,8 @@ private:
     // 服务器列表
     std::vector<ServerInfo> servers;
     int selectedServer = -1;
+    bool showingAddServer = false;
+    int editingServerIndex = -1;
     char addServerName[64] = "";
     char addServerIp[64] = "";
     char addServerPort[16] = "25565";

@@ -364,7 +364,7 @@ public class LauncherActivity extends Activity {
         intent.putExtra("username", selected.getName());
         intent.putExtra("protocol_version", protocolVersion);
         intent.putExtra("use_vulkan", useVulkan);
+        intent.setFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
         startActivity(intent);
-        finish();
     }
 }

@@ -167,7 +167,10 @@ void GameUI::render() {
             renderMainMenu();
             break;
         case UIState::MULTIPLAYER:
-            renderMultiplayer();
+            if (showingAddServer)
+                renderAddServer();
+            else
+                renderMultiplayer();
             break;
         case UIState::CONNECTING:
             renderConnecting();
@@ -315,7 +318,7 @@ void GameUI::renderMultiplayer() {
         memset(addServerIp, 0, sizeof(addServerIp));
         strncpy(addServerPort, "25565", sizeof(addServerPort) - 1);
         addServerPort[sizeof(addServerPort) - 1] = '\0';
-        ImGui::OpenPopup("添加服务器");
+        showingAddServer = true;
     }
 
     // 删除服务器
@@ -338,43 +341,72 @@ void GameUI::renderMultiplayer() {
         currentState = UIState::MAIN_MENU;
     }
 
-    // 添加服务器弹窗
-    ImGui::SetNextWindowPos(ImVec2(w * 0.5f, h * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(350, 280));
-    if (ImGui::BeginPopupModal("添加服务器", nullptr, ImGuiWindowFlags_NoResize)) {
-        ImGui::Text("名称");
-        ImGui::PushItemWidth(320);
-        ImGui::InputText("##name", addServerName, sizeof(addServerName));
-        ImGui::Text("地址");
-        ImGui::InputText("##ip", addServerIp, sizeof(addServerIp));
-        ImGui::Text("端口");
-        ImGui::InputText("##port", addServerPort, sizeof(addServerPort));
-        ImGui::PopItemWidth();
+    ImGui::End();
+}
 
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 15);
+void GameUI::renderAddServer() {
+    ImGuiIO& io = ImGui::GetIO();
+    float w = io.DisplaySize.x;
+    float h = io.DisplaySize.y;
 
-        ImGui::SetCursorPosX(50);
-        if (ImGui::Button("保存", ImVec2(100, 40)) && strlen(addServerName) > 0 && strlen(addServerIp) > 0) {
-            ServerInfo server;
-            server.name = addServerName;
-            server.ip = addServerIp;
-            int port = 25565;
-            try { port = std::stoi(addServerPort); } catch (...) { port = 25565; }
-            if (port <= 0) port = 25565;
-            if (port > 65535) port = 25565;
-            server.port = port;
-            servers.push_back(server);
-            selectedServer = (int)servers.size() - 1;
-            saveServerList();
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(200);
-        if (ImGui::Button("取消", ImVec2(100, 40))) {
-            ImGui::CloseCurrentPopup();
-        }
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::Begin("AddServer", nullptr,
+                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                 ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-        ImGui::EndPopup();
+    // 标题
+    float titleW = 200.0f;
+    ImGui::SetCursorPos(ImVec2(w * 0.5f - titleW * 0.5f, h * 0.12f));
+    ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "添加服务器");
+
+    // 表单区域（居中）
+    ImGui::SetCursorPosX(w * 0.5f - 200.0f);
+    ImGui::BeginGroup();
+
+    float inputW = 400.0f;
+    ImGui::PushItemWidth(inputW);
+
+    ImGui::Text("名称");
+    ImGui::InputText("##name", addServerName, sizeof(addServerName));
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 12.0f);
+
+    ImGui::Text("地址");
+    ImGui::InputText("##ip", addServerIp, sizeof(addServerIp));
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 12.0f);
+
+    ImGui::Text("端口");
+    ImGui::InputText("##port", addServerPort, sizeof(addServerPort));
+
+    ImGui::PopItemWidth();
+    ImGui::EndGroup();
+
+    // 按钮
+    float btnWForm = 140.0f;
+    float btnGapForm = 30.0f;
+    float btnFormY = ImGui::GetCursorPosY() + 20.0f;
+    float btnFormStartX = w * 0.5f - (btnWForm * 2 + btnGapForm) * 0.5f;
+
+    ImGui::SetCursorPos(ImVec2(btnFormStartX, btnFormY));
+    if (ImGui::Button("保存", ImVec2(btnWForm, 44)) && strlen(addServerName) > 0 && strlen(addServerIp) > 0) {
+        ServerInfo server;
+        server.name = addServerName;
+        server.ip = addServerIp;
+        int port = 25565;
+        try { port = std::stoi(addServerPort); } catch (...) { port = 25565; }
+        if (port <= 0) port = 25565;
+        if (port > 65535) port = 25565;
+        server.port = port;
+        servers.push_back(server);
+        selectedServer = (int)servers.size() - 1;
+        saveServerList();
+        showingAddServer = false;
+    }
+
+    ImGui::SetCursorPos(ImVec2(btnFormStartX + btnWForm + btnGapForm, btnFormY));
+    if (ImGui::Button("取消", ImVec2(btnWForm, 44))) {
+        showingAddServer = false;
     }
 
     ImGui::End();
