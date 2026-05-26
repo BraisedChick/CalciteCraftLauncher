@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 全局属性定义 -->
+    <attr name="mioShape" format="integer">
+        <enum name="rectangle" value="0" />
+        <enum name="oval" value="1" />
+    </attr>
+    <attr name="mioAutoPadding" format="boolean" />
+    <attr name="mioAutoTint" format="boolean" />
+
+    <!-- MioButton -->
+    <declare-styleable name="MioButton">
+        <attr name="mioShape" />
+        <attr name="mioAutoPadding" />
+    </declare-styleable>
+
+    <!-- MioEditText -->
+    <declare-styleable name="MioEditText">
+        <attr name="mioAutoTint" />
+    </declare-styleable>
+
+    <!-- MioTextView -->
+    <declare-styleable name="MioTextView">
+        <attr name="mioAutoTint" />
+    </declare-styleable>
+</resources>
