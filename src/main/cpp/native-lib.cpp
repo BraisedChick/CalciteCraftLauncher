@@ -410,6 +410,18 @@ Java_com_minecraft_MainActivity_setAssetManager(
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_minecraft_MainActivity_setTextureZipPath(
+        JNIEnv* env,
+        jobject thiz,
+        jstring zipPath) {
+
+    const char* path = env->GetStringUTFChars(zipPath, nullptr);
+    TextureLoader::setZipPath(path);
+    JNI_LOGI("Texture ZIP path set to: %s", path);
+    env->ReleaseStringUTFChars(zipPath, path);
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_minecraft_MainActivity_resizeRenderer(
         JNIEnv* env,
         jobject thiz,

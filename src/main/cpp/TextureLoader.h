@@ -30,14 +30,29 @@ struct TextureData {
         channels = other.channels;
         other.data = nullptr;
     }
+
+    TextureData& operator=(TextureData&& other) noexcept {
+        if (this != &other) {
+            if (data) delete[] data;
+            data = other.data;
+            width = other.width;
+            height = other.height;
+            channels = other.channels;
+            other.data = nullptr;
+        }
+        return *this;
+    }
 };
 
 class TextureLoader {
 public:
     static void setAssetManager(AAssetManager* assetManager);
+    static void setZipPath(const std::string& path);
     static TextureData loadPNG(const std::string& filename);
     static TextureData loadImage(const std::string& filename);
 
 private:
     static AAssetManager* g_assetManager;
+    static std::string g_zipPath;
+    static TextureData loadFromZip(const std::string& filename);
 };

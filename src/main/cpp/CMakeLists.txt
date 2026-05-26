@@ -41,6 +41,7 @@ set(SOURCES
     CameraController.cpp
     BiomeColorManager.cpp
     GameUI.cpp
+    miniz.c
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_draw.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_widgets.cpp
