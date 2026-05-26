@@ -36,24 +36,16 @@ TextureData TextureLoader::loadFromZip(const std::string& filename) {
     mz_zip_archive zip;
     memset(&zip, 0, sizeof(zip));
 
+    LOGI("Attempting to open ZIP: %s", g_zipPath.c_str());
+
     if (!mz_zip_reader_init_file(&zip, g_zipPath.c_str(), 0)) {
         LOGE("Failed to open ZIP file: %s", g_zipPath.c_str());
         return result;
     }
 
-    // 尝试直接文件名查找
-    int fileIndex = mz_zip_reader_locate_file(&zip, filename.c_str(), nullptr, 0);
-
-    // 如果没找到，尝试资源包路径
-    if (fileIndex < 0) {
-        std::string resourcePackPath = "assets/minecraft/textures/block/" + filename;
-        fileIndex = mz_zip_reader_locate_file(&zip, resourcePackPath.c_str(), nullptr, 0);
-        if (fileIndex >= 0) {
-            LOGI("Found in ZIP (resource pack path): %s", resourcePackPath.c_str());
-        }
-    } else {
-        LOGI("Found in ZIP (flat path): %s", filename.c_str());
-    }
+    // 在 ZIP 中查找 blocks/<filename>
+    std::string blocksPath = "blocks/" + filename;
+    int fileIndex = mz_zip_reader_locate_file(&zip, blocksPath.c_str(), nullptr, 0);
 
     if (fileIndex < 0) {
         mz_zip_reader_end(&zip);

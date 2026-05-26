@@ -69,13 +69,13 @@ public class MainActivity extends Activity {
         // 设置 AssetManager（供 C++ 层加载纹理等资源）
         setAssetManager(getAssets());
 
-        // 设置材质 ZIP 路径（如果存在则优先从 ZIP 加载纹理）
-        String zipPath = new java.io.File(getFilesDir(), "textures.zip").getAbsolutePath();
-        if (new java.io.File(zipPath).exists()) {
-            setTextureZipPath(zipPath);
-            android.util.Log.i("MainActivity", "Texture ZIP found: " + zipPath);
-        } else {
-            android.util.Log.i("MainActivity", "No texture ZIP found at: " + zipPath + ", using assets");
+        // 设置材质 ZIP 路径（读取 Android/data/com.minecraft/resourcepack.zip）
+        java.io.File externalDir = getExternalFilesDir(null);
+        if (externalDir != null && externalDir.getParentFile() != null) {
+            String zipPath = new java.io.File(externalDir.getParentFile(), "resourcepack.zip").getAbsolutePath();
+            if (new java.io.File(zipPath).exists()) {
+                setTextureZipPath(zipPath);
+            }
         }
 
         // 设置触摸监听器（多点触控支持，统一转发到 C++）
