@@ -294,6 +294,28 @@ Java_com_minecraft_MainActivity_initRenderer(
                 }
             }).detach();
         });
+
+        // 设置退出游戏回调（返回 Java 启动器）
+        GameUI::getInstance().setExitCallback([]() {
+            JNIEnv* env;
+            bool attached = false;
+            int getEnvResult = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+            if (getEnvResult == JNI_EDETACHED) {
+                if (g_jvm->AttachCurrentThread(&env, nullptr) != JNI_OK) return;
+                attached = true;
+            } else if (getEnvResult != JNI_OK) {
+                return;
+            }
+            jclass clazz = env->GetObjectClass(g_mainActivityObj);
+            jmethodID finishMethod = env->GetMethodID(clazz, "finish", "()V");
+            if (finishMethod) {
+                env->CallVoidMethod(g_mainActivityObj, finishMethod);
+            }
+            env->DeleteLocalRef(clazz);
+            if (attached) {
+                g_jvm->DetachCurrentThread();
+            }
+        });
     }
 
     g_initialized = true;

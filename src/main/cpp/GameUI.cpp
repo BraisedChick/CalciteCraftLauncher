@@ -214,6 +214,7 @@ void GameUI::renderMainMenu() {
 
     ImGui::SetCursorPos(ImVec2(w * 0.5f - btnW * 0.5f, startY + (btnH + spacing) * 2));
     if (ImGui::Button("退出游戏", ImVec2(btnW, btnH))) {
+        if (exitCallback) exitCallback();
     }
 
     ImGui::SetCursorPos(ImVec2(w * 0.5f - 80.0f, h - 40.0f));

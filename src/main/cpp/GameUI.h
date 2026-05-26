@@ -37,6 +37,10 @@ public:
     using ConnectCallback = std::function<void(const std::string& ip, int port)>;
     void setConnectCallback(ConnectCallback cb) { connectCallback = cb; }
 
+    // 退出游戏回调（返回 Java 启动器）
+    using ExitCallback = std::function<void()>;
+    void setExitCallback(ExitCallback cb) { exitCallback = cb; }
+
     bool isInitialized() const { return initialized; }
 
 private:
@@ -83,6 +87,7 @@ private:
 
     UIState currentState = UIState::MAIN_MENU;
     ConnectCallback connectCallback;
+    ExitCallback exitCallback;
     std::string connectingAddress;
 
     // 服务器列表
