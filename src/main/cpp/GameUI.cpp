@@ -292,10 +292,10 @@ void GameUI::renderMultiplayer() {
 
     ImGui::EndChild();
 
-    // 底部按钮行：连接服务器 + 添加服务器 + 删除 + 返回
-    float btnW = 130.0f;
-    float btnGap = 12.0f;
-    float totalW = btnW * 4 + btnGap * 3;
+    // 底部按钮行：连接服务器 + 添加服务器 + 编辑 + 删除 + 返回
+    float btnW = 120.0f;
+    float btnGap = 10.0f;
+    float totalW = btnW * 5 + btnGap * 4;
     float startX = w * 0.5f - totalW * 0.5f;
     float btnY = h - 70.0f;
 
@@ -318,12 +318,31 @@ void GameUI::renderMultiplayer() {
         memset(addServerIp, 0, sizeof(addServerIp));
         strncpy(addServerPort, "25565", sizeof(addServerPort) - 1);
         addServerPort[sizeof(addServerPort) - 1] = '\0';
+        editingServerIndex = -1;
         showingAddServer = true;
     }
 
-    // 删除服务器
+    // 编辑服务器
     ImGui::SameLine();
     ImGui::SetCursorPos(ImVec2(startX + (btnW + btnGap) * 2, btnY));
+    if (noSel) ImGui::BeginDisabled();
+    if (ImGui::Button("编辑", ImVec2(btnW, 50))) {
+        if (selectedServer >= 0 && selectedServer < (int)servers.size()) {
+            const auto& s = servers[selectedServer];
+            strncpy(addServerName, s.name.c_str(), sizeof(addServerName) - 1);
+            addServerName[sizeof(addServerName) - 1] = '\0';
+            strncpy(addServerIp, s.ip.c_str(), sizeof(addServerIp) - 1);
+            addServerIp[sizeof(addServerIp) - 1] = '\0';
+            snprintf(addServerPort, sizeof(addServerPort), "%d", s.port);
+            editingServerIndex = selectedServer;
+            showingAddServer = true;
+        }
+    }
+    if (noSel) ImGui::EndDisabled();
+
+    // 删除服务器
+    ImGui::SameLine();
+    ImGui::SetCursorPos(ImVec2(startX + (btnW + btnGap) * 3, btnY));
     if (noSel) ImGui::BeginDisabled();
     if (ImGui::Button("删除", ImVec2(btnW, 50))) {
         if (selectedServer >= 0 && selectedServer < (int)servers.size()) {
@@ -336,7 +355,7 @@ void GameUI::renderMultiplayer() {
 
     // 返回
     ImGui::SameLine();
-    ImGui::SetCursorPos(ImVec2(startX + (btnW + btnGap) * 3, btnY));
+    ImGui::SetCursorPos(ImVec2(startX + (btnW + btnGap) * 4, btnY));
     if (ImGui::Button("取消", ImVec2(btnW, 50))) {
         currentState = UIState::MAIN_MENU;
     }
@@ -359,7 +378,7 @@ void GameUI::renderAddServer() {
     // 标题
     float titleW = 200.0f;
     ImGui::SetCursorPos(ImVec2(w * 0.5f - titleW * 0.5f, h * 0.12f));
-    ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "添加服务器");
+    ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "%s", editingServerIndex >= 0 ? "编辑服务器" : "添加服务器");
 
     // 表单区域（居中）
     ImGui::SetCursorPosX(w * 0.5f - 200.0f);
@@ -398,8 +417,13 @@ void GameUI::renderAddServer() {
         if (port <= 0) port = 25565;
         if (port > 65535) port = 25565;
         server.port = port;
-        servers.push_back(server);
-        selectedServer = (int)servers.size() - 1;
+        if (editingServerIndex >= 0 && editingServerIndex < (int)servers.size()) {
+            servers[editingServerIndex] = server;
+            selectedServer = editingServerIndex;
+        } else {
+            servers.push_back(server);
+            selectedServer = (int)servers.size() - 1;
+        }
         saveServerList();
         showingAddServer = false;
     }
