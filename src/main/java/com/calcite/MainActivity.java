@@ -69,13 +69,11 @@ public class MainActivity extends Activity {
         // 设置 AssetManager（供 C++ 层加载纹理等资源）
         setAssetManager(getAssets());
 
-        // 设置材质 ZIP 路径（读取 Android/data/com.calcite/resourcepack.zip）
-        java.io.File externalDir = getExternalFilesDir(null);
-        if (externalDir != null && externalDir.getParentFile() != null) {
-            String zipPath = new java.io.File(externalDir.getParentFile(), "resourcepack.zip").getAbsolutePath();
-            if (new java.io.File(zipPath).exists()) {
-                setTextureZipPath(zipPath);
-            }
+        // 设置材质 ZIP 路径
+        String zipPath = android.os.Environment.getExternalStorageDirectory().getAbsolutePath()
+            + "/Android/data/com.calcite/resourcepack.zip";
+        if (new java.io.File(zipPath).exists()) {
+            setTextureZipPath(zipPath);
         }
 
         // 设置触摸监听器（多点触控支持，统一转发到 C++）
@@ -254,7 +252,7 @@ public class MainActivity extends Activity {
 
     private void copyBlocksJsonFromAssets() {
         AssetManager assetManager = getAssets();
-        java.io.File destFile = new java.io.File(getFilesDir(), "blocks.json");
+        java.io.File destFile = new java.io.File(getDataDir(), "blocks.json");
 
         if (destFile.exists()) {
             return;

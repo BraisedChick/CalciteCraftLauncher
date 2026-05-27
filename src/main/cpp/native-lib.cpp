@@ -178,7 +178,7 @@ Java_com_calcite_MainActivity_initRenderer(
     static bool blockRegistryLoaded = false;
     if (!blockRegistryLoaded) {
         // 从 assets 目录加载 blocks.json
-        std::string blocksJsonPath = "/data/data/com.calcite/files/blocks.json";
+        std::string blocksJsonPath = "/data/data/com.calcite/blocks.json";
         JNI_LOGI("Loading BlockRegistry from: %s", blocksJsonPath.c_str());
 
         if (BlockRegistry::getInstance().loadFromJson(blocksJsonPath)) {

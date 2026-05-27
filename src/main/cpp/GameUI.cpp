@@ -25,7 +25,7 @@
 #define GAMEKEY_DOWN 5
 
 // 服务器列表文件路径
-#define SERVERS_FILE_PATH "/data/data/com.calcite/files/servers.txt"
+#define SERVERS_FILE_PATH "/data/data/com.calcite/servers.txt"
 
 // 游戏内 UI 布局常量
 #define JOYSTICK_CENTER_X  170.0f
