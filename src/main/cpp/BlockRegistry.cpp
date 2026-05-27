@@ -231,10 +231,33 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
                || meta.name == "rooted_dirt" || meta.name == "mud") {
         meta.texTop = meta.texSide = meta.texBottom = TEX_DIRT;
     } else if (meta.name == "stone" || meta.name == "andesite"
-               || meta.name == "diorite" || meta.name == "granite"
-               || meta.name == "deepslate" || meta.name == "tuff"
                || meta.name == "dripstone_block") {
         meta.texTop = meta.texSide = meta.texBottom = TEX_STONE;
+    } else if (meta.name == "tuff") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_TUFF;
+    } else if (meta.name == "diorite") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_DIORITE;
+    } else if (meta.name == "granite") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_GRANITE;
+    } else if (meta.name == "deepslate" || meta.name == "infested_deepslate") {
+        meta.texTop = TEX_DEEPSLATE_TOP;
+        meta.texSide = meta.texBottom = TEX_DEEPSLATE;
+    } else if (meta.name == "cobbled_deepslate") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_COBBLED_DEEPSLATE;
+    } else if (meta.name == "polished_deepslate") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_POLISHED_DEEPSLATE;
+    } else if (meta.name == "deepslate_bricks" || meta.name == "deepslate_brick_slab"
+               || meta.name == "deepslate_brick_stairs") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_DEEPSLATE_BRICKS;
+    } else if (meta.name == "deepslate_tiles" || meta.name == "deepslate_tile_slab"
+               || meta.name == "deepslate_tile_stairs") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_DEEPSLATE_TILES;
+    } else if (meta.name == "cracked_deepslate_bricks") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_CRACKED_DEEPSLATE_BRICKS;
+    } else if (meta.name == "cracked_deepslate_tiles") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_CRACKED_DEEPSLATE_TILES;
+    } else if (meta.name == "chiseled_deepslate") {
+        meta.texTop = meta.texSide = meta.texBottom = TEX_CHISELED_DEEPSLATE;
     } else if (meta.name == "amethyst_block" || meta.name == "budding_amethyst") {
         meta.texTop = meta.texSide = meta.texBottom = TEX_AMETHYST_BLOCK;
     } else if (meta.name == "calcite") {

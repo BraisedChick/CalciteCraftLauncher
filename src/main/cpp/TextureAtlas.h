@@ -61,7 +61,22 @@ enum TextureLayer : int {
     TEX_AMETHYST_BLOCK = 40,          // amethyst_block.png
     TEX_CALCITE = 41,                 // calcite.png
 
-    TEXTURE_LAYER_COUNT,  // 纹理层总数（当前 = 42）
+    // ---- 深板岩 ----
+    TEX_DEEPSLATE = 42,               // deepslate.png（侧面纹理）
+    TEX_DEEPSLATE_TOP = 43,           // deepslate_top.png
+    TEX_COBBLED_DEEPSLATE = 44,       // cobbled_deepslate.png
+    TEX_POLISHED_DEEPSLATE = 45,      // polished_deepslate.png
+    TEX_DEEPSLATE_BRICKS = 46,        // deepslate_bricks.png
+    TEX_DEEPSLATE_TILES = 47,         // deepslate_tiles.png
+    TEX_CRACKED_DEEPSLATE_BRICKS = 48, // cracked_deepslate_bricks.png
+    TEX_CRACKED_DEEPSLATE_TILES = 49,  // cracked_deepslate_tiles.png
+    TEX_CHISELED_DEEPSLATE = 50,      // chiseled_deepslate.png
+
+    TEX_DIORITE = 51,                 // diorite.png
+    TEX_GRANITE = 52,                 // granite.png
+    TEX_TUFF = 53,                    // tuff.png
+
+    TEXTURE_LAYER_COUNT,  // 纹理层总数（当前 = 54）
 };
 
 // ============================================================
@@ -93,10 +108,53 @@ inline BlockTextureConfig getBlockTexture(int32_t blockState) {
 
     // 石头
     if (name == "stone" || name == "andesite"
-        || name == "diorite" || name == "granite"
-        || name == "deepslate" || name == "tuff"
         || name == "dripstone_block") {
         return {TEX_STONE, TEX_STONE, TEX_STONE};
+    }
+
+    // 闪长岩
+    if (name == "diorite") {
+        return {TEX_DIORITE, TEX_DIORITE, TEX_DIORITE};
+    }
+
+    // 花岗岩
+    if (name == "granite") {
+        return {TEX_GRANITE, TEX_GRANITE, TEX_GRANITE};
+    }
+
+    // 凝灰岩
+    if (name == "tuff") {
+        return {TEX_TUFF, TEX_TUFF, TEX_TUFF};
+    }
+
+    // 深板岩（顶面和侧面纹理不同）
+    if (name == "deepslate" || name == "infested_deepslate") {
+        return {TEX_DEEPSLATE_TOP, TEX_DEEPSLATE, TEX_DEEPSLATE};
+    }
+
+    // 深板岩变种
+    if (name == "cobbled_deepslate") {
+        return {TEX_COBBLED_DEEPSLATE, TEX_COBBLED_DEEPSLATE, TEX_COBBLED_DEEPSLATE};
+    }
+    if (name == "polished_deepslate") {
+        return {TEX_POLISHED_DEEPSLATE, TEX_POLISHED_DEEPSLATE, TEX_POLISHED_DEEPSLATE};
+    }
+    if (name == "deepslate_bricks" || name == "deepslate_brick_slab"
+        || name == "deepslate_brick_stairs") {
+        return {TEX_DEEPSLATE_BRICKS, TEX_DEEPSLATE_BRICKS, TEX_DEEPSLATE_BRICKS};
+    }
+    if (name == "deepslate_tiles" || name == "deepslate_tile_slab"
+        || name == "deepslate_tile_stairs") {
+        return {TEX_DEEPSLATE_TILES, TEX_DEEPSLATE_TILES, TEX_DEEPSLATE_TILES};
+    }
+    if (name == "cracked_deepslate_bricks") {
+        return {TEX_CRACKED_DEEPSLATE_BRICKS, TEX_CRACKED_DEEPSLATE_BRICKS, TEX_CRACKED_DEEPSLATE_BRICKS};
+    }
+    if (name == "cracked_deepslate_tiles") {
+        return {TEX_CRACKED_DEEPSLATE_TILES, TEX_CRACKED_DEEPSLATE_TILES, TEX_CRACKED_DEEPSLATE_TILES};
+    }
+    if (name == "chiseled_deepslate") {
+        return {TEX_CHISELED_DEEPSLATE, TEX_CHISELED_DEEPSLATE, TEX_CHISELED_DEEPSLATE};
     }
 
     // 紫水晶块
@@ -321,6 +379,19 @@ inline std::string getTextureFileName(int layer) {
         case TEX_DEEPSLATE_REDSTONE_ORE: return "deepslate_redstone_ore.png";
         case TEX_NETHER_GOLD_ORE:    return "nether_gold_ore.png";
         case TEX_NETHER_QUARTZ_ORE:  return "nether_quartz_ore.png";
+        // 深板岩
+        case TEX_DEEPSLATE:                return "deepslate.png";
+        case TEX_DEEPSLATE_TOP:            return "deepslate_top.png";
+        case TEX_COBBLED_DEEPSLATE:        return "cobbled_deepslate.png";
+        case TEX_POLISHED_DEEPSLATE:       return "polished_deepslate.png";
+        case TEX_DEEPSLATE_BRICKS:         return "deepslate_bricks.png";
+        case TEX_DEEPSLATE_TILES:          return "deepslate_tiles.png";
+        case TEX_CRACKED_DEEPSLATE_BRICKS: return "cracked_deepslate_bricks.png";
+        case TEX_CRACKED_DEEPSLATE_TILES:  return "cracked_deepslate_tiles.png";
+        case TEX_CHISELED_DEEPSLATE:       return "chiseled_deepslate.png";
+        case TEX_DIORITE:                  return "diorite.png";
+        case TEX_GRANITE:                  return "granite.png";
+        case TEX_TUFF:                     return "tuff.png";
         default:                     return "stone.png";
     }
 }
