@@ -35,7 +35,7 @@ static JavaVM* g_jvm = nullptr;
 static jobject g_mainActivityObj = nullptr;
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_minecraft_MainActivity_connectToServer(
+Java_com_calcite_MainActivity_connectToServer(
         JNIEnv* env,
         jobject thiz,
         jstring address,
@@ -162,7 +162,7 @@ static void callJavaVoidMethod(const char* methodName, const char* signature) {
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_initRenderer(
+Java_com_calcite_MainActivity_initRenderer(
         JNIEnv* env, jobject thiz, jobject surface) {
 
     JNI_LOGI("=== initRenderer called ===");
@@ -333,7 +333,7 @@ Java_com_minecraft_MainActivity_initRenderer(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_renderFrame(
+Java_com_calcite_MainActivity_renderFrame(
         JNIEnv* env, jobject thiz) {
 
     if (!g_initialized) {
@@ -353,7 +353,7 @@ Java_com_minecraft_MainActivity_renderFrame(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_cleanupRenderer(
+Java_com_calcite_MainActivity_cleanupRenderer(
         JNIEnv* env,
         jobject thiz) {
 
@@ -383,7 +383,7 @@ Java_com_minecraft_MainActivity_cleanupRenderer(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_updateCameraAngle(
+Java_com_calcite_MainActivity_updateCameraAngle(
         JNIEnv* env, jobject thiz,
         jfloat pitchDelta, jfloat yawDelta) {
 
@@ -394,7 +394,7 @@ Java_com_minecraft_MainActivity_updateCameraAngle(
 // ===== 新的输入控制接口 =====
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_setKeyState(
+Java_com_calcite_MainActivity_setKeyState(
         JNIEnv* env, jobject thiz,
         jint key, jboolean pressed) {
 
@@ -402,7 +402,7 @@ Java_com_minecraft_MainActivity_setKeyState(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_setCameraPosition(
+Java_com_calcite_MainActivity_setCameraPosition(
         JNIEnv* env, jobject thiz,
         jfloat x, jfloat y, jfloat z,
         jfloat pitch, jfloat yaw) {
@@ -413,7 +413,7 @@ Java_com_minecraft_MainActivity_setCameraPosition(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_setAssetManager(
+Java_com_calcite_MainActivity_setAssetManager(
         JNIEnv* env,
         jobject thiz,
         jobject assetManager) {
@@ -432,7 +432,7 @@ Java_com_minecraft_MainActivity_setAssetManager(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_setTextureZipPath(
+Java_com_calcite_MainActivity_setTextureZipPath(
         JNIEnv* env,
         jobject thiz,
         jstring zipPath) {
@@ -444,7 +444,7 @@ Java_com_minecraft_MainActivity_setTextureZipPath(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_resizeRenderer(
+Java_com_calcite_MainActivity_resizeRenderer(
         JNIEnv* env,
         jobject thiz,
         jint width,
@@ -460,7 +460,7 @@ Java_com_minecraft_MainActivity_resizeRenderer(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_setRendererType(
+Java_com_calcite_MainActivity_setRendererType(
         JNIEnv* env,
         jobject thiz,
         jboolean useVulkan) {
@@ -471,7 +471,7 @@ Java_com_minecraft_MainActivity_setRendererType(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_setProtocolVersion(
+Java_com_calcite_MainActivity_setProtocolVersion(
         JNIEnv* env,
         jobject thiz,
         jint version) {
@@ -485,7 +485,7 @@ Java_com_minecraft_MainActivity_setProtocolVersion(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_setUsername(
+Java_com_calcite_MainActivity_setUsername(
         JNIEnv* env,
         jobject thiz,
         jstring username) {
@@ -497,7 +497,7 @@ Java_com_minecraft_MainActivity_setUsername(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_onTouchEventImGui(
+Java_com_calcite_MainActivity_onTouchEventImGui(
         JNIEnv* env,
         jobject thiz,
         jint pointerId,
@@ -517,7 +517,7 @@ Java_com_minecraft_MainActivity_onTouchEventImGui(
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_minecraft_MainActivity_onBackPressedNative(
+Java_com_calcite_MainActivity_onBackPressedNative(
         JNIEnv* env,
         jobject thiz) {
 
@@ -531,7 +531,7 @@ Java_com_minecraft_MainActivity_onBackPressedNative(
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_minecraft_MainActivity_isUIDisplayed(
+Java_com_calcite_MainActivity_isUIDisplayed(
         JNIEnv* env,
         jobject thiz) {
 
@@ -539,7 +539,7 @@ Java_com_minecraft_MainActivity_isUIDisplayed(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_addImGuiCharacter(
+Java_com_calcite_MainActivity_addImGuiCharacter(
         JNIEnv* env,
         jobject thiz,
         jint c) {
@@ -548,7 +548,7 @@ Java_com_minecraft_MainActivity_addImGuiCharacter(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_addBlock(
+Java_com_calcite_MainActivity_addBlock(
         JNIEnv* env,
         jobject thiz,
         jint x,
@@ -561,7 +561,7 @@ Java_com_minecraft_MainActivity_addBlock(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_minecraft_MainActivity_removeBlock(
+Java_com_calcite_MainActivity_removeBlock(
         JNIEnv* env,
         jobject thiz,
         jint x,
