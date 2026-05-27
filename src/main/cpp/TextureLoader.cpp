@@ -70,11 +70,22 @@ TextureData TextureLoader::loadFromZip(const std::string& filename) {
 
     mz_zip_archive* zip = static_cast<mz_zip_archive*>(g_zip);
 
-    // 在 ZIP 中查找 blocks/<filename> 或 colormap/<filename>
-    std::string searchPath = "blocks/" + filename;
-    int fileIndex = mz_zip_reader_locate_file(zip, searchPath.c_str(), nullptr, 0);
+    int fileIndex = -1;
+
+    // 如果 filename 已带路径前缀（如 "colormap/grass.png"），直接按原路径查找
+    if (filename.find('/') != std::string::npos) {
+        fileIndex = mz_zip_reader_locate_file(zip, filename.c_str(), nullptr, 0);
+    }
+
+    // 没找到则尝试 blocks/<filename>
     if (fileIndex < 0) {
-        searchPath = "colormap/" + filename;
+        std::string searchPath = "blocks/" + filename;
+        fileIndex = mz_zip_reader_locate_file(zip, searchPath.c_str(), nullptr, 0);
+    }
+
+    // 还没找到则尝试 colormap/<filename>
+    if (fileIndex < 0) {
+        std::string searchPath = "colormap/" + filename;
         fileIndex = mz_zip_reader_locate_file(zip, searchPath.c_str(), nullptr, 0);
     }
 
