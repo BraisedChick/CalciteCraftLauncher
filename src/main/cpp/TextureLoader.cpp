@@ -43,9 +43,13 @@ TextureData TextureLoader::loadFromZip(const std::string& filename) {
         return result;
     }
 
-    // 在 ZIP 中查找 blocks/<filename>
-    std::string blocksPath = "blocks/" + filename;
-    int fileIndex = mz_zip_reader_locate_file(&zip, blocksPath.c_str(), nullptr, 0);
+    // 在 ZIP 中查找 blocks/<filename> 或 colormap/<filename>
+    std::string searchPath = "blocks/" + filename;
+    int fileIndex = mz_zip_reader_locate_file(&zip, searchPath.c_str(), nullptr, 0);
+    if (fileIndex < 0) {
+        searchPath = "colormap/" + filename;
+        fileIndex = mz_zip_reader_locate_file(&zip, searchPath.c_str(), nullptr, 0);
+    }
 
     if (fileIndex < 0) {
         mz_zip_reader_end(&zip);
