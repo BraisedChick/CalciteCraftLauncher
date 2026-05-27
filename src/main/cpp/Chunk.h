@@ -75,30 +75,44 @@ struct Chunk {
         }
     }
 
-    // 获取方块的绝对坐标 (blockX: 0-15, blockY: minY~maxY, blockZ: 0-15)
+    // 获取方块的区块内坐标 (blockX: 0-15, blockY: minY~maxY, blockZ: 0-15)
     // 返回方块状态 ID
     uint32_t getBlockState(int blockX, int blockY, int blockZ) const {
         if (blockX < 0 || blockX >= 16 || blockZ < 0 || blockZ >= 16) {
-            return 0; // 空气
+            return 0;
         }
-
         if (blockY < dimension.minY || blockY >= dimension.maxY) {
-            return 0; // 空气
+            return 0;
         }
-
-        // 计算截面索引
         int sectionIndex = (blockY - dimension.minY) / SECTION_HEIGHT;
         if (sectionIndex < 0 || sectionIndex >= static_cast<int>(sections.size())) {
             return 0;
         }
-
         const auto& section = sections[sectionIndex];
-        if (!section) {
-            return 0; // 截面不存在
+        if (!section) return 0;
+        int localY = blockY - section->y;
+        if (localY < 0 || localY >= SECTION_HEIGHT) return 0;
+        int index = (localY * CHUNK_DEPTH + blockZ) * CHUNK_WIDTH + blockX;
+        if (index >= 0 && index < static_cast<int>(section->blockStates.size())) {
+            return section->blockStates[index];
         }
-        
-        // TODO: 实际解析 blockStates 数据
-        // 暂时简化：如果截面不为空，就认为是草方块 (ID=1)
-        return 1; // 草方块
+        return 0;
+    }
+
+    // 设置一个方块的状态（blockX/Z: 0-15, blockY: 绝对坐标）
+    void setBlockState(int blockX, int blockY, int blockZ, int32_t state) {
+        if (blockX < 0 || blockX >= 16 || blockZ < 0 || blockZ >= 16) return;
+        if (blockY < dimension.minY || blockY >= dimension.maxY) return;
+        int sectionIndex = (blockY - dimension.minY) / SECTION_HEIGHT;
+        if (sectionIndex < 0 || sectionIndex >= static_cast<int>(sections.size())) return;
+        auto& section = sections[sectionIndex];
+        if (!section) return;
+        int localY = blockY - section->y;
+        if (localY < 0 || localY >= SECTION_HEIGHT) return;
+        int index = (localY * CHUNK_DEPTH + blockZ) * CHUNK_WIDTH + blockX;
+        if (index >= 0 && index < static_cast<int>(section->blockStates.size())) {
+            section->blockStates[index] = state;
+            section->isEmpty = false;
+        }
     }
 };

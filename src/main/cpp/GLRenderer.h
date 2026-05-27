@@ -170,6 +170,10 @@ private:
     std::atomic<ChunkManager*> chunkManager{nullptr};
     std::atomic<bool> needRebuildMesh{false};  // 标记是否需要重建网格
 
+    // 脏区块集合（只记录需要更新网格的区块，避免每次遍历所有区块）
+    std::unordered_set<uint64_t> dirtyChunks;  // 由 cacheMutex 保护
+    size_t lastChunkCount = 0;                  // 上次已知区块数，用于发现新区块
+
     // 手动放置的方块
     std::map<BlockPosition, bool> blocks;
     

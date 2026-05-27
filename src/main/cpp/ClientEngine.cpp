@@ -26,6 +26,8 @@
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundMovePlayerPacketPosRot.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundClientInformationPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundLoginPacket.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundBlockUpdatePacket.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundSectionBlocksUpdatePacket.hpp"
 #include "protocolCraft/include/protocolCraft/Types/NBT/Tag.hpp"
 #include "BiomeColorManager.h"
 
@@ -494,6 +496,91 @@ void ClientEngine::handlePlayPacket(NetworkManager& net, int packetId,
                     }
                 } catch (const std::exception& e) {
                     LOGE("Failed to parse chunk packet: %s", e.what());
+                }
+                break;
+            }
+
+            case 0x0C: { // Block Update（单一方块更新）
+                ProtocolCraft::ClientboundBlockUpdatePacket blockPacket;
+                std::vector<unsigned char> packetData(data.begin() + startPos, data.end());
+                auto iter = packetData.cbegin();
+                size_t length = packetData.size();
+                blockPacket.Read(iter, length);
+
+                auto pos = blockPacket.GetPos();
+                int blockX = pos.GetX();
+                int blockY = pos.GetY();
+                int blockZ = pos.GetZ();
+                int blockState = blockPacket.GetBlockstate();
+
+                // 区块坐标转换（支持负数）
+                int chunkX = blockX >> 4;
+                int chunkZ = blockZ >> 4;
+                int localX = blockX & 15;
+                int localZ = blockZ & 15;
+
+                LOGI("BlockUpdate: chunk(%d,%d) pos=(%d,%d,%d) state=%d",
+                     chunkX, chunkZ, blockX, blockY, blockZ, blockState);
+
+                if (chunkManager) {
+                    auto chunk = chunkManager->getChunk(chunkX, chunkZ);
+                    if (chunk) {
+                        chunk->setBlockState(localX, blockY, localZ, blockState);
+                        if (glRenderer) {
+                            glRenderer->markChunkForUpdate(chunkX, chunkZ);
+                        }
+                    } else {
+                        LOGW("BlockUpdate: chunk (%d, %d) not loaded", chunkX, chunkZ);
+                    }
+                }
+                break;
+            }
+
+            case 0x3F: { // Section Blocks Update（多方块批量更新）
+                ProtocolCraft::ClientboundSectionBlocksUpdatePacket sectionPacket;
+                std::vector<unsigned char> packetData(data.begin() + startPos, data.end());
+                auto iter = packetData.cbegin();
+                size_t length = packetData.size();
+                sectionPacket.Read(iter, length);
+
+                long long sectionPos = sectionPacket.GetSectionPos();
+
+                // 解码 section position（SectionPosition 编码：X(22) << 42 | Z(22) << 20 | Y(20)）
+                // 必须用无符号算术避免符号位传播导致解码错误
+                uint64_t rawPos = (uint64_t)sectionPos;
+                int chunkX = (int)((rawPos >> 42) & 0x3FFFFF);
+                if (chunkX >= 2097152) chunkX -= 4194304;
+                int chunkZ = (int)((rawPos >> 20) & 0x3FFFFF);
+                if (chunkZ >= 2097152) chunkZ -= 4194304;
+                int sectionY = (int)(rawPos & 0xFFFFF);
+                if (sectionY >= 524288) sectionY -= 1048576;
+
+                LOGI("SectionBlocksUpdate: chunk(%d,%d) sectionY=%d entries=%zu",
+                     chunkX, chunkZ, sectionY, sectionPacket.GetPosState().size());
+
+                if (!chunkManager) break;
+                auto chunk = chunkManager->getChunk(chunkX, chunkZ);
+                if (!chunk) {
+                    LOGE("SectionBlocksUpdate: chunk (%d, %d) not loaded", chunkX, chunkZ);
+                    break;
+                }
+
+                const auto& posState = sectionPacket.GetPosState();
+                for (const auto& entry : posState) {
+                    uint64_t entryVal = (uint64_t)entry;
+                    int sectionLocalIndex = (int)(entryVal & 0xFFF);
+                    int blockState = (int)(entryVal >> 12);
+
+                    int localX = sectionLocalIndex & 0xF;
+                    int localZ = (sectionLocalIndex >> 4) & 0xF;
+                    int localY = (sectionLocalIndex >> 8) & 0xF;
+
+                    int blockY = sectionY * 16 + localY;
+                    chunk->setBlockState(localX, blockY, localZ, blockState);
+                }
+
+                if (glRenderer) {
+                    glRenderer->markChunkForUpdate(chunkX, chunkZ);
                 }
                 break;
             }
