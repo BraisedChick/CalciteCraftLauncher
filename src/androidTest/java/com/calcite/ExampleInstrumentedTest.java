@@ -1,4 +1,4 @@
-package com.minecraft;
+package com.calcite;
 
 import android.content.Context;
 
@@ -21,6 +21,6 @@ public class ExampleInstrumentedTest {
     public void useAppContext() {
         // Context of the app under test.
         Context appContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        assertEquals("com.minecraft", appContext.getPackageName());
+        assertEquals("com.calcite", appContext.getPackageName());
     }
 }

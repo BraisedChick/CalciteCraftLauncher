@@ -1,4 +1,4 @@
-package com.minecraft.ui;
+package com.calcite.ui;
 
 import android.content.Context;
 import android.content.res.TypedArray;
@@ -12,8 +12,8 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.widget.AppCompatButton;
 
-import com.minecraft.R;
-import com.minecraft.ui.MioThemeEngine;
+import com.calcite.R;
+import com.calcite.ui.MioThemeEngine;
 
 /**
  * 主题感知按钮，仿照 FCL FCLButton 设计

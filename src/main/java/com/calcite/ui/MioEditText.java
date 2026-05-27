@@ -1,4 +1,4 @@
-package com.minecraft.ui;
+package com.calcite.ui;
 
 import android.content.Context;
 import android.content.res.ColorStateList;
@@ -9,8 +9,8 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.widget.AppCompatEditText;
 
-import com.minecraft.R;
-import com.minecraft.ui.MioThemeEngine;
+import com.calcite.R;
+import com.calcite.ui.MioThemeEngine;
 
 /**
  * 主题感知输入框，仿照 FCL FCLEditText 设计

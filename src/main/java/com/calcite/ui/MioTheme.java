@@ -1,4 +1,4 @@
-package com.minecraft.ui;
+package com.calcite.ui;
 
 import android.graphics.Color;
 

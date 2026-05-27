@@ -1,4 +1,4 @@
-package com.minecraft.account;
+package com.calcite.account;
 
 public class Account {
     private String name;

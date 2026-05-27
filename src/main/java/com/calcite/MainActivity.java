@@ -1,4 +1,4 @@
-package com.minecraft;
+package com.calcite;
 
 import android.app.Activity;
 import android.content.Context;
@@ -69,7 +69,7 @@ public class MainActivity extends Activity {
         // 设置 AssetManager（供 C++ 层加载纹理等资源）
         setAssetManager(getAssets());
 
-        // 设置材质 ZIP 路径（读取 Android/data/com.minecraft/resourcepack.zip）
+        // 设置材质 ZIP 路径（读取 Android/data/com.calcite/resourcepack.zip）
         java.io.File externalDir = getExternalFilesDir(null);
         if (externalDir != null && externalDir.getParentFile() != null) {
             String zipPath = new java.io.File(externalDir.getParentFile(), "resourcepack.zip").getAbsolutePath();

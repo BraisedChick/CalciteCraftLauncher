@@ -1,4 +1,4 @@
-package com.minecraft;
+package com.calcite;
 
 import android.content.Context;
 import android.util.AttributeSet;

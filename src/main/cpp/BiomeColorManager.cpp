@@ -87,7 +87,7 @@ void BiomeColorManager::sampleColor(const std::vector<uint8_t>& colormap,
                                      uint8_t& r, uint8_t& g, uint8_t& b) const {
     if (colormap.empty()) {
         // 没有 colormap，返回默认绿色
-        r = 127; g = 191; b = 80;
+        r = 170; g = 68; b = 170;
         return;
     }
 
@@ -110,7 +110,7 @@ void BiomeColorManager::sampleColor(const std::vector<uint8_t>& colormap,
         g = colormap[pixelIndex + 1];
         b = colormap[pixelIndex + 2];
     } else {
-        r = 127; g = 191; b = 80;
+        r = 170; g = 68; b = 170;
     }
 }
 
@@ -138,7 +138,7 @@ void BiomeColorManager::getGrassColor(int32_t biomeId, uint8_t& r, uint8_t& g, u
         sampleColor(grassColormap, entry.temperature, adjustedDownfall, r, g, b);
     } else {
         // fallback
-        r = 127; g = 191; b = 80;
+        r = 170; g = 68; b = 170;
     }
 
     // 调试日志：每 300 次调用输出一次 biomeId 映射
@@ -171,7 +171,7 @@ void BiomeColorManager::getFoliageColor(int32_t biomeId, uint8_t& r, uint8_t& g,
         sampleColor(foliageColormap, entry.temperature, entry.downfall, r, g, b);
     } else {
         // fallback
-        r = 127; g = 191; b = 80;
+        r = 170; g = 68; b = 170;
     }
 }
 

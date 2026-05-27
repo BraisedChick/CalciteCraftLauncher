@@ -4,7 +4,7 @@
     android:layout_height="match_parent">
 
     <!-- 渲染表面（始终可见，菜单和游戏都通过 OpenGL 渲染） -->
-    <com.minecraft.RendererSurfaceView
+    <com.calcite.RendererSurfaceView
         android:id="@+id/gameSurface"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />

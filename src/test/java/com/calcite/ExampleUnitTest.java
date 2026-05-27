@@ -1,4 +1,4 @@
-package com.minecraft;
+package com.calcite;
 
 import org.junit.Test;
 

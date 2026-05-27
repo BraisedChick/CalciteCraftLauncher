@@ -17,7 +17,7 @@
         android:layout_marginVertical="12dp"
         android:layout_marginStart="8dp">
 
-        <com.minecraft.ui.MioButton
+        <com.calcite.ui.MioButton
             android:id="@+id/btnHome"
             android:layout_width="40dp"
             android:layout_height="40dp"
@@ -26,7 +26,7 @@
             android:layout_marginBottom="12dp"
             app:mioShape="oval" />
 
-        <com.minecraft.ui.MioButton
+        <com.calcite.ui.MioButton
             android:id="@+id/btnAccount"
             android:layout_width="40dp"
             android:layout_height="40dp"
@@ -35,7 +35,7 @@
             android:layout_marginBottom="12dp"
             app:mioShape="oval" />
 
-        <com.minecraft.ui.MioButton
+        <com.calcite.ui.MioButton
             android:id="@+id/btnVersion"
             android:layout_width="40dp"
             android:layout_height="40dp"
@@ -44,7 +44,7 @@
             android:layout_marginBottom="12dp"
             app:mioShape="oval" />
 
-        <com.minecraft.ui.MioButton
+        <com.calcite.ui.MioButton
             android:id="@+id/btnRenderer"
             android:layout_width="40dp"
             android:layout_height="40dp"
@@ -108,7 +108,7 @@
                 android:layout_height="0dp"
                 android:layout_weight="1" />
 
-            <com.minecraft.ui.MioTextView
+            <com.calcite.ui.MioTextView
                 android:id="@+id/panelDisplayName"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -116,7 +116,7 @@
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
-            <com.minecraft.ui.MioTextView
+            <com.calcite.ui.MioTextView
                 android:id="@+id/panelLoginType"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -124,7 +124,7 @@
                 android:textSize="11sp"
                 android:layout_marginTop="2dp" />
 
-            <com.minecraft.ui.MioButton
+            <com.calcite.ui.MioButton
                 android:id="@+id/btnLaunch"
                 android:layout_width="match_parent"
                 android:layout_height="44dp"
@@ -145,13 +145,13 @@
                 android:layout_height="wrap_content"
                 android:orientation="horizontal">
 
-                <com.minecraft.ui.MioTextView
+                <com.calcite.ui.MioTextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="版本"
                     android:textSize="10sp" />
 
-                <com.minecraft.ui.MioTextView
+                <com.calcite.ui.MioTextView
                     android:id="@+id/panelVersion"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -166,13 +166,13 @@
                 android:orientation="horizontal"
                 android:layout_marginTop="2dp">
 
-                <com.minecraft.ui.MioTextView
+                <com.calcite.ui.MioTextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="渲染"
                     android:textSize="10sp" />
 
-                <com.minecraft.ui.MioTextView
+                <com.calcite.ui.MioTextView
                     android:id="@+id/panelRenderer"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"

@@ -6,7 +6,7 @@
     android:background="@drawable/card_bg"
     android:padding="20dp">
 
-    <com.minecraft.ui.MioTextView
+    <com.calcite.ui.MioTextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="账号"
@@ -43,7 +43,7 @@
             android:padding="8dp" />
     </RadioGroup>
 
-    <com.minecraft.ui.MioEditText
+    <com.calcite.ui.MioEditText
         android:id="@+id/etUsername"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -54,7 +54,7 @@
         android:inputType="text"
         android:layout_marginBottom="16dp" />
 
-    <com.minecraft.ui.MioButton
+    <com.calcite.ui.MioButton
         android:id="@+id/btnConfirmAccount"
         android:layout_width="match_parent"
         android:layout_height="40dp"

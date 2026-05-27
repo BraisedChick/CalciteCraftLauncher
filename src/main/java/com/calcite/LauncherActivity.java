@@ -1,4 +1,4 @@
-package com.minecraft;
+package com.calcite;
 
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -16,10 +16,10 @@ import android.widget.RadioGroup;
 import android.widget.Spinner;
 import android.widget.Toast;
 
-import com.minecraft.account.Account;
-import com.minecraft.account.AccountListAdapter;
-import com.minecraft.ui.MioButton;
-import com.minecraft.ui.MioTextView;
+import com.calcite.account.Account;
+import com.calcite.account.AccountListAdapter;
+import com.calcite.ui.MioButton;
+import com.calcite.ui.MioTextView;
 
 import org.json.JSONArray;
 import org.json.JSONObject;

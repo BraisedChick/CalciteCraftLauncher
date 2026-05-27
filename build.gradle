@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace 'com.minecraft'
+    namespace 'com.calcite'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.minecraft"
+        applicationId "com.calcite"
         minSdk 26
         targetSdk 34
         versionCode 1

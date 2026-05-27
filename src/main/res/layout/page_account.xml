@@ -13,7 +13,7 @@
         android:orientation="vertical"
         android:paddingEnd="8dp">
 
-        <com.minecraft.ui.MioTextView
+        <com.calcite.ui.MioTextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="创建账号"

@@ -1,4 +1,4 @@
-package com.minecraft.account;
+package com.calcite.account;
 
 import android.content.Context;
 import android.view.LayoutInflater;
@@ -8,7 +8,7 @@ import android.widget.BaseAdapter;
 import android.widget.RadioButton;
 import android.widget.TextView;
 
-import com.minecraft.R;
+import com.calcite.R;
 
 import java.util.List;
 

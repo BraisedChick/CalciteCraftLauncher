@@ -10,14 +10,14 @@
         android:orientation="vertical"
         android:gravity="center">
 
-        <com.minecraft.ui.MioTextView
+        <com.calcite.ui.MioTextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Minecraft"
             android:textSize="36sp"
             android:textStyle="bold" />
 
-        <com.minecraft.ui.MioTextView
+        <com.calcite.ui.MioTextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="启动器"
