@@ -41,8 +41,8 @@ static void addCubicFace(
         vert.pos[0] = px + fv[0];
         vert.pos[1] = py + fv[1] * height;
         vert.pos[2] = pz + fv[2];
-        vert.u = fv[3];
-        vert.v = fv[4];
+        vert.texCoord[0] = fv[3];
+        vert.texCoord[1] = fv[4];
         vert.texIndex = texIndex;
         vert.color[0] = r; vert.color[1] = g; vert.color[2] = b; vert.color[3] = a;
         vertices.push_back(vert);
