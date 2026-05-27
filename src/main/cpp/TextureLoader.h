@@ -17,7 +17,6 @@ struct TextureData {
         }
     }
 
-    // 添加默认构造函数
     TextureData() = default;
 
     TextureData(const TextureData&) = delete;
@@ -50,9 +49,13 @@ public:
     static void setZipPath(const std::string& path);
     static TextureData loadPNG(const std::string& filename);
     static TextureData loadImage(const std::string& filename);
+    static void closeZip();
 
 private:
     static AAssetManager* g_assetManager;
     static std::string g_zipPath;
     static TextureData loadFromZip(const std::string& filename);
+
+    static void* g_zip;       // mz_zip_archive 缓存
+    static bool g_zipOpen;
 };

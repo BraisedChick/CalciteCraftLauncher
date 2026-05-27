@@ -16,60 +16,84 @@
 
 AAssetManager* TextureLoader::g_assetManager = nullptr;
 std::string TextureLoader::g_zipPath = "";
+void* TextureLoader::g_zip = nullptr;
+bool TextureLoader::g_zipOpen = false;
 
 void TextureLoader::setAssetManager(AAssetManager* assetManager) {
     g_assetManager = assetManager;
 }
 
 void TextureLoader::setZipPath(const std::string& path) {
+    // 关闭之前的 ZIP
+    if (g_zipOpen) {
+        mz_zip_reader_end(static_cast<mz_zip_archive*>(g_zip));
+        delete static_cast<mz_zip_archive*>(g_zip);
+        g_zip = nullptr;
+        g_zipOpen = false;
+    }
+
     g_zipPath = path;
     LOGI("Texture ZIP path set to: %s", path.c_str());
+
+    // 直接打开缓存
+    if (!g_zipPath.empty()) {
+        mz_zip_archive* zip = new mz_zip_archive();
+        memset(zip, 0, sizeof(mz_zip_archive));
+        if (mz_zip_reader_init_file(zip, g_zipPath.c_str(), 0)) {
+            g_zip = zip;
+            g_zipOpen = true;
+            LOGI("ZIP opened and cached: %s", g_zipPath.c_str());
+        } else {
+            delete zip;
+            LOGE("Failed to open ZIP file: %s", g_zipPath.c_str());
+        }
+    }
+}
+
+void TextureLoader::closeZip() {
+    if (g_zipOpen) {
+        mz_zip_reader_end(static_cast<mz_zip_archive*>(g_zip));
+        delete static_cast<mz_zip_archive*>(g_zip);
+        g_zip = nullptr;
+        g_zipOpen = false;
+        LOGI("ZIP closed");
+    }
 }
 
 TextureData TextureLoader::loadFromZip(const std::string& filename) {
     TextureData result;
 
-    if (g_zipPath.empty()) {
+    if (!g_zipOpen || !g_zip) {
+        LOGE("ZIP not open, cannot load: %s", filename.c_str());
         return result;
     }
 
-    mz_zip_archive zip;
-    memset(&zip, 0, sizeof(zip));
-
-    LOGI("Attempting to open ZIP: %s", g_zipPath.c_str());
-
-    if (!mz_zip_reader_init_file(&zip, g_zipPath.c_str(), 0)) {
-        LOGE("Failed to open ZIP file: %s", g_zipPath.c_str());
-        return result;
-    }
+    mz_zip_archive* zip = static_cast<mz_zip_archive*>(g_zip);
 
     // 在 ZIP 中查找 blocks/<filename> 或 colormap/<filename>
     std::string searchPath = "blocks/" + filename;
-    int fileIndex = mz_zip_reader_locate_file(&zip, searchPath.c_str(), nullptr, 0);
+    int fileIndex = mz_zip_reader_locate_file(zip, searchPath.c_str(), nullptr, 0);
     if (fileIndex < 0) {
         searchPath = "colormap/" + filename;
-        fileIndex = mz_zip_reader_locate_file(&zip, searchPath.c_str(), nullptr, 0);
+        fileIndex = mz_zip_reader_locate_file(zip, searchPath.c_str(), nullptr, 0);
     }
 
     if (fileIndex < 0) {
-        mz_zip_reader_end(&zip);
         return result;
     }
 
     mz_zip_archive_file_stat stat;
-    if (!mz_zip_reader_file_stat(&zip, fileIndex, &stat)) {
+    if (!mz_zip_reader_file_stat(zip, fileIndex, &stat)) {
         LOGE("Failed to stat file in ZIP: %s", filename.c_str());
-        mz_zip_reader_end(&zip);
         return result;
     }
 
     size_t uncompSize = 0;
     unsigned char* fileData = static_cast<unsigned char*>(
-        mz_zip_reader_extract_file_to_heap(&zip, stat.m_filename, &uncompSize, 0));
+        mz_zip_reader_extract_file_to_heap(zip, stat.m_filename, &uncompSize, 0));
 
     if (!fileData || uncompSize == 0) {
         LOGE("Failed to extract from ZIP: %s", filename.c_str());
-        mz_zip_reader_end(&zip);
         return result;
     }
 
@@ -85,7 +109,6 @@ TextureData TextureLoader::loadFromZip(const std::string& filename) {
     );
 
     mz_free(fileData);
-    mz_zip_reader_end(&zip);
 
     if (!imageData) {
         LOGE("Failed to decode PNG from ZIP: %s - %s", filename.c_str(), stbi_failure_reason());
