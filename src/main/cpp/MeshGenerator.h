@@ -35,6 +35,5 @@ private:
     static void addFace(std::vector<Vertex>& vertices, float x, float y, float z,
                        float nx, float ny, float nz,
                        float r, float g, float b);
-    static uint32_t getBlockColor(uint16_t blockId);
     static int32_t getBlockStateAt(int x, int y, int z, const ChunkManager* chunkManager);
 };

@@ -427,11 +427,3 @@ void MeshGenerator::addFace(std::vector<Vertex>& vertices, float x, float y, flo
     vertices.push_back(vertex);
 }
 
-uint32_t MeshGenerator::getBlockColor(uint16_t blockId) {
-    switch (blockId) {
-        case 1: return 0x8B4513;
-        case 2: return 0x228B22;
-        case 3: return 0x808080;
-        default: return 0xFFFFFF;
-    }
-}
