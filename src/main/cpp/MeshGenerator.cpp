@@ -319,14 +319,14 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     // 顶面
                     if (!isWaterBlock(n[TOP])) {
                         addCubicFace(waterVertices, waterIndices, TOP,
-                                     posX, posY, posZ, 1.0f, waterTexIndex, waterR, waterG, waterB, 180);
+                                     posX, posY, posZ, blockHeight, waterTexIndex, waterR, waterG, waterB, 180);
                     }
                     // 4 个侧面（FRONT, BACK, RIGHT, LEFT = 索引 4,5,2,3，对应 n[face]）
                     static const int WATER_SIDES[] = {FRONT, BACK, RIGHT, LEFT};
                     for (int ws : WATER_SIDES) {
                         if (!isWaterBlock(n[ws]) && (n[ws] == 0 || !isSolid(n[ws]))) {
                             addCubicFace(waterVertices, waterIndices, ws,
-                                         posX, posY, posZ, 1.0f, waterTexIndex, waterR, waterG, waterB, 180);
+                                         posX, posY, posZ, blockHeight, waterTexIndex, waterR, waterG, waterB, 180);
                         }
                     }
                     continue;

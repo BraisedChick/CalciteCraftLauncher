@@ -85,6 +85,11 @@ private:
         uint64_t chunkKey;
         int chunkX;
         int chunkZ;
+        float distance;  // 距离玩家距离，优先级队列排序用
+
+        bool operator<(const ChunkWorkItem& other) const {
+            return distance > other.distance;  // 小顶堆：距离近的优先级高
+        }
     };
 
     struct ChunkMeshResult {
@@ -106,7 +111,7 @@ private:
     std::vector<std::thread> workerThreads;
     std::mutex workMutex;
     std::condition_variable workCV;
-    std::queue<ChunkWorkItem> workQueue;
+    std::priority_queue<ChunkWorkItem> workQueue;
     bool workerRunning = false;
 
     // 完成结果队列（worker→render 线程）

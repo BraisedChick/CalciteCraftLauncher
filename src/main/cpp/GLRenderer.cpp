@@ -417,7 +417,6 @@ bool GLRenderer::rebuildMeshFromChunks() {
     }
 
     int chunksEnqueued = 0;
-    const int MAX_ENQUEUE_PER_CALL = 32;
 
     // 摄像机位置（用于视锥体裁剪）
     glm::vec3 cameraPos(cameraMatrix[12], cameraMatrix[13], cameraMatrix[14]);
@@ -430,8 +429,6 @@ bool GLRenderer::rebuildMeshFromChunks() {
     }
 
     for (uint64_t chunkKey : localDirty) {
-        if (chunksEnqueued >= MAX_ENQUEUE_PER_CALL) break;
-
         int chunkX = (int)(chunkKey >> 32);
         int chunkZ = (int)(chunkKey & 0xFFFFFFFF);
 
@@ -477,20 +474,19 @@ bool GLRenderer::rebuildMeshFromChunks() {
                 pendingChunks.insert(chunkKey);
                 renderData->pending = true;
             }
-            enqueueWork({chunkKey, chunk->pos.x, chunk->pos.z});
+            enqueueWork({chunkKey, chunk->pos.x, chunk->pos.z, distance});
             chunksEnqueued++;
         }
     }
 
     // ===== 第二步：发现新区块（仅在区块数量变化时扫描）=====
     size_t currentCount = mgr->getLoadedChunkCount();
-    if (currentCount != lastChunkCount && chunksEnqueued < MAX_ENQUEUE_PER_CALL) {
+    if (currentCount != lastChunkCount) {
         lastChunkCount = currentCount;
         auto allChunks = mgr->getAllChunks();
 
         for (const auto& chunk : allChunks) {
             if (!chunk || !chunk->isLoaded) continue;
-            if (chunksEnqueued >= MAX_ENQUEUE_PER_CALL) break;
 
             uint64_t chunkKey = ((uint64_t)(chunk->pos.x & 0xFFFFFFFF) << 32) | (chunk->pos.z & 0xFFFFFFFF);
 
@@ -532,7 +528,7 @@ bool GLRenderer::rebuildMeshFromChunks() {
                     pendingChunks.insert(chunkKey);
                     renderData->pending = true;
                 }
-                enqueueWork({chunkKey, chunk->pos.x, chunk->pos.z});
+                enqueueWork({chunkKey, chunk->pos.x, chunk->pos.z, distance});
                 chunksEnqueued++;
             }
         }
@@ -603,7 +599,7 @@ void GLRenderer::workerLoop() {
 
             if (!workerRunning) break;
 
-            item = workQueue.front();
+            item = workQueue.top();
             workQueue.pop();
         }
 
@@ -792,8 +788,11 @@ void GLRenderer::removeBlock(int x, int y, int z) {
 
 void GLRenderer::updateCamera(float cx, float cy, float cz, float pitch, float yaw) {
     // ===== 使用 Botcraft + GLM 的 Camera 算法 =====
-    
-    // 1. 限制俯仰角（Botcraft: -89° 到 +89°）
+
+    // 1. 加眼睛高度偏移（玩家脚部 → 眼睛，原版 1.62 格）
+    cy += 1.62f;
+
+    // 2. 限制俯仰角（Botcraft: -89° 到 +89°）
     const float maxPitch = glm::radians(89.0f);
     if (pitch > maxPitch) pitch = maxPitch;
     if (pitch < -maxPitch) pitch = -maxPitch;
