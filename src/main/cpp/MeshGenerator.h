@@ -36,6 +36,5 @@ private:
                        float nx, float ny, float nz,
                        float r, float g, float b);
     static uint32_t getBlockColor(uint16_t blockId);
-    // 辅助函数：获取全局坐标的 blockState
     static int32_t getBlockStateAt(int x, int y, int z, const ChunkManager* chunkManager);
 };
