@@ -128,7 +128,12 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
     std::vector<uint32_t> overlayIndices;
     std::vector<Vertex> waterVertices;
     std::vector<uint32_t> waterIndices;
-
+    baseVertices.reserve(20000);
+    baseIndices.reserve(30000);
+    overlayVertices.reserve(4000);
+    overlayIndices.reserve(6000);
+    waterVertices.reserve(2000);
+    waterIndices.reserve(3000);
     float baseX = chunkX * CHUNK_WIDTH;
     float baseY = static_cast<float>(sectionY);
     float baseZ = chunkZ * CHUNK_DEPTH;
@@ -225,9 +230,14 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         return 0;
     };
 
+    std::unordered_map<int32_t, bool> solidCache;
     auto isSolid = [&](int32_t state) -> bool {
         if (state == 0) return false;
-        return BlockRegistry::getInstance().getBlockMetadata(state).isFullBlock;
+        auto it = solidCache.find(state);
+        if (it != solidCache.end()) return it->second;
+        bool solid = BlockRegistry::getInstance().getBlockMetadata(state).isFullBlock;
+        solidCache[state] = solid;
+        return solid;
     };
 
     // 遍历所有方块
@@ -266,12 +276,22 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
 
                 // 6 个邻居
                 int32_t n[6];
-                n[0] = getLocalBlockState(x, localY + 1, z);
-                n[1] = getLocalBlockState(x, localY - 1, z);
-                n[2] = getLocalBlockState(x + 1, localY, z);
-                n[3] = getLocalBlockState(x - 1, localY, z);
-                n[4] = getLocalBlockState(x, localY, z + 1);
-                n[5] = getLocalBlockState(x, localY, z - 1);
+                if (x >= 1 && x <= 14 && localY >= 1 && localY <= 14 && z >= 1 && z <= 14) {
+                    // 内部方块：所有邻居都在当前 section 内，直接索引偏移
+                    n[TOP]    = selfData[index + 256];
+                    n[BOTTOM] = selfData[index - 256];
+                    n[RIGHT]  = selfData[index + 1];
+                    n[LEFT]   = selfData[index - 1];
+                    n[FRONT]  = selfData[index + 16];
+                    n[BACK]   = selfData[index - 16];
+                } else {
+                    n[TOP]    = getLocalBlockState(x, localY + 1, z);
+                    n[BOTTOM] = getLocalBlockState(x, localY - 1, z);
+                    n[RIGHT]  = getLocalBlockState(x + 1, localY, z);
+                    n[LEFT]   = getLocalBlockState(x - 1, localY, z);
+                    n[FRONT]  = getLocalBlockState(x, localY, z + 1);
+                    n[BACK]   = getLocalBlockState(x, localY, z - 1);
+                }
 
                 // ===== 植物 =====
                 if (blockMeta.isPlant) {

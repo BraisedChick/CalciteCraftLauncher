@@ -618,7 +618,7 @@ void GLRenderer::workerLoop() {
         std::vector<uint32_t> baseIndices, overlayIndices, waterIndices;
         uint32_t totalOverlayIndexCount = 0;
         uint32_t totalWaterIndexCount = 0;
-
+        auto block_start = std::chrono::steady_clock::now();
         for (size_t sectionIdx = 0; sectionIdx < chunk->sections.size(); ++sectionIdx) {
             const auto& section = chunk->sections[sectionIdx];
             if (!section || section->isEmpty) continue;
@@ -667,6 +667,9 @@ void GLRenderer::workerLoop() {
             std::lock_guard<std::mutex> lock(resultMutex);
             resultQueue.push(std::move(result));
         }
+        auto block_end = std::chrono::steady_clock::now();
+        auto block_ms = std::chrono::duration_cast<std::chrono::milliseconds>(block_end - block_start).count();
+        LOGI("Chunk (%d,%d) total mesh generation took %lld ms", item.chunkX, item.chunkZ, block_ms);
     }
 
     LOGI("Mesh worker thread stopped");
