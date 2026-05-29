@@ -15,6 +15,10 @@ glm::vec3 CameraController::getPosition() const {
     return Collision::getInstance().getPosition();
 }
 
+glm::vec3 CameraController::getSmoothPosition() const {
+    return Collision::getInstance().getSmoothPosition();
+}
+
 float CameraController::getPitch() const {
     std::lock_guard<std::mutex> lock(mutex);
     return pitch;

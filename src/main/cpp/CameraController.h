@@ -10,6 +10,7 @@ public:
     }
 
     glm::vec3 getPosition() const;
+    glm::vec3 getSmoothPosition() const;
     float getPitch() const;
     float getYaw() const;
 

@@ -109,7 +109,7 @@ static void renderLoop() {
         }
 
         // 从 CameraController 获取摄像机数据
-        auto pos = CameraController::getInstance().getPosition();
+        auto pos = CameraController::getInstance().getSmoothPosition();
         float pitch = CameraController::getInstance().getPitch();
         float yaw = CameraController::getInstance().getYaw();
 
@@ -355,7 +355,7 @@ Java_com_calcite_MainActivity_renderFrame(
     }
 
     // 从 CameraController 获取摄像机数据
-    auto pos = CameraController::getInstance().getPosition();
+    auto pos = CameraController::getInstance().getSmoothPosition();
     float pitch = CameraController::getInstance().getPitch();
     float yaw = CameraController::getInstance().getYaw();
 

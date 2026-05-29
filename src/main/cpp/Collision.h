@@ -35,6 +35,7 @@ public:
     void setJoystickInput(float dx, float dy);
     void update(float deltaTime, float camPitch, float camYaw);
     glm::vec3 getPosition() const;
+    glm::vec3 getSmoothPosition() const;
     void setPosition(float x, float y, float z);
     void setChunkManager(ChunkManager* mgr);
     bool hasChunkManager() const;
@@ -53,6 +54,7 @@ private:
     float joystickDY = 0.0f;
 
     glm::vec3 position{-176.0f, 65.0f, -56.0f};
+    glm::vec3 prevPosition{-176.0f, 65.0f, -56.0f};
     glm::vec3 velocity{0.0f};
     bool onGround = false;
     float accumulatedTime = 0.0f;

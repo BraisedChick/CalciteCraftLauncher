@@ -70,6 +70,9 @@ void Collision::update(float deltaTime, float camPitch, float camYaw) {
 
     // 固定时间步长累积器（20 ticks/s）
     accumulatedTime += deltaTime;
+    if (accumulatedTime >= TICK_DURATION) {
+        prevPosition = position;
+    }
     while (accumulatedTime >= TICK_DURATION) {
         tick();
         accumulatedTime -= TICK_DURATION;
@@ -315,6 +318,14 @@ float Collision::getBlockHeight(int blockX, int blockY, int blockZ) const {
 glm::vec3 Collision::getPosition() const {
     std::lock_guard<std::mutex> lock(mutex);
     return position;
+}
+
+glm::vec3 Collision::getSmoothPosition() const {
+    std::lock_guard<std::mutex> lock(mutex);
+    float alpha = accumulatedTime / TICK_DURATION;
+    if (alpha < 0.0f) alpha = 0.0f;
+    if (alpha > 1.0f) alpha = 1.0f;
+    return prevPosition + (position - prevPosition) * alpha;
 }
 
 void Collision::setPosition(float x, float y, float z) {
