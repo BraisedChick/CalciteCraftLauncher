@@ -328,6 +328,11 @@ glm::vec3 Collision::getSmoothPosition() const {
     return prevPosition + (position - prevPosition) * alpha;
 }
 
+bool Collision::isOnGround() const {
+    std::lock_guard<std::mutex> lock(mutex);
+    return onGround;
+}
+
 void Collision::setPosition(float x, float y, float z) {
     std::lock_guard<std::mutex> lock(mutex);
     position = glm::vec3(x, y, z);

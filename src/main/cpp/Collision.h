@@ -36,6 +36,7 @@ public:
     void update(float deltaTime, float camPitch, float camYaw);
     glm::vec3 getPosition() const;
     glm::vec3 getSmoothPosition() const;
+    bool isOnGround() const;
     void setPosition(float x, float y, float z);
     void setChunkManager(ChunkManager* mgr);
     bool hasChunkManager() const;

@@ -24,6 +24,7 @@
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundPlayerPositionPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundAcceptTeleportationPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundMovePlayerPacketPosRot.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundMovePlayerPacketStatusOnly.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundClientInformationPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundLoginPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundBlockUpdatePacket.hpp"
@@ -34,6 +35,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <cmath>
 
 ClientEngine::ClientEngine() : chunkManager(nullptr) {}
 
@@ -51,8 +53,8 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
 
     chunkManager = std::make_unique<ChunkManager>();
 
-    NetworkManager net;
-    if (!net.connect(host, port)) {
+    net = std::make_unique<NetworkManager>();
+    if (!net->connect(host, port)) {
         LOGE("Failed to connect to %s:%d", host.c_str(), port);
         return false;
     }
@@ -85,9 +87,9 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
         handshake.Write(writeData);
 
         LOGI("Handshake packet size: %zu bytes", writeData.size());
-        if (!net.sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()))) {
+        if (!sendPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()))) {
             LOGE("Failed to send handshake");
-            net.disconnect();
+            net->disconnect();
             return false;
         }
     }
@@ -103,19 +105,19 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
         loginStart.Write(writeData);
 
         LOGI("LoginStart packet size: %zu bytes", writeData.size());
-        if (!net.sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()))) {
+        if (!sendPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()))) {
             LOGE("Failed to send login start");
-            net.disconnect();
+            net->disconnect();
             return false;
         }
     }
 
     // ========== 登录阶段 - 接收响应 ==========
     while (true) {
-        auto resp = net.receivePacket();
+        auto resp = net->receivePacket();
         if (resp.empty()) {
             LOGE("Empty response during login");
-            net.disconnect();
+            net->disconnect();
             return false;
         }
 
@@ -171,11 +173,11 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
             } catch (...) {
                 LOGE("Disconnected during login (failed to parse reason)");
             }
-            net.disconnect();
+            net->disconnect();
             return false;
         } else {
             LOGE("Unexpected login packet: %d", pid);
-            net.disconnect();
+            net->disconnect();
             return false;
         }
     }
@@ -201,13 +203,16 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
 
         ProtocolCraft::WriteContainer writeData;
         infoPacket.Write(writeData);
-        net.sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+        sendPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
         LOGI("Sent Client Information (ViewDistance=10)");
     }
 
+    // 进入 PLAY 状态，允许发送移动包
+    movementEnabled = true;
+
     // ========== PLAY 状态主循环 ==========
     while (true) {
-        auto resp = net.receivePacket();
+        auto resp = net->receivePacket();
         if (resp.empty()) {
             LOGI("Connection closed");
             break;
@@ -220,14 +225,77 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
         int pid = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(iter, remaining);
         pos = resp.size() - remaining;  // 更新已读取的位置
 
-        handlePlayPacket(net, pid, resp, pos);
+        handlePlayPacket(pid, resp, pos);
     }
 
-    net.disconnect();
+    net->disconnect();
     return true;
 }
 
-void ClientEngine::handlePlayPacket(NetworkManager& net, int packetId,
+bool ClientEngine::sendPacket(const std::vector<uint8_t>& data) {
+    std::lock_guard<std::mutex> lock(netMutex);
+    if (!net) return false;
+    return net->sendRawPacket(data);
+}
+
+bool ClientEngine::isConnected() const {
+    std::lock_guard<std::mutex> lock(netMutex);
+    return net && net->isConnected();
+}
+
+void ClientEngine::sendPlayerMovement(double x, double y, double z, float yaw, float pitch, bool onGround) {
+    if (!movementEnabled.load()) return;
+    std::lock_guard<std::mutex> lock(netMutex);
+    if (!net || !net->isConnected()) return;
+
+    bool posChanged = !lastSent.initialized ||
+                      fabs(x - lastSent.x) > 0.001 ||
+                      fabs(y - lastSent.y) > 0.001 ||
+                      fabs(z - lastSent.z) > 0.001;
+    bool rotChanged = !lastSent.initialized ||
+                      fabs(yaw - lastSent.yaw) > 0.001f ||
+                      fabs(pitch - lastSent.pitch) > 0.001f;
+    bool groundChanged = !lastSent.initialized ||
+                         onGround != lastSent.onGround;
+
+    moveTickCounter++;
+
+    if (posChanged || rotChanged || (groundChanged && moveTickCounter % 4 == 0)) {
+        // 位置、旋转或地面状态变化时发送完整移动包
+        ProtocolCraft::ServerboundMovePlayerPacketPosRot movePacket;
+        movePacket.SetX(x);
+        movePacket.SetY(y);
+        movePacket.SetZ(z);
+        movePacket.SetYRot(yaw);
+        movePacket.SetXRot(pitch);
+        movePacket.SetOnGround(onGround);
+
+        ProtocolCraft::WriteContainer writeData;
+        movePacket.Write(writeData);
+        net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+
+        lastSent.x = x;
+        lastSent.y = y;
+        lastSent.z = z;
+        lastSent.yaw = yaw;
+        lastSent.pitch = pitch;
+        lastSent.onGround = onGround;
+        lastSent.initialized = true;
+        return;
+    }
+
+    // 没有任何变化，每 20 tick 发送一次 StatusOnly 保持地面状态同步
+    if (moveTickCounter % 20 == 0) {
+        ProtocolCraft::ServerboundMovePlayerPacketStatusOnly statusPacket;
+        statusPacket.SetOnGround(onGround);
+
+        ProtocolCraft::WriteContainer writeData;
+        statusPacket.Write(writeData);
+        net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+    }
+}
+
+void ClientEngine::handlePlayPacket(int packetId,
                                     const std::vector<uint8_t>& data, size_t startPos) {
     try {
         switch (packetId) {
@@ -375,7 +443,7 @@ void ClientEngine::handlePlayPacket(NetworkManager& net, int packetId,
                         response.push_back((keepAliveId >> (i * 8)) & 0xFF);
                     }
 
-                    bool sent = net.sendRawPacket(response);
+                    bool sent = sendPacket(response);
                     if (!sent) {
                         LOGE("Failed to send KeepAlive response!");
                     }
@@ -416,7 +484,7 @@ void ClientEngine::handlePlayPacket(NetworkManager& net, int packetId,
                 confirmPacket.Write(writeData);
 
                 LOGI("Sending TeleportConfirm with ID=%d", posPacket.GetId_());
-                net.sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+                sendPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
 
                 // 立即发送位置/姿态包，确认传送完成
                 ProtocolCraft::ServerboundMovePlayerPacketPosRot movePacket;
@@ -431,7 +499,7 @@ void ClientEngine::handlePlayPacket(NetworkManager& net, int packetId,
                 movePacket.Write(moveData);
 
                 LOGI("Sending MovePlayerPacket after teleport");
-                net.sendRawPacket(std::vector<uint8_t>(moveData.begin(), moveData.end()));
+                sendPacket(std::vector<uint8_t>(moveData.begin(), moveData.end()));
                 break;
             }
 

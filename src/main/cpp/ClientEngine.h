@@ -3,6 +3,8 @@
 #include <memory>
 #include <vector>
 #include <cstdint>
+#include <mutex>
+#include <atomic>
 
 class ChunkManager;
 class NetworkManager;
@@ -20,7 +22,7 @@ public:
 
     // 设置渲染器引用
     void setRenderer(GLRenderer* renderer) { glRenderer = renderer; }
-    
+
     // 获取玩家位置
     double getPlayerX() const { return playerX; }
     double getPlayerY() const { return playerY; }
@@ -29,15 +31,24 @@ public:
     float getPitch() const { return pitch; }
     bool hasPlayerPosition() const { return hasPosition; }
 
+    // 发送数据包（线程安全）
+    bool sendPacket(const std::vector<uint8_t>& data);
+    bool isConnected() const;
+
+    // 发送玩家移动更新到服务器
+    void sendPlayerMovement(double x, double y, double z, float yaw, float pitch, bool onGround);
+
 private:
-    void handlePlayPacket(NetworkManager& net, int packetId,
+    void handlePlayPacket(int packetId,
                          const std::vector<uint8_t>& data, size_t startPos);
     void parseChunkDataPacket(const std::vector<uint8_t>& data, size_t startPos);
     size_t calculateNBTSize(const std::vector<uint8_t>& data, size_t startPos);
 
     std::unique_ptr<ChunkManager> chunkManager;
+    std::unique_ptr<NetworkManager> net;
+    mutable std::mutex netMutex;
     GLRenderer* glRenderer = nullptr;
-    
+
     // 玩家位置
     double playerX = 0.0;
     double playerY = 65.0;  // 默认地表高度
@@ -45,8 +56,19 @@ private:
     float yaw = 0.0f;
     float pitch = 0.0f;
     bool hasPosition = false;  // 是否收到过玩家位置
-    
+
     // 维度信息 (Minecraft 1.18+)
     int dimensionMinY = -64;     // 世界最小 Y 坐标（标准 Overworld 为 -64）
     int dimensionHeight = 384;   // 世界高度（标准 Overworld 为 384，范围 -64 到 320）
+
+    // 移动包跟踪（避免重复发送）
+    struct MovementState {
+        double x = 0, y = 0, z = 0;
+        float yaw = 0, pitch = 0;
+        bool onGround = false;
+        bool initialized = false;
+    };
+    MovementState lastSent;
+    int moveTickCounter = 0;
+    std::atomic<bool> movementEnabled{false};
 };

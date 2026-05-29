@@ -104,6 +104,15 @@ static void renderLoop() {
         float camYaw = CameraController::getInstance().getYaw();
         Collision::getInstance().update(deltaTime, camPitch, camYaw);
 
+        // 发送玩家移动数据包到服务器（使用精确物理位置，而非插值位置）
+        if (g_engine) {
+            auto physPos = Collision::getInstance().getPosition();
+            float curPitch = CameraController::getInstance().getPitch();
+            float curYaw = CameraController::getInstance().getYaw();
+            bool onGround = Collision::getInstance().isOnGround();
+            g_engine->sendPlayerMovement(physPos.x, physPos.y, physPos.z, curYaw, curPitch, onGround);
+        }
+
         if (frameCount <= 5 || frameCount % 60 == 0) {
             JNI_LOGI("Rendering frame %d", frameCount);
         }
