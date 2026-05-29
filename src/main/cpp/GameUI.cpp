@@ -11,6 +11,7 @@
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
 #include "CameraController.h"
+#include "Collision.h"
 
 #define LOG_TAG "GameUI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -629,11 +630,11 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
             handleJoystickTouch(pointerId, x, y, action);
         } else if (!isRoleTaken(TouchPoint::UP_BUTTON) && isInUpButtonArea(x, y)) {
             pt->role = TouchPoint::UP_BUTTON;
-            CameraController::getInstance().setKeyState(GAMEKEY_UP, true);
+            Collision::getInstance().setKeyState(GAMEKEY_UP, true);
             buttons.upPressed = true;
         } else if (!isRoleTaken(TouchPoint::DOWN_BUTTON) && isInDownButtonArea(x, y)) {
             pt->role = TouchPoint::DOWN_BUTTON;
-            CameraController::getInstance().setKeyState(GAMEKEY_DOWN, true);
+            Collision::getInstance().setKeyState(GAMEKEY_DOWN, true);
             buttons.downPressed = true;
         } else {
             pt->role = TouchPoint::CAMERA;
@@ -666,11 +667,11 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
             case TouchPoint::CAMERA:
                 break;
             case TouchPoint::UP_BUTTON:
-                CameraController::getInstance().setKeyState(GAMEKEY_UP, false);
+                Collision::getInstance().setKeyState(GAMEKEY_UP, false);
                 buttons.upPressed = false;
                 break;
             case TouchPoint::DOWN_BUTTON:
-                CameraController::getInstance().setKeyState(GAMEKEY_DOWN, false);
+                Collision::getInstance().setKeyState(GAMEKEY_DOWN, false);
                 buttons.downPressed = false;
                 break;
             default:
@@ -697,7 +698,7 @@ void GameUI::handleJoystickTouch(int pointerId, float x, float y, int action) {
             }
             joystick.knobX = dx;
             joystick.knobY = dy;
-            CameraController::getInstance().setJoystickInput(dx / JOYSTICK_MAX_DIST, dy / JOYSTICK_MAX_DIST);
+            Collision::getInstance().setJoystickInput(dx / JOYSTICK_MAX_DIST, dy / JOYSTICK_MAX_DIST);
             break;
         }
         case 2: { // MOVE
@@ -711,7 +712,7 @@ void GameUI::handleJoystickTouch(int pointerId, float x, float y, int action) {
                 }
                 joystick.knobX = dx;
                 joystick.knobY = dy;
-                CameraController::getInstance().setJoystickInput(dx / JOYSTICK_MAX_DIST, dy / JOYSTICK_MAX_DIST);
+                Collision::getInstance().setJoystickInput(dx / JOYSTICK_MAX_DIST, dy / JOYSTICK_MAX_DIST);
             }
             break;
         }
@@ -720,7 +721,7 @@ void GameUI::handleJoystickTouch(int pointerId, float x, float y, int action) {
             joystick.active = false;
             joystick.knobX = 0;
             joystick.knobY = 0;
-            CameraController::getInstance().setJoystickInput(0, 0);
+            Collision::getInstance().setJoystickInput(0, 0);
             break;
     }
 }

@@ -39,6 +39,7 @@ set(SOURCES
     TextureLoader.cpp
     BlockRegistry.cpp
     CameraController.cpp
+    Collision.cpp
     BiomeColorManager.cpp
     GameUI.cpp
     miniz.c

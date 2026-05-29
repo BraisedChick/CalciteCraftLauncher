@@ -14,6 +14,7 @@
 #include "MinecraftVersion.h"
 #include "BlockRegistry.h"
 #include "CameraController.h"
+#include "Collision.h"
 #include "GameUI.h"
 
 #define JNI_LOG_TAG "JNI"
@@ -89,8 +90,19 @@ static void renderLoop() {
         float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
         lastTime = currentTime;
 
-        // 更新摄像机（每帧）
-        CameraController::getInstance().update(deltaTime);
+        // 确保 PlayerController 持有 ChunkManager 引用
+        if (g_engine && !Collision::getInstance().hasChunkManager()) {
+            auto* cm = g_engine->getChunkManager();
+            if (cm) {
+                Collision::getInstance().setChunkManager(cm);
+                JNI_LOGI("PlayerController: ChunkManager acquired from engine");
+            }
+        }
+
+        // 更新玩家物理（传入视角方向计算移动）
+        float camPitch = CameraController::getInstance().getPitch();
+        float camYaw = CameraController::getInstance().getYaw();
+        Collision::getInstance().update(deltaTime, camPitch, camYaw);
 
         if (frameCount <= 5 || frameCount % 60 == 0) {
             JNI_LOGI("Rendering frame %d", frameCount);
@@ -242,6 +254,7 @@ Java_com_calcite_MainActivity_initRenderer(
         // 设置 ChunkManager 和渲染器引用
         if (g_engine) {
             g_glRenderer->setChunkManager(g_engine->getChunkManager());
+            Collision::getInstance().setChunkManager(g_engine->getChunkManager());
             g_engine->setRenderer(g_glRenderer);
             JNI_LOGI("ChunkManager and renderer linked");
 
@@ -274,6 +287,7 @@ Java_com_calcite_MainActivity_initRenderer(
                 g_engine = new ClientEngine();
                 if (g_glRenderer) {
                     g_glRenderer->setChunkManager(g_engine->getChunkManager());
+                    Collision::getInstance().setChunkManager(g_engine->getChunkManager());
                     g_engine->setRenderer(g_glRenderer);
                     JNI_LOGI("Engine and renderer linked");
                 }
@@ -398,7 +412,7 @@ Java_com_calcite_MainActivity_setKeyState(
         JNIEnv* env, jobject thiz,
         jint key, jboolean pressed) {
 
-    CameraController::getInstance().setKeyState((int)key, (bool)pressed);
+    Collision::getInstance().setKeyState((int)key, (bool)pressed);
 }
 
 extern "C" JNIEXPORT void JNICALL
