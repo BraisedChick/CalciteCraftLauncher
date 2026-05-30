@@ -68,11 +68,11 @@ private:
     struct TouchPoint {
         int id = -1;
         bool active = false;
-        enum Role { NONE, JOYSTICK, CAMERA, UP_BUTTON, DOWN_BUTTON };
+        enum Role { NONE, JOYSTICK, CAMERA, UP_BUTTON, DOWN_BUTTON, SPRINT_BUTTON };
         Role role = NONE;
         float cameraLastX = 0, cameraLastY = 0;
     };
-    static const int MAX_TOUCH_POINTS = 4;
+    static const int MAX_TOUCH_POINTS = 6;
     TouchPoint touchPoints[MAX_TOUCH_POINTS];
 
     TouchPoint* findTouchPoint(int id);
@@ -85,6 +85,7 @@ private:
     bool isInJoystickArea(float x, float y) const;
     bool isInUpButtonArea(float x, float y) const;
     bool isInDownButtonArea(float x, float y) const;
+    bool isInSprintButtonArea(float x, float y) const;
 
     UIState currentState = UIState::MAIN_MENU;
     ConnectCallback connectCallback;
@@ -118,5 +119,6 @@ private:
     struct {
         bool upPressed = false;
         bool downPressed = false;
+        bool sprintPressed = false;
     } buttons;
 };

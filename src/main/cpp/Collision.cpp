@@ -14,6 +14,7 @@
 #define KEY_D 3
 #define KEY_UP 4
 #define KEY_DOWN 5
+#define KEY_SPRINT 6
 
 Collision::Collision() {
     LOGI("Collision initialized at (%.2f, %.2f, %.2f)",
@@ -39,6 +40,10 @@ void Collision::setKeyState(int key, bool pressed) {
         case KEY_D: keyD = pressed; break;
         case KEY_UP: jumpPressed = pressed; break;
         case KEY_DOWN: keyDown = pressed; break;
+        case KEY_SPRINT:
+            if (pressed) keySprint = !keySprint;  // 点按切换
+            LOGI("Sprint toggled: %s", keySprint ? "ON" : "OFF");
+            break;
     }
 }
 
@@ -119,10 +124,15 @@ void Collision::tick() {
     }
 
     // ---- 水平输入 → 速度 ----
+    // 疾跑判定：按下疾跑键且正在向前移动
+    bool sprinting = keySprint && (keyW || joystickDY < -0.1f);
+    float accel = sprinting ? SPRINT_MOVE_ACCELERATION : MOVE_ACCELERATION;
+    float speedCap = sprinting ? SPRINT_MOVE_SPEED : MOVE_SPEED;
+
     if (glm::length(moveDir) > 0.001f) {
         moveDir = glm::normalize(moveDir);
-        velocity.x += moveDir.x * MOVE_ACCELERATION;
-        velocity.z += moveDir.z * MOVE_ACCELERATION;
+        velocity.x += moveDir.x * accel;
+        velocity.z += moveDir.z * accel;
     }
 
     // 地面摩擦力 / 空气阻力
@@ -134,11 +144,11 @@ void Collision::tick() {
         velocity.z *= 0.98f;
     }
 
-    // 限制水平速度
+    // 限制水平速度（使用疾跑速度限制）
     float horizSpeed = sqrtf(velocity.x * velocity.x + velocity.z * velocity.z);
-    if (horizSpeed > MOVE_SPEED) {
-        velocity.x = velocity.x / horizSpeed * MOVE_SPEED;
-        velocity.z = velocity.z / horizSpeed * MOVE_SPEED;
+    if (horizSpeed > speedCap) {
+        velocity.x = velocity.x / horizSpeed * speedCap;
+        velocity.z = velocity.z / horizSpeed * speedCap;
     }
 
     // ---- 跳跃（在移动前设置速度）----

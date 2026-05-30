@@ -24,6 +24,7 @@
 #define GAMEKEY_D    3
 #define GAMEKEY_UP   4
 #define GAMEKEY_DOWN 5
+#define GAMEKEY_SPRINT 6
 
 // 服务器列表文件路径
 #define SERVERS_FILE_PATH "/data/data/com.calcite/servers.txt"
@@ -550,6 +551,16 @@ void GameUI::renderInGameUI() {
         ImVec2(btnX - 10, btnDownY - 6),
         ImVec2(btnX + 10, btnDownY - 6),
         IM_COL32(255, 255, 255, 180));
+
+    // 疾跑按钮（下降按钮下方）
+    float btnSprintY = h * 0.5f + BTN_VERTICAL_SPACING;
+    ImU32 sprintCol = buttons.sprintPressed ? IM_COL32(255, 255, 255, 200) : IM_COL32(255, 255, 255, 60);
+    draw->AddCircleFilled(ImVec2(btnX, btnSprintY), BTN_RADIUS, sprintCol);
+    draw->AddCircle(ImVec2(btnX, btnSprintY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
+    // 疾跑图标：省略号 + 箭头 → 简化为三条斜线
+    draw->AddLine(ImVec2(btnX - 8, btnSprintY - 6), ImVec2(btnX + 8, btnSprintY + 2), IM_COL32(255, 255, 255, 180), 3.0f);
+    draw->AddLine(ImVec2(btnX - 8, btnSprintY), ImVec2(btnX + 8, btnSprintY + 6), IM_COL32(255, 255, 255, 180), 3.0f);
+    draw->AddLine(ImVec2(btnX - 8, btnSprintY + 6), ImVec2(btnX + 8, btnSprintY + 10), IM_COL32(255, 255, 255, 180), 3.0f);
 }
 
 bool GameUI::isInJoystickArea(float x, float y) const {
@@ -574,6 +585,15 @@ bool GameUI::isInDownButtonArea(float x, float y) const {
     ImGuiIO& io = ImGui::GetIO();
     float bx = io.DisplaySize.x - BTN_RIGHT_MARGIN;
     float by = io.DisplaySize.y * 0.5f;
+    float dx = x - bx;
+    float dy = y - by;
+    return (dx * dx + dy * dy) <= (BTN_RADIUS * BTN_RADIUS * 1.5f);
+}
+
+bool GameUI::isInSprintButtonArea(float x, float y) const {
+    ImGuiIO& io = ImGui::GetIO();
+    float bx = io.DisplaySize.x - BTN_RIGHT_MARGIN;
+    float by = io.DisplaySize.y * 0.5f + BTN_VERTICAL_SPACING;
     float dx = x - bx;
     float dy = y - by;
     return (dx * dx + dy * dy) <= (BTN_RADIUS * BTN_RADIUS * 1.5f);
@@ -636,6 +656,10 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
             pt->role = TouchPoint::DOWN_BUTTON;
             Collision::getInstance().setKeyState(GAMEKEY_DOWN, true);
             buttons.downPressed = true;
+        } else if (!isRoleTaken(TouchPoint::SPRINT_BUTTON) && isInSprintButtonArea(x, y)) {
+            pt->role = TouchPoint::SPRINT_BUTTON;
+            Collision::getInstance().setKeyState(GAMEKEY_SPRINT, true);
+            buttons.sprintPressed = !buttons.sprintPressed;  // 切换视觉状态
         } else {
             pt->role = TouchPoint::CAMERA;
             handleCameraTouch(pointerId, x, y, action);
@@ -673,6 +697,8 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
             case TouchPoint::DOWN_BUTTON:
                 Collision::getInstance().setKeyState(GAMEKEY_DOWN, false);
                 buttons.downPressed = false;
+                break;
+            case TouchPoint::SPRINT_BUTTON:
                 break;
             default:
                 break;

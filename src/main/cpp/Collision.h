@@ -50,6 +50,7 @@ private:
     bool keyD = false;
     bool keyUp = false;
     bool keyDown = false;
+    bool keySprint = false;
     bool jumpPressed = false;
     float joystickDX = 0.0f;
     float joystickDY = 0.0f;
@@ -71,6 +72,8 @@ private:
     static constexpr float PLAYER_HEIGHT = 1.8f;
     static constexpr float MOVE_SPEED = 0.22f;
     static constexpr float MOVE_ACCELERATION = 0.15f;
+    static constexpr float SPRINT_MOVE_SPEED = 0.30f;
+    static constexpr float SPRINT_MOVE_ACCELERATION = 0.20f;
 
     void tick();
     AABB getPlayerAABB() const;
