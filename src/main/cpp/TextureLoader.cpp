@@ -170,6 +170,43 @@ std::string TextureLoader::readTextFromZip(const std::string& filename) {
     return result;
 }
 
+std::vector<std::pair<std::string, std::string>> TextureLoader::readAllTextFromZip(const std::string& prefix) {
+    std::vector<std::pair<std::string, std::string>> results;
+    if (!g_zipOpen || !g_zip) {
+        LOGE("ZIP not open, cannot batch read: %s", prefix.c_str());
+        return results;
+    }
+
+    mz_zip_archive* zip = static_cast<mz_zip_archive*>(g_zip);
+    int numFiles = mz_zip_reader_get_num_files(zip);
+
+    for (int i = 0; i < numFiles; i++) {
+        char nameBuf[256];
+        mz_uint nameLen = mz_zip_reader_get_filename(zip, i, nameBuf, sizeof(nameBuf));
+        if (nameLen == 0) continue;
+
+        std::string entryName(nameBuf, nameLen);
+        // 检查是否匹配前缀
+        if (entryName.size() <= prefix.size() ||
+            entryName.substr(0, prefix.size()) != prefix) {
+            continue;
+        }
+
+        size_t uncompSize = 0;
+        unsigned char* data = static_cast<unsigned char*>(
+            mz_zip_reader_extract_to_heap(zip, i, &uncompSize, 0));
+        if (!data || uncompSize == 0) continue;
+
+        std::string content(reinterpret_cast<char*>(data), uncompSize);
+        mz_free(data);
+
+        results.emplace_back(std::move(entryName), std::move(content));
+    }
+
+    LOGI("Batch read %zu files from ZIP prefix: %s", results.size(), prefix.c_str());
+    return results;
+}
+
 TextureData TextureLoader::loadPNG(const std::string& filename) {
     TextureData result;
 

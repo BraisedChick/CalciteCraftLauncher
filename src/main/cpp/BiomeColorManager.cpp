@@ -2,6 +2,7 @@
 #include "TextureLoader.h"
 #include <android/log.h>
 #include <algorithm>
+#include <unordered_map>
 
 #define LOG_TAG "BiomeColorManager"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -112,15 +113,33 @@ static int parseJsonInt(const std::string& json, const std::string& key) {
 
 bool BiomeColorManager::loadBiomeDefaults() {
     LOGI("Loading biome defaults from ZIP...");
-    int loaded = 0;
 
+    // 一次遍历 ZIP，读取所有群系 JSON（减少 50+ 次独立 ZIP 查找）
+    auto files = TextureLoader::readAllTextFromZip("worldgen/biome/");
+    if (files.empty()) {
+        LOGW("No biome files found in ZIP at worldgen/biome/");
+        return false;
+    }
+
+    // 构建文件名 → 内容的映射表
+    std::unordered_map<std::string, std::string> biomeFiles;
+    for (auto& [path, content] : files) {
+        // 提取 biome name: "worldgen/biome/plains.json" → "plains"
+        size_t slashPos = path.rfind('/');
+        size_t dotPos = path.rfind('.');
+        if (slashPos == std::string::npos || dotPos == std::string::npos || dotPos <= slashPos) continue;
+        std::string name = path.substr(slashPos + 1, dotPos - slashPos - 1);
+        biomeFiles[std::move(name)] = std::move(content);
+    }
+
+    int loaded = 0;
     int maxId = BIOME_NAME_COUNT < BIOME_COUNT ? BIOME_NAME_COUNT : BIOME_COUNT;
     for (int id = 0; id < maxId; id++) {
         const char* name = BIOME_NAMES[id];
+        auto it = biomeFiles.find(name);
+        if (it == biomeFiles.end()) continue;
 
-        std::string path = "worldgen/biome/" + std::string(name) + ".json";
-        std::string content = TextureLoader::readTextFromZip(path);
-        if (content.empty()) continue;
+        const std::string& content = it->second;
 
         float temp = parseJsonFloat(content, "temperature");
         float downfall = parseJsonFloat(content, "downfall");

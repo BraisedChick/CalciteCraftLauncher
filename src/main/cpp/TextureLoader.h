@@ -50,6 +50,8 @@ public:
     static TextureData loadPNG(const std::string& filename);
     static TextureData loadImage(const std::string& filename);
     static std::string readTextFromZip(const std::string& filename);
+    // 批量读取 ZIP 中指定前缀的所有文本文件（一次遍历，减少 ZIP 查找开销）
+    static std::vector<std::pair<std::string, std::string>> readAllTextFromZip(const std::string& prefix);
     static void closeZip();
 
 private:
