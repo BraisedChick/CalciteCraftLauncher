@@ -74,6 +74,7 @@ private:
     static constexpr float MOVE_ACCELERATION = 0.15f;
     static constexpr float SPRINT_MOVE_SPEED = 0.30f;
     static constexpr float SPRINT_MOVE_ACCELERATION = 0.20f;
+    static constexpr float STEP_HEIGHT = 0.5f;  // 自动踏步最大高度
 
     void tick();
     AABB getPlayerAABB() const;

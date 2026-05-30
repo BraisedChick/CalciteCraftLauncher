@@ -202,8 +202,14 @@ void Collision::tick() {
     velocity.y = preVelY - GRAVITY;
     if (velocity.y < -3.0f) velocity.y = -3.0f;
 
-    // X轴（水平）
+    // 自动踏步标记（如果 X 踏步成功，Z 不再重复抬高）
+    bool steppedUp = false;
+
+    // X轴（水平）— 带自动踏步
     if (velocity.x != 0.0f) {
+        float desiredVelX = velocity.x;
+        float origY = position.y;
+
         AABB box = getPlayerAABB().offset(velocity.x, 0.0f, 0.0f);
         int minBX = (int)floorf(box.minX);
         int maxBX = (int)floorf(box.maxX - 1e-5f);
@@ -234,11 +240,61 @@ void Collision::tick() {
                 }
             }
         }
-    }
-    position.x += velocity.x;
 
-    // Z轴（水平）
+        // 自动踏步：在地面上且被阻挡时，尝试抬腿
+        if (onGround && fabsf(velocity.x) < fabsf(desiredVelX) - 1e-7f) {
+            position.y = origY + STEP_HEIGHT;
+            bool stepClear = true;
+            AABB stepBox = getPlayerAABB().offset(desiredVelX, 0.0f, 0.0f);
+            int sminBX = (int)floorf(stepBox.minX);
+            int smaxBX = (int)floorf(stepBox.maxX - 1e-5f);
+            int sminBY = (int)floorf(stepBox.minY);
+            int smaxBY = (int)floorf(stepBox.maxY - 1e-5f);
+            int sminBZ = (int)floorf(stepBox.minZ);
+            int smaxBZ = (int)floorf(stepBox.maxZ - 1e-5f);
+            for (int by = sminBY; by <= smaxBY && stepClear; by++) {
+                for (int bz = sminBZ; bz <= smaxBZ && stepClear; bz++) {
+                    for (int bx = sminBX; bx <= smaxBX && stepClear; bx++) {
+                        if (!isBlockSolid(bx, by, bz)) continue;
+                        float bh = getBlockHeight(bx, by, bz);
+                        if (bh <= 0.0f) continue;
+                        AABB blockBox((float)bx, (float)by, (float)bz,
+                                      (float)(bx + 1), (float)by + bh, (float)(bz + 1));
+                        if (stepBox.intersects(blockBox)) stepClear = false;
+                    }
+                }
+            }
+            if (stepClear) {
+                // 找到目标位置的实际地面高度，精确落在地面上
+                float newGround = origY;
+                for (int by = (int)floorf(origY); by <= (int)floorf(origY + STEP_HEIGHT); by++) {
+                    for (int bz = sminBZ; bz <= smaxBZ; bz++) {
+                        for (int bx = sminBX; bx <= smaxBX; bx++) {
+                            if (!isBlockSolid(bx, by, bz)) continue;
+                            float bh = getBlockHeight(bx, by, bz);
+                            float top = (float)by + bh;
+                            if (top > newGround && top <= origY + STEP_HEIGHT + 1e-4f) {
+                                newGround = top;
+                            }
+                        }
+                    }
+                }
+                velocity.x = desiredVelX;
+                steppedUp = true;
+                position.y = newGround;
+            } else {
+                position.y = origY;
+            }
+        }
+
+        position.x += velocity.x;
+    }
+
+    // Z轴（水平）— 带自动踏步
     if (velocity.z != 0.0f) {
+        float desiredVelZ = velocity.z;
+        float origY = position.y;
+
         AABB box = getPlayerAABB().offset(0.0f, 0.0f, velocity.z);
         int minBX = (int)floorf(box.minX);
         int maxBX = (int)floorf(box.maxX - 1e-5f);
@@ -269,8 +325,54 @@ void Collision::tick() {
                 }
             }
         }
+
+        // 自动踏步：仅当 X 轴未踏步时尝试（否则 Y 已被抬高，Z 在已抬高位置重测过）
+        if (onGround && !steppedUp && fabsf(velocity.z) < fabsf(desiredVelZ) - 1e-7f) {
+            position.y = origY + STEP_HEIGHT;
+            bool stepClear = true;
+            AABB stepBox = getPlayerAABB().offset(0.0f, 0.0f, desiredVelZ);
+            int sminBX = (int)floorf(stepBox.minX);
+            int smaxBX = (int)floorf(stepBox.maxX - 1e-5f);
+            int sminBY = (int)floorf(stepBox.minY);
+            int smaxBY = (int)floorf(stepBox.maxY - 1e-5f);
+            int sminBZ = (int)floorf(stepBox.minZ);
+            int smaxBZ = (int)floorf(stepBox.maxZ - 1e-5f);
+            for (int by = sminBY; by <= smaxBY && stepClear; by++) {
+                for (int bz = sminBZ; bz <= smaxBZ && stepClear; bz++) {
+                    for (int bx = sminBX; bx <= smaxBX && stepClear; bx++) {
+                        if (!isBlockSolid(bx, by, bz)) continue;
+                        float bh = getBlockHeight(bx, by, bz);
+                        if (bh <= 0.0f) continue;
+                        AABB blockBox((float)bx, (float)by, (float)bz,
+                                      (float)(bx + 1), (float)by + bh, (float)(bz + 1));
+                        if (stepBox.intersects(blockBox)) stepClear = false;
+                    }
+                }
+            }
+            if (stepClear) {
+                // 找到目标位置的实际地面高度
+                float newGround = origY;
+                for (int by = (int)floorf(origY); by <= (int)floorf(origY + STEP_HEIGHT); by++) {
+                    for (int bz = sminBZ; bz <= smaxBZ; bz++) {
+                        for (int bx = sminBX; bx <= smaxBX; bx++) {
+                            if (!isBlockSolid(bx, by, bz)) continue;
+                            float bh = getBlockHeight(bx, by, bz);
+                            float top = (float)by + bh;
+                            if (top > newGround && top <= origY + STEP_HEIGHT + 1e-4f) {
+                                newGround = top;
+                            }
+                        }
+                    }
+                }
+                velocity.z = desiredVelZ;
+                position.y = newGround;
+            } else {
+                position.y = origY;
+            }
+        }
+
+        position.z += velocity.z;
     }
-    position.z += velocity.z;
 
     // ---- 更新地面状态 ----
     if (actualY != preVelY && preVelY < 0) {
