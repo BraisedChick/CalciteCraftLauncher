@@ -39,8 +39,11 @@ public:
         return instance;
     }
 
-    // 从 JSON 文件加载方块数据
-    bool loadFromJson(const std::string& jsonPath);
+    // 从 JSON 字符串加载方块数据
+    bool loadFromJson(const std::string& jsonContent);
+
+    // 从 JSON 字符串加载物品 ID→名称映射
+    bool loadItems(const std::string& jsonContent);
 
     // 根据 blockState ID 获取方块名称
     std::string getBlockName(int32_t blockState) const;
@@ -57,6 +60,9 @@ public:
     // 是否已加载
     bool isLoaded() const { return loaded; }
 
+    // 根据 registry ID 获取物品名称（适用于物品栏中的 itemId）
+    std::string getItemName(int32_t itemId) const;
+
 private:
     BlockRegistry() : loaded(false) {}
 
@@ -65,6 +71,9 @@ private:
 
     // 存储所有方块信息
     std::vector<BlockInfo> blocks;
+
+    // registry ID → 名称映射（物品栏用）
+    std::unordered_map<int32_t, std::string> idToName;
 
     bool loaded;
 

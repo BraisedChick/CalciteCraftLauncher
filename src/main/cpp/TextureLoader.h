@@ -49,6 +49,7 @@ public:
     static void setZipPath(const std::string& path);
     static TextureData loadPNG(const std::string& filename);
     static TextureData loadImage(const std::string& filename);
+    static std::string readTextFromZip(const std::string& filename);
     static void closeZip();
 
 private:

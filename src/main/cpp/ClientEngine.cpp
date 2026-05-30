@@ -29,8 +29,11 @@
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundLoginPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundBlockUpdatePacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundSectionBlocksUpdatePacket.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundContainerSetContentPacket.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundContainerSetSlotPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Types/NBT/Tag.hpp"
 #include "BiomeColorManager.h"
+#include "PlayerInventory.h"
 
 #include <glm/glm.hpp>
 #include <vector>
@@ -654,6 +657,69 @@ void ClientEngine::handlePlayPacket(int packetId,
                 if (glRenderer) {
                     glRenderer->markChunkForUpdate(chunkX, chunkZ);
                 }
+                break;
+            }
+
+            case 0x14: { // Container Set Content（设置容器全部物品）
+                ProtocolCraft::ClientboundContainerSetContentPacket containerPacket;
+                std::vector<unsigned char> packetData(data.begin() + startPos, data.end());
+                auto iter = packetData.cbegin();
+                size_t length = packetData.size();
+                containerPacket.Read(iter, length);
+
+                int containerId = containerPacket.GetContainerId();
+                const auto& items = containerPacket.GetItems();
+
+                std::vector<InvSlot> invSlots;
+                invSlots.reserve(items.size());
+                int nonEmptyCount = 0;
+                for (const auto& slot : items) {
+                    InvSlot is;
+                    is.present = !slot.IsEmptySlot();
+                    if (is.present) {
+                        is.itemId = slot.GetItemId();
+                        is.count = slot.GetItemCount();
+                        nonEmptyCount++;
+                    }
+                    invSlots.push_back(is);
+                }
+
+                PlayerInventory::getInstance().setContent(containerId, invSlots);
+                LOGI("Container Set Content: id=%d, slots=%zu, nonEmpty=%d",
+                     containerId, items.size(), nonEmptyCount);
+                // 日志：前 3 个非空物品
+                int logged = 0;
+                for (size_t i = 0; i < items.size() && logged < 3; i++) {
+                    if (invSlots[i].present) {
+                        LOGI("  slot[%zu]: itemId=%d, count=%d",
+                             i, invSlots[i].itemId, invSlots[i].count);
+                        logged++;
+                    }
+                }
+                break;
+            }
+
+            case 0x16: { // Container Set Slot（设置单个格子）
+                ProtocolCraft::ClientboundContainerSetSlotPacket slotPacket;
+                std::vector<unsigned char> packetData(data.begin() + startPos, data.end());
+                auto iter = packetData.cbegin();
+                size_t length = packetData.size();
+                slotPacket.Read(iter, length);
+
+                int containerId = slotPacket.GetContainerId();
+                int slotIndex = slotPacket.GetSlot();
+                const auto& pcSlot = slotPacket.GetItemStack();
+
+                InvSlot is;
+                is.present = !pcSlot.IsEmptySlot();
+                if (is.present) {
+                    is.itemId = pcSlot.GetItemId();
+                    is.count = pcSlot.GetItemCount();
+                }
+
+                PlayerInventory::getInstance().setSlot(containerId, slotIndex, is);
+                LOGI("Container Set Slot: id=%d, slot=%d, present=%d, itemId=%d, count=%d",
+                     containerId, slotIndex, is.present, is.itemId, is.count);
                 break;
             }
 

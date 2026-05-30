@@ -13,20 +13,22 @@ BiomeColorManager& BiomeColorManager::getInstance() {
     return instance;
 }
 
-bool BiomeColorManager::initialize(AAssetManager* assetManager) {
+bool BiomeColorManager::initialize() {
     if (ready) return true;
     LOGI("Initializing BiomeColorManager...");
 
-    if (!loadColormaps(assetManager)) {
+    if (!loadColormaps()) {
         LOGE("Failed to load colormap PNGs, using fallback defaults");
     }
+
+    loadBiomeDefaults();
 
     ready = true;
     LOGI("BiomeColorManager initialized successfully");
     return true;
 }
 
-bool BiomeColorManager::loadColormaps(AAssetManager* assetManager) {
+bool BiomeColorManager::loadColormaps() {
     // 加载 grass colormap
     {
         TextureData tex = TextureLoader::loadPNG("colormap/grass.png");
@@ -63,6 +65,105 @@ bool BiomeColorManager::loadColormaps(AAssetManager* assetManager) {
     }
 
     return true;
+}
+
+// 1.18.2 默认 biome 注册顺序（name → ID），共 62 个
+static const char* BIOME_NAMES[] = {
+    "ocean", "plains", "desert", "windswept_hills", "forest",
+    "taiga", "swamp", "river", "nether_wastes", "the_end",
+    "frozen_ocean", "frozen_river", "snowy_plains", "snowy_beach",
+    "windswept_gravelly_hills", "flower_forest", "birch_forest",
+    "dark_forest", "old_growth_birch_forest", "old_growth_pine_taiga",
+    "old_growth_spruce_taiga", "snowy_taiga", "savanna",
+    "savanna_plateau", "badlands", "wooded_badlands", "eroded_badlands",
+    "meadow", "grove", "snowy_slopes", "frozen_peaks", "jagged_peaks",
+    "stony_peaks", "mushroom_fields", "dripstone_caves", "lush_caves",
+    "deep_ocean", "deep_cold_ocean", "deep_frozen_ocean",
+    "deep_lukewarm_ocean", "warm_ocean", "lukewarm_ocean", "cold_ocean",
+    "sunflower_plains", "windswept_savanna", "bamboo_jungle", "jungle",
+    "sparse_jungle", "beach", "stony_shore"
+};
+static const int BIOME_NAME_COUNT = sizeof(BIOME_NAMES) / sizeof(BIOME_NAMES[0]);
+
+// 解析 JSON 中的数值（简单实现）
+static float parseJsonFloat(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\":";
+    size_t pos = json.find(search);
+    if (pos == std::string::npos) return -1.0f;
+    pos += search.size();
+    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
+    size_t end = pos;
+    while (end < json.size() && (json[end] == '.' || json[end] == '-' || (json[end] >= '0' && json[end] <= '9'))) end++;
+    if (end == pos) return -1.0f;
+    return std::stof(json.substr(pos, end - pos));
+}
+
+static int parseJsonInt(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\":";
+    size_t pos = json.find(search);
+    if (pos == std::string::npos) return -1;
+    pos += search.size();
+    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
+    char* end = nullptr;
+    long val = strtol(json.c_str() + pos, &end, 10);
+    if (end == json.c_str() + pos) return -1;
+    return (int)val;
+}
+
+bool BiomeColorManager::loadBiomeDefaults() {
+    LOGI("Loading biome defaults from ZIP...");
+    int loaded = 0;
+
+    int maxId = BIOME_NAME_COUNT < BIOME_COUNT ? BIOME_NAME_COUNT : BIOME_COUNT;
+    for (int id = 0; id < maxId; id++) {
+        const char* name = BIOME_NAMES[id];
+
+        std::string path = "worldgen/biome/" + std::string(name) + ".json";
+        std::string content = TextureLoader::readTextFromZip(path);
+        if (content.empty()) continue;
+
+        float temp = parseJsonFloat(content, "temperature");
+        float downfall = parseJsonFloat(content, "downfall");
+
+        if (temp >= 0.0f) biomes[id].temperature = temp;
+        if (downfall >= 0.0f) biomes[id].downfall = downfall;
+
+        // 解析 water_color（在 effects 对象内）
+        std::string effectsKey = "\"effects\":";
+        size_t effectsPos = content.find(effectsKey);
+        if (effectsPos != std::string::npos) {
+            size_t effectsEnd = content.find("}", effectsPos);
+            if (effectsEnd != std::string::npos) {
+                std::string effects = content.substr(effectsPos, effectsEnd - effectsPos + 1);
+                int waterColor = parseJsonInt(effects, "water_color");
+                if (waterColor >= 0) {
+                    biomes[id].hasFixedWaterColor = true;
+                    biomes[id].fixedWaterR = (uint8_t)((waterColor >> 16) & 0xFF);
+                    biomes[id].fixedWaterG = (uint8_t)((waterColor >> 8) & 0xFF);
+                    biomes[id].fixedWaterB = (uint8_t)(waterColor & 0xFF);
+                }
+                int grassColor = parseJsonInt(effects, "grass_color");
+                if (grassColor >= 0) {
+                    biomes[id].hasFixedGrassColor = true;
+                    biomes[id].fixedGrassR = (uint8_t)((grassColor >> 16) & 0xFF);
+                    biomes[id].fixedGrassG = (uint8_t)((grassColor >> 8) & 0xFF);
+                    biomes[id].fixedGrassB = (uint8_t)(grassColor & 0xFF);
+                }
+                int foliageColor = parseJsonInt(effects, "foliage_color");
+                if (foliageColor >= 0) {
+                    biomes[id].hasFixedFoliageColor = true;
+                    biomes[id].fixedFoliageR = (uint8_t)((foliageColor >> 16) & 0xFF);
+                    biomes[id].fixedFoliageG = (uint8_t)((foliageColor >> 8) & 0xFF);
+                    biomes[id].fixedFoliageB = (uint8_t)(foliageColor & 0xFF);
+                }
+            }
+        }
+
+        loaded++;
+    }
+
+    LOGI("Loaded %d biome defaults from ZIP", loaded);
+    return loaded > 0;
 }
 
 void BiomeColorManager::applyServerBiomeMapping(const std::map<int32_t, BiomeEntry>& serverBiomes) {

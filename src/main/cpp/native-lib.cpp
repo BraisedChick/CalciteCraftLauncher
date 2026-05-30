@@ -198,15 +198,21 @@ Java_com_calcite_MainActivity_initRenderer(
     // 加载 BlockRegistry（只加载一次）
     static bool blockRegistryLoaded = false;
     if (!blockRegistryLoaded) {
-        // 从 assets 目录加载 blocks.json
-        std::string blocksJsonPath = "/data/data/com.calcite/blocks.json";
-        JNI_LOGI("Loading BlockRegistry from: %s", blocksJsonPath.c_str());
-
-        if (BlockRegistry::getInstance().loadFromJson(blocksJsonPath)) {
+        // 从 ZIP 压缩包读取 blocks.json
+        std::string blocksJsonContent = TextureLoader::readTextFromZip("blocks.json");
+        if (!blocksJsonContent.empty() && BlockRegistry::getInstance().loadFromJson(blocksJsonContent)) {
             JNI_LOGI("BlockRegistry loaded successfully: %zu blocks",
                      BlockRegistry::getInstance().getBlockCount());
         } else {
             JNI_LOGE("Failed to load BlockRegistry, using fallback mapping");
+        }
+
+        // 加载物品 ID→名称映射（从 ZIP 压缩包读取 items.json）
+        std::string itemsJsonContent = TextureLoader::readTextFromZip("items.json");
+        if (!itemsJsonContent.empty() && BlockRegistry::getInstance().loadItems(itemsJsonContent)) {
+            JNI_LOGI("Items loaded successfully from ZIP");
+        } else {
+            JNI_LOGI("No items.json in ZIP, blocks-only mode");
         }
         blockRegistryLoaded = true;
     }

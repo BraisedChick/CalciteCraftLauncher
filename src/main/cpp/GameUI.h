@@ -86,6 +86,8 @@ private:
     bool isInUpButtonArea(float x, float y) const;
     bool isInDownButtonArea(float x, float y) const;
     bool isInSprintButtonArea(float x, float y) const;
+    // 快捷栏点击检测：返回槽位索引 (0-8)，不在快捷栏区域则返回 -1
+    int hotbarSlotAt(float x, float y) const;
 
     UIState currentState = UIState::MAIN_MENU;
     ConnectCallback connectCallback;

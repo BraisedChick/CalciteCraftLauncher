@@ -12,6 +12,9 @@
 #include "imgui_impl_opengl3.h"
 #include "CameraController.h"
 #include "Collision.h"
+#include "PlayerInventory.h"
+#include "ItemTextureManager.h"
+#include "BlockRegistry.h"
 
 #define LOG_TAG "GameUI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -561,6 +564,77 @@ void GameUI::renderInGameUI() {
     draw->AddLine(ImVec2(btnX - 8, btnSprintY - 6), ImVec2(btnX + 8, btnSprintY + 2), IM_COL32(255, 255, 255, 180), 3.0f);
     draw->AddLine(ImVec2(btnX - 8, btnSprintY), ImVec2(btnX + 8, btnSprintY + 6), IM_COL32(255, 255, 255, 180), 3.0f);
     draw->AddLine(ImVec2(btnX - 8, btnSprintY + 6), ImVec2(btnX + 8, btnSprintY + 10), IM_COL32(255, 255, 255, 180), 3.0f);
+
+    // ===== 快捷栏 =====
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::Begin("Hotbar", nullptr,
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoInputs |
+        ImGuiWindowFlags_NoBackground);
+
+    const float SLOT_SIZE = 50.0f;
+    const float SLOT_GAP = 4.0f;
+    const float HOTBAR_Y = h - 55.0f;
+    float totalW = 9.0f * SLOT_SIZE + 8.0f * SLOT_GAP;
+    float hotbarX = w * 0.5f - totalW * 0.5f;
+
+    // 背景半透明条
+    ImGui::GetWindowDrawList()->AddRectFilled(
+        ImVec2(hotbarX - 6, HOTBAR_Y - 6),
+        ImVec2(hotbarX + totalW + 6, HOTBAR_Y + SLOT_SIZE + 6),
+        IM_COL32(0, 0, 0, 100), 4.0f);
+
+    InvSlot hotbar[9];
+    PlayerInventory::getInstance().getHotbarSlots(hotbar);
+    int selSlot = PlayerInventory::getInstance().getSelectedSlot();
+
+    for (int i = 0; i < 9; i++) {
+        float sx = hotbarX + i * (SLOT_SIZE + SLOT_GAP);
+        // 格子背景
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            ImVec2(sx, HOTBAR_Y),
+            ImVec2(sx + SLOT_SIZE, HOTBAR_Y + SLOT_SIZE),
+            IM_COL32(40, 40, 50, 200), 2.0f);
+
+        // 选中高亮
+        if (i == selSlot) {
+            ImGui::GetWindowDrawList()->AddRect(
+                ImVec2(sx - 2, HOTBAR_Y - 2),
+                ImVec2(sx + SLOT_SIZE + 2, HOTBAR_Y + SLOT_SIZE + 2),
+                IM_COL32(255, 255, 255, 255), 3.0f, 0, 2.5f);
+        }
+
+        if (hotbar[i].present && hotbar[i].itemId > 0) {
+            std::string itemName = BlockRegistry::getInstance().getItemName(hotbar[i].itemId);
+            if (itemName.empty()) {
+                // 物品ID在 items.json 中找不到对应的名字
+                LOGI("Hotbar[%d]: itemId=%d has no name mapping!", i, hotbar[i].itemId);
+            } else {
+                GLuint tex = ItemTextureManager::getInstance().getTexture(itemName);
+                if (tex != 0) {
+                    float pad = 5.0f;
+                    float iconSize = SLOT_SIZE - pad * 2;
+                    ImGui::SetCursorScreenPos(ImVec2(sx + pad, HOTBAR_Y + pad));
+                    ImGui::Image((ImTextureID)(intptr_t)tex, ImVec2(iconSize, iconSize));
+                }
+            }
+
+            // 物品数量
+            if (hotbar[i].count > 1) {
+                char countStr[8];
+                snprintf(countStr, sizeof(countStr), "%d", hotbar[i].count);
+                ImVec2 textSize = ImGui::CalcTextSize(countStr);
+                ImGui::SetCursorScreenPos(ImVec2(
+                    sx + SLOT_SIZE - textSize.x - 4,
+                    HOTBAR_Y + SLOT_SIZE - textSize.y - 2));
+                ImGui::TextColored(ImVec4(1, 1, 1, 1), "%s", countStr);
+            }
+        }
+    }
+
+    ImGui::End();
 }
 
 bool GameUI::isInJoystickArea(float x, float y) const {
@@ -597,6 +671,31 @@ bool GameUI::isInSprintButtonArea(float x, float y) const {
     float dx = x - bx;
     float dy = y - by;
     return (dx * dx + dy * dy) <= (BTN_RADIUS * BTN_RADIUS * 1.5f);
+}
+
+int GameUI::hotbarSlotAt(float x, float y) const {
+    ImGuiIO& io = ImGui::GetIO();
+    float h = io.DisplaySize.y;
+    float w = io.DisplaySize.x;
+    const float SLOT_SIZE = 50.0f;
+    const float SLOT_GAP = 4.0f;
+    const float HOTBAR_Y = h - 55.0f;
+    float totalW = 9.0f * SLOT_SIZE + 8.0f * SLOT_GAP;
+    float hotbarX = w * 0.5f - totalW * 0.5f;
+
+    // 检查是否在快捷栏垂直范围
+    if (y < HOTBAR_Y || y > HOTBAR_Y + SLOT_SIZE) return -1;
+
+    // 找出点中的格子
+    float relX = x - hotbarX;
+    float slotStep = SLOT_SIZE + SLOT_GAP;
+    int slot = (int)(relX / slotStep);
+    if (slot < 0 || slot > 8) return -1;
+
+    float slotX = hotbarX + slot * slotStep;
+    if (x < slotX || x > slotX + SLOT_SIZE) return -1;
+
+    return slot;
 }
 
 GameUI::TouchPoint* GameUI::findTouchPoint(int id) {
@@ -660,6 +759,15 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
             pt->role = TouchPoint::SPRINT_BUTTON;
             Collision::getInstance().setKeyState(GAMEKEY_SPRINT, true);
             buttons.sprintPressed = !buttons.sprintPressed;  // 切换视觉状态
+        } else if (currentState == UIState::IN_GAME) {
+            int hbSlot = hotbarSlotAt(x, y);
+            if (hbSlot >= 0) {
+                // 点击快捷栏格子：选中该槽位
+                PlayerInventory::getInstance().setSelectedSlot(hbSlot);
+            } else {
+                pt->role = TouchPoint::CAMERA;
+                handleCameraTouch(pointerId, x, y, action);
+            }
         } else {
             pt->role = TouchPoint::CAMERA;
             handleCameraTouch(pointerId, x, y, action);

@@ -148,11 +148,7 @@ bool GLRenderer::initialize(ANativeWindow* window) {
 
     // 初始化 BiomeColorManager（加载 colormap 和 biome JSON）
     LOGI("Initializing BiomeColorManager...");
-    if (g_assetManager) {
-        BiomeColorManager::getInstance().initialize(g_assetManager);
-    } else {
-        LOGE("Cannot initialize BiomeColorManager: asset manager not set");
-    }
+    BiomeColorManager::getInstance().initialize();
 
     // 设置纹理参数（必须设置，默认 GL_NEAREST_MIPMAP_LINEAR 在没有 mipmap 时会显示黑色）
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);

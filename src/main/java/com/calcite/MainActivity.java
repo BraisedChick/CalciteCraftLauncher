@@ -37,14 +37,39 @@ public class MainActivity extends Activity {
         android.util.Log.i("MainActivity", "onCreate started");
         android.util.Log.i("MainActivity", "========================================");
 
-        // 复制 blocks.json 从 assets 到 files 目录
-        copyBlocksJsonFromAssets();
-
         // 强制横屏
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
 
         // 启用沉浸式模式
         enableImmersiveMode();
+
+        // 在 SurfaceView 创建前设置 AssetManager 和 ZIP 路径
+        // 否则 initRenderer 触发时资源还没准备好
+        setAssetManager(getAssets());
+
+        // 搜索 resourcepack.zip 的优先级路径列表
+        String[] zipPaths = {
+            // 1. 传统 external storage 路径
+            android.os.Environment.getExternalStorageDirectory().getAbsolutePath()
+                + "/Android/data/com.calcite/resourcepack.zip",
+            // 2. getExternalFilesDir 路径（Android 11+ 推荐）
+            getExternalFilesDir(null).getAbsolutePath() + "/resourcepack.zip",
+            // 3. 内部存储 data 目录
+            getDataDir().getAbsolutePath() + "/resourcepack.zip"
+        };
+
+        boolean zipFound = false;
+        for (String path : zipPaths) {
+            if (new java.io.File(path).exists()) {
+                setTextureZipPath(path);
+                android.util.Log.i("MainActivity", "ZIP loaded from: " + path);
+                zipFound = true;
+                break;
+            }
+        }
+        if (!zipFound) {
+            android.util.Log.w("MainActivity", "ZIP not found at any path, textures may show as purple");
+        }
 
         setContentView(R.layout.activity_main);
 
@@ -65,16 +90,6 @@ public class MainActivity extends Activity {
 
         // 初始化视图
         rendererSurfaceView = findViewById(R.id.gameSurface);
-
-        // 设置 AssetManager（供 C++ 层加载纹理等资源）
-        setAssetManager(getAssets());
-
-        // 设置材质 ZIP 路径
-        String zipPath = android.os.Environment.getExternalStorageDirectory().getAbsolutePath()
-            + "/Android/data/com.calcite/resourcepack.zip";
-        if (new java.io.File(zipPath).exists()) {
-            setTextureZipPath(zipPath);
-        }
 
         // 设置触摸监听器（多点触控支持，统一转发到 C++）
         rendererSurfaceView.setOnTouchListener(new View.OnTouchListener() {
@@ -248,32 +263,6 @@ public class MainActivity extends Activity {
                 }
             }
         });
-    }
-
-    private void copyBlocksJsonFromAssets() {
-        AssetManager assetManager = getAssets();
-        java.io.File destFile = new java.io.File(getDataDir(), "blocks.json");
-
-        if (destFile.exists()) {
-            return;
-        }
-
-        try {
-            java.io.InputStream inputStream = assetManager.open("blocks.json");
-            java.io.FileOutputStream outputStream = new java.io.FileOutputStream(destFile);
-
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-            while ((bytesRead = inputStream.read(buffer)) != -1) {
-                outputStream.write(buffer, 0, bytesRead);
-            }
-
-            inputStream.close();
-            outputStream.flush();
-            outputStream.close();
-        } catch (Exception e) {
-            android.util.Log.e("MainActivity", "Failed to copy blocks.json", e);
-        }
     }
 
     private void saveProtocolVersion(int version) {

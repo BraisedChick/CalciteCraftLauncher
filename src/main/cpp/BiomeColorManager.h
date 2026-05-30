@@ -4,7 +4,6 @@
 #include <vector>
 #include <string>
 #include <map>
-#include <android/asset_manager.h>
 
 // 生物群系颜色管理器
 // 加载 colormap/*.png 和 worldgen/biome/*.json，
@@ -13,8 +12,8 @@ class BiomeColorManager {
 public:
     static BiomeColorManager& getInstance();
 
-    // 初始化：加载 colormap 和 biome 数据（需要 AAssetManager）
-    bool initialize(AAssetManager* assetManager);
+    // 初始化：加载 colormap 和 biome 数据
+    bool initialize();
 
     bool isReady() const { return ready; }
 
@@ -41,7 +40,8 @@ public:
 private:
     BiomeColorManager() = default;
 
-    bool loadColormaps(AAssetManager* assetManager);
+    bool loadColormaps();
+    bool loadBiomeDefaults();
 
     // 从 colormap 采样颜色
     void sampleColor(const std::vector<uint8_t>& colormap, float temperature, float downfall,

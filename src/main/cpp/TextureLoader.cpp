@@ -43,6 +43,9 @@ void TextureLoader::setZipPath(const std::string& path) {
             g_zip = zip;
             g_zipOpen = true;
             LOGI("ZIP opened and cached: %s", g_zipPath.c_str());
+            // 列出 ZIP 前 20 个文件用于调试
+            int numFiles = mz_zip_reader_get_num_files(zip);
+            LOGI("ZIP contains %d files", numFiles);
         } else {
             delete zip;
             LOGE("Failed to open ZIP file: %s", g_zipPath.c_str());
@@ -135,6 +138,35 @@ TextureData TextureLoader::loadFromZip(const std::string& filename) {
     stbi_image_free(imageData);
 
     LOGI("Loaded texture from ZIP: %s (%dx%d)", filename.c_str(), width, height);
+    return result;
+}
+
+std::string TextureLoader::readTextFromZip(const std::string& filename) {
+    if (!g_zipOpen || !g_zip) {
+        LOGE("ZIP not open, cannot read: %s", filename.c_str());
+        return "";
+    }
+
+    mz_zip_archive* zip = static_cast<mz_zip_archive*>(g_zip);
+
+    int foundIndex = mz_zip_reader_locate_file(zip, filename.c_str(), nullptr, 0);
+    if (foundIndex < 0) {
+        LOGE("File not found in ZIP: %s", filename.c_str());
+        return "";
+    }
+
+    size_t uncompSize = 0;
+    unsigned char* data = static_cast<unsigned char*>(
+        mz_zip_reader_extract_to_heap(zip, foundIndex, &uncompSize, 0));
+
+    if (!data || uncompSize == 0) {
+        LOGE("Failed to extract from ZIP: %s", filename.c_str());
+        return "";
+    }
+
+    std::string result(reinterpret_cast<char*>(data), uncompSize);
+    mz_free(data);
+    LOGI("Read text from ZIP: %s (%zu bytes)", filename.c_str(), result.size());
     return result;
 }
 

@@ -2,40 +2,18 @@
 #include "TextureAtlas.h"
 #include <fstream>
 #include <sstream>
+#include <cstdlib>
 #include <android/log.h>
 
 #define LOG_TAG "BlockRegistry"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-bool BlockRegistry::loadFromJson(const std::string& jsonPath) {
-    LOGI("Starting to load blocks from: %s", jsonPath.c_str());
-    
-    // 检查文件是否存在
-    std::ifstream testFile(jsonPath);
-    if (!testFile.good()) {
-        LOGE("blocks.json file does not exist at: %s", jsonPath.c_str());
-        return false;
-    }
-    testFile.close();
-    LOGI("blocks.json file exists, opening for parsing...");
+bool BlockRegistry::loadFromJson(const std::string& json) {
+    LOGI("Loading blocks from JSON string (%zu bytes)", json.size());
 
-    // 读取 JSON 文件
-    std::ifstream file(jsonPath);
-    if (!file.is_open()) {
-        LOGE("Failed to open blocks.json: %s", jsonPath.c_str());
-        return false;
-    }
-
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string json = buffer.str();
-    file.close();
-
-    LOGI("Loaded blocks.json (%zu bytes)", json.size());
-    
     if (json.empty()) {
-        LOGE("blocks.json is empty!");
+        LOGE("blocks.json content is empty!");
         return false;
     }
 
@@ -68,6 +46,9 @@ bool BlockRegistry::loadFromJson(const std::string& jsonPath) {
         // 存储方块信息（先保存索引，避免 vector 重分配导致指针失效）
         size_t blockIndex = blocks.size();
         blocks.push_back(info);
+
+        // registry ID → 名称（物品栏用）
+        idToName[info.id] = info.name;
         
         // 构建 blockState ID → BlockInfo 映射（使用索引而非指针）
         for (int32_t stateId = info.minStateId; stateId <= info.maxStateId; ++stateId) {
@@ -84,9 +65,57 @@ bool BlockRegistry::loadFromJson(const std::string& jsonPath) {
     }
 
     loaded = true;
-    LOGI("Successfully loaded %d blocks with %zu state mappings", 
+    LOGI("Successfully loaded %d blocks with %zu state mappings",
          blockCount, stateToBlock.size());
-    
+
+    return true;
+}
+
+bool BlockRegistry::loadItems(const std::string& json) {
+    if (json.empty()) {
+        LOGE("items.json content is empty");
+        return false;
+    }
+
+    LOGI("Loaded items.json (%zu bytes)", json.size());
+
+    // 解析格式：{"minecraft:name": {"id": value}, ...}
+    size_t pos = 0;
+    int itemCount = 0;
+    size_t keyStart;
+
+    while ((keyStart = json.find("\"minecraft:", pos)) != std::string::npos) {
+        size_t keyEnd = json.find("\"", keyStart + 1);
+        if (keyEnd == std::string::npos) break;
+
+        std::string fullName = json.substr(keyStart + 1, keyEnd - keyStart - 1);
+        std::string shortName = fullName.substr(10); // 去掉 "minecraft:" 前缀
+
+        // 查找 "id": value
+        size_t idPos = json.find("\"id\"", keyEnd);
+        if (idPos == std::string::npos || idPos > keyEnd + 60) break;
+
+        size_t colonPos = json.find(":", idPos);
+        if (colonPos == std::string::npos) break;
+
+        // 跳过空格，读取数字
+        size_t numStart = colonPos + 1;
+        while (numStart < json.size() && (json[numStart] == ' ' || json[numStart] == '\t')) numStart++;
+        if (numStart >= json.size()) break;
+
+        char* endPtr = nullptr;
+        int32_t itemId = (int32_t)strtol(json.c_str() + numStart, &endPtr, 10);
+        if (endPtr == json.c_str() + numStart) break; // 没读到数字
+
+        // items.json 的物品名称覆盖 blocks.json 的同 ID 条目（协议注册 ID 相同）
+        idToName[itemId] = shortName;
+        itemCount++;
+
+        pos = (size_t)(endPtr - json.c_str());
+    }
+
+    LOGI("Loaded %d item name mappings from items.json (total idToName: %zu)",
+         itemCount, idToName.size());
     return true;
 }
 
@@ -379,4 +408,10 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
     }
 
     return meta;
+}
+
+std::string BlockRegistry::getItemName(int32_t itemId) const {
+    auto it = idToName.find(itemId);
+    if (it != idToName.end()) return it->second;
+    return "";
 }
