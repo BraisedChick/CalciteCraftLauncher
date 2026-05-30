@@ -32,6 +32,7 @@
 #include "protocolCraft/include/protocolCraft/Types/NBT/Tag.hpp"
 #include "BiomeColorManager.h"
 
+#include <glm/glm.hpp>
 #include <vector>
 #include <string>
 #include <map>
@@ -266,8 +267,11 @@ void ClientEngine::sendPlayerMovement(double x, double y, double z, float yaw, f
         movePacket.SetX(x);
         movePacket.SetY(y);
         movePacket.SetZ(z);
-        movePacket.SetYRot(yaw);
-        movePacket.SetXRot(pitch);
+        // 转换弧度 → 角度，yaw 归一化到 [-180, 180]
+        float yawDeg = glm::degrees(yaw);
+        if (yawDeg > 180.0f) yawDeg -= 360.0f;
+        movePacket.SetYRot(yawDeg);
+        movePacket.SetXRot(glm::degrees(pitch));
         movePacket.SetOnGround(onGround);
 
         ProtocolCraft::WriteContainer writeData;
