@@ -15,6 +15,8 @@ public:
     ClientEngine();
     ~ClientEngine();
 
+    static ClientEngine* getInstance() { return instance; }
+
     bool start(const std::string& host, int port, const std::string& username);
 
     // 获取 ChunkManager 引用
@@ -38,6 +40,9 @@ public:
     // 发送玩家移动更新到服务器
     void sendPlayerMovement(double x, double y, double z, float yaw, float pitch, bool onGround);
 
+    // 发送手持物品槽位切换（0-8）
+    void sendHeldItemChange(int slot);
+
 private:
     void handlePlayPacket(int packetId,
                          const std::vector<uint8_t>& data, size_t startPos);
@@ -48,6 +53,8 @@ private:
     std::unique_ptr<NetworkManager> net;
     mutable std::mutex netMutex;
     GLRenderer* glRenderer = nullptr;
+
+    static ClientEngine* instance;
 
     // 玩家位置
     double playerX = 0.0;

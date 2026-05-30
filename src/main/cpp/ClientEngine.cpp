@@ -26,6 +26,7 @@
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundMovePlayerPacketPosRot.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundMovePlayerPacketStatusOnly.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundClientInformationPacket.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundSetCarriedItemPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundLoginPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundBlockUpdatePacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundSectionBlocksUpdatePacket.hpp"
@@ -41,7 +42,11 @@
 #include <map>
 #include <cmath>
 
-ClientEngine::ClientEngine() : chunkManager(nullptr) {}
+ClientEngine* ClientEngine::instance = nullptr;
+
+ClientEngine::ClientEngine() : chunkManager(nullptr) {
+    instance = this;
+}
 
 ClientEngine::~ClientEngine() = default;
 
@@ -300,6 +305,19 @@ void ClientEngine::sendPlayerMovement(double x, double y, double z, float yaw, f
         statusPacket.Write(writeData);
         net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
     }
+}
+
+void ClientEngine::sendHeldItemChange(int slot) {
+    if (slot < 0 || slot > 8) return;
+    std::lock_guard<std::mutex> lock(netMutex);
+    if (!net || !net->isConnected()) return;
+
+    ProtocolCraft::ServerboundSetCarriedItemPacket heldPacket;
+    heldPacket.SetSlot(slot);
+
+    ProtocolCraft::WriteContainer writeData;
+    heldPacket.Write(writeData);
+    net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
 }
 
 void ClientEngine::handlePlayPacket(int packetId,

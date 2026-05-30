@@ -13,6 +13,7 @@
 #include "CameraController.h"
 #include "Collision.h"
 #include "PlayerInventory.h"
+#include "ClientEngine.h"
 #include "ItemTextureManager.h"
 #include "BlockRegistry.h"
 
@@ -762,8 +763,9 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
         } else if (currentState == UIState::IN_GAME) {
             int hbSlot = hotbarSlotAt(x, y);
             if (hbSlot >= 0) {
-                // 点击快捷栏格子：选中该槽位
+                // 点击快捷栏格子：选中该槽位并通知服务器
                 PlayerInventory::getInstance().setSelectedSlot(hbSlot);
+                ClientEngine::getInstance()->sendHeldItemChange(hbSlot);
             } else {
                 pt->role = TouchPoint::CAMERA;
                 handleCameraTouch(pointerId, x, y, action);
