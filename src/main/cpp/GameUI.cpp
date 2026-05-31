@@ -34,8 +34,8 @@
 #define SERVERS_FILE_PATH "/data/data/com.calcite/servers.txt"
 
 // 游戏内 UI 布局常量
-#define JOYSTICK_CENTER_X  170.0f
-#define JOYSTICK_CENTER_Y_OFFSET 160.0f  // 距屏幕底部
+#define JOYSTICK_CENTER_X  220.0f
+#define JOYSTICK_CENTER_Y_OFFSET 210.0f  // 距屏幕底部
 #define JOYSTICK_RADIUS    110.0f
 #define JOYSTICK_KNOB_RADIUS 38.0f
 #define JOYSTICK_MAX_DIST  65.0f
