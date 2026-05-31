@@ -12,6 +12,7 @@ import android.os.Bundle;
 import android.provider.OpenableColumns;
 import android.database.Cursor;
 import android.view.View;
+import android.view.WindowManager;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import androidx.core.content.FileProvider;
@@ -44,6 +45,7 @@ public class LauncherActivity extends Activity {
     private static final String KEY_VERSION = "version";
     private static final String KEY_RENDERER = "renderer";
     private static final String KEY_LOGIN_TYPE = "login_type";
+    private static final String KEY_SELECTED_ACCOUNT = "selected_account";
     private static final String KEY_ACCOUNTS = "accounts";
 
     private String username = "Player";
@@ -53,6 +55,7 @@ public class LauncherActivity extends Activity {
 
     private List<Account> accounts = new ArrayList<>();
     private AccountListAdapter accountAdapter;
+    private String selectedAccountUuid = null;
 
     private View pageHome;
     private View pageAccount;
@@ -86,6 +89,11 @@ public class LauncherActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // 允许内容延伸到水滴屏区域（API 28+）
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            getWindow().getAttributes().layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        }
         setContentView(R.layout.activity_launcher);
 
         enableImmersiveMode();
@@ -198,6 +206,22 @@ public class LauncherActivity extends Activity {
 
         ListView listView = pageAccount.findViewById(R.id.accountList);
         accountAdapter = new AccountListAdapter(this, accounts);
+        // 恢复之前选中的账号
+        if (selectedAccountUuid != null) {
+            for (int i = 0; i < accounts.size(); i++) {
+                if (accounts.get(i).getUuid().equals(selectedAccountUuid)) {
+                    accountAdapter.setSelectedPosition(i);
+                    break;
+                }
+            }
+        }
+        // 选中变化时保存
+        accountAdapter.setOnAccountSelectedListener((pos, acc) -> {
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit()
+                .putString(KEY_SELECTED_ACCOUNT, acc.getUuid())
+                .apply();
+        });
         accountAdapter.setOnAccountDeleteListener(position -> {
             accounts.remove(position);
             saveAccounts();
@@ -231,6 +255,10 @@ public class LauncherActivity extends Activity {
             saveAccounts();
             accountAdapter.notifyDataSetChanged();
             accountAdapter.setSelectedPosition(accounts.size() - 1);
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit()
+                .putString(KEY_SELECTED_ACCOUNT, uuid)
+                .apply();
             username = name;
             loginType = "offline";
             savePreferences();
@@ -266,6 +294,8 @@ public class LauncherActivity extends Activity {
             accounts.add(new Account(savedName, "offline", uuid));
             saveAccounts();
         }
+        // 恢复之前选中的账号
+        selectedAccountUuid = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(KEY_SELECTED_ACCOUNT, null);
     }
 
     private void saveAccounts() {

@@ -18,13 +18,22 @@ public class AccountListAdapter extends BaseAdapter {
     private final List<Account> accounts;
     private int selectedPosition = 0;
     private OnAccountDeleteListener deleteListener;
+    private OnAccountSelectedListener selectedListener;
 
     public interface OnAccountDeleteListener {
         void onDelete(int position);
     }
 
+    public interface OnAccountSelectedListener {
+        void onSelected(int position, Account account);
+    }
+
     public void setOnAccountDeleteListener(OnAccountDeleteListener listener) {
         this.deleteListener = listener;
+    }
+
+    public void setOnAccountSelectedListener(OnAccountSelectedListener listener) {
+        this.selectedListener = listener;
     }
 
     public AccountListAdapter(Context context, List<Account> accounts) {
@@ -85,11 +94,13 @@ public class AccountListAdapter extends BaseAdapter {
         radio.setOnClickListener(v -> {
             selectedPosition = position;
             notifyDataSetChanged();
+            if (selectedListener != null) selectedListener.onSelected(position, account);
         });
 
         convertView.setOnClickListener(v -> {
             selectedPosition = position;
             notifyDataSetChanged();
+            if (selectedListener != null) selectedListener.onSelected(position, account);
         });
 
         btnDelete.setOnClickListener(v -> {
