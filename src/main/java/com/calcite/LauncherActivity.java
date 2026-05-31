@@ -6,10 +6,13 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
+import androidx.core.content.FileProvider;
 import android.widget.ListView;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
@@ -24,6 +27,10 @@ import com.calcite.ui.MioTextView;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -49,6 +56,7 @@ public class LauncherActivity extends Activity {
     private View pageAccount;
     private View pageVersion;
     private View pageRenderer;
+    private View pageSettings;
     private View currentPage;
 
     // 右侧启动面板
@@ -56,6 +64,9 @@ public class LauncherActivity extends Activity {
     private MioTextView panelLoginType;
     private MioTextView panelVersion;
     private MioTextView panelRenderer;
+
+    private static final int REQUEST_OPEN_DIR = 1001;
+    private static final int REQUEST_PICK_FILE = 1002;
 
     private static final String[] VERSIONS = {
         "1.8", "1.12",
@@ -112,11 +123,13 @@ public class LauncherActivity extends Activity {
         MioButton btnAccount = findViewById(R.id.btnAccount);
         MioButton btnVersion = findViewById(R.id.btnVersion);
         MioButton btnRenderer = findViewById(R.id.btnRenderer);
+        MioButton btnSettings = findViewById(R.id.btnSettings);
 
         pageHome = findViewById(R.id.pageHome);
         pageAccount = findViewById(R.id.pageAccount);
         pageVersion = findViewById(R.id.pageVersion);
         pageRenderer = findViewById(R.id.pageRenderer);
+        pageSettings = findViewById(R.id.pageSettings);
         currentPage = pageHome;
 
         // 右侧启动面板
@@ -130,12 +143,14 @@ public class LauncherActivity extends Activity {
         fillAccountPage();
         fillVersionPage();
         fillRendererPage();
+        fillSettingsPage();
 
         // 左侧按钮
         btnHome.setOnClickListener(v -> goHome());
         btnAccount.setOnClickListener(v -> switchPage(pageAccount));
         btnVersion.setOnClickListener(v -> switchPage(pageVersion));
         btnRenderer.setOnClickListener(v -> switchPage(pageRenderer));
+        btnSettings.setOnClickListener(v -> switchPage(pageSettings));
 
         updatePanelDisplay();
     }
@@ -314,6 +329,101 @@ public class LauncherActivity extends Activity {
             updatePanelDisplay();
             goHome();
         });
+    }
+
+    // ===== 设置页：资源包管理 =====
+
+    private void fillSettingsPage() {
+        pageSettings.findViewById(R.id.btnOpenResourcepacks).setOnClickListener(v -> openResourcepackDir());
+        pageSettings.findViewById(R.id.btnAddResourcepack).setOnClickListener(v -> pickResourcepackFile());
+    }
+
+    private File getResourcepacksDir() {
+        return getExternalFilesDir(null);
+    }
+
+    private void openResourcepackDir() {
+        File dir = getExternalFilesDir(null);
+        Uri uri = FileProvider.getUriForFile(this, "com.calcite.fileprovider", dir);
+
+        Intent intent = new Intent(Intent.ACTION_SEND);
+        intent.setDataAndType(uri, "*/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+
+        startActivity(Intent.createChooser(intent, "选择文件管理器"));
+    }
+
+    private void pickResourcepackFile() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        // 优先过滤 zip 文件
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
+                "application/zip",
+                "application/x-zip-compressed"
+        });
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(intent, REQUEST_PICK_FILE);
+    }
+
+    private void copyResourcepack(Uri uri) {
+        try {
+            File destDir = getResourcepacksDir();
+            // 从 URI 推断文件名
+            String fileName = "resourcepack.zip";
+            String uriStr = uri.toString();
+            int lastSlash = uriStr.lastIndexOf('/');
+            if (lastSlash >= 0) {
+                String name = uriStr.substring(lastSlash + 1);
+                if (!name.isEmpty()) fileName = name;
+            }
+            // 去掉可能的扩展名以外的内容
+            if (!fileName.contains(".")) fileName += ".zip";
+
+            File destFile = new File(destDir, fileName);
+            int counter = 1;
+            while (destFile.exists()) {
+                String base = fileName.contains(".") ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
+                String ext = fileName.contains(".") ? fileName.substring(fileName.lastIndexOf('.')) : "";
+                destFile = new File(destDir, base + "_" + counter + ext);
+                counter++;
+            }
+
+            try (InputStream in = getContentResolver().openInputStream(uri);
+                 OutputStream out = new FileOutputStream(destFile)) {
+                if (in == null) {
+                    Toast.makeText(this, "无法读取文件", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                byte[] buf = new byte[8192];
+                int len;
+                while ((len = in.read(buf)) > 0) {
+                    out.write(buf, 0, len);
+                }
+            }
+
+            Toast.makeText(this, "资源包已添加: " + destFile.getName(), Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            e.printStackTrace();
+            Toast.makeText(this, "添加资源包失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode != RESULT_OK || data == null) return;
+
+        if (requestCode == REQUEST_PICK_FILE) {
+            Uri uri = data.getData();
+            if (uri != null) {
+                copyResourcepack(uri);
+            }
+        } else if (requestCode == REQUEST_OPEN_DIR) {
+            // 文件管理器已打开，无需处理
+        }
     }
 
     // ===== 持久化 =====
