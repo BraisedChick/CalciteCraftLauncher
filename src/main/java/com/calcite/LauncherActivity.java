@@ -9,6 +9,8 @@ import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.OpenableColumns;
+import android.database.Cursor;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
@@ -371,16 +373,17 @@ public class LauncherActivity extends Activity {
     private void copyResourcepack(Uri uri) {
         try {
             File destDir = getResourcepacksDir();
-            // 从 URI 推断文件名
+            // 通过 ContentResolver 查询真实文件名
             String fileName = "resourcepack.zip";
-            String uriStr = uri.toString();
-            int lastSlash = uriStr.lastIndexOf('/');
-            if (lastSlash >= 0) {
-                String name = uriStr.substring(lastSlash + 1);
-                if (!name.isEmpty()) fileName = name;
+            try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                    if (nameIndex >= 0) {
+                        String name = cursor.getString(nameIndex);
+                        if (name != null && !name.isEmpty()) fileName = name;
+                    }
+                }
             }
-            // 去掉可能的扩展名以外的内容
-            if (!fileName.contains(".")) fileName += ".zip";
 
             File destFile = new File(destDir, fileName);
             int counter = 1;
