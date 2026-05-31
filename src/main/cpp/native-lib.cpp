@@ -11,6 +11,7 @@
 #include "GLRenderer.h"
 #include "utils.h"
 #include "TextureLoader.h"
+#include "ItemTextureManager.h"
 #include "MinecraftVersion.h"
 #include "BlockRegistry.h"
 #include "CameraController.h"
@@ -28,6 +29,7 @@ static bool g_rendererTypeSet = false;  // 标记是否已设置渲染器类型
 static ClientEngine* g_engine = nullptr;
 static bool g_initialized = false;
 static std::atomic<bool> g_rendering(false);
+
 static std::thread g_renderThread;
 static std::string g_username = "Player";
 
@@ -310,18 +312,22 @@ Java_com_calcite_MainActivity_initRenderer(
                 // start() 会阻塞直到断开连接，所以先切换到 IN_GAME
                 GameUI::getInstance().setState(UIState::IN_GAME);
 
-                bool success = g_engine->start(ip, port, g_username);
+                g_engine->start(ip, port, g_username);
 
-                if (!success) {
-                    // 登录失败，回到多人游戏菜单
-                    JNI_LOGE("Connection failed, returning to menu");
-                    GameUI::getInstance().setState(UIState::MULTIPLAYER);
-                } else {
-                    // 正常断开连接，回到主菜单
-                    JNI_LOGI("Disconnected, returning to main menu");
-                    GameUI::getInstance().setState(UIState::MAIN_MENU);
-                }
+                // 断开连接后回到服务器列表
+                JNI_LOGI("Disconnected, returning to server list");
+                auto& ui = GameUI::getInstance();
+                ui.setState(UIState::MULTIPLAYER);
+                ui.setGameMenuOpen(false);
             }).detach();
+        });
+
+        // 设置游戏内菜单断开连接回调
+        GameUI::getInstance().setDisconnectCallback([]() {
+            JNI_LOGI("In-game disconnect requested");
+            if (g_engine) {
+                g_engine->disconnect();
+            }
         });
 
         // 设置退出游戏回调（返回 Java 启动器）
@@ -387,6 +393,9 @@ Java_com_calcite_MainActivity_cleanupRenderer(
         jobject thiz) {
 
     JNI_LOGI("=== cleanupRenderer called ===");
+
+    // 清除 GL 纹理缓存，防止切回前台时纹理 ID 失效变黑
+    ItemTextureManager::getInstance().clear();
 
     if (g_rendering) {
         g_rendering = false;
@@ -551,11 +560,16 @@ Java_com_calcite_MainActivity_onBackPressedNative(
         jobject thiz) {
 
     auto& ui = GameUI::getInstance();
+    if (ui.getState() == UIState::IN_GAME) {
+        // 游戏内：切换菜单打开/关闭
+        ui.setGameMenuOpen(!ui.isGameMenuOpen());
+        return JNI_TRUE;
+    }
     if (ui.getState() == UIState::MULTIPLAYER) {
         ui.setState(UIState::MAIN_MENU);
-        return JNI_TRUE; // 已处理
+        return JNI_TRUE;
     }
-    // MAIN_MENU 或 CONNECTING 或 IN_GAME 时，不处理（让系统默认行为退出）
+    // MAIN_MENU 或 CONNECTING 时，不处理（让系统默认行为退出）
     return JNI_FALSE;
 }
 

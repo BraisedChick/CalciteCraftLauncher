@@ -513,6 +513,11 @@ void GameUI::renderInGameUI() {
     float w = io.DisplaySize.x;
     float h = io.DisplaySize.y;
 
+    if (gameMenuOpen) {
+        renderInGameMenu();
+        return;
+    }
+
     // 使用背景绘制列表（在所有 ImGui 窗口之下）
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
 
@@ -565,6 +570,18 @@ void GameUI::renderInGameUI() {
     draw->AddLine(ImVec2(btnX - 8, btnSprintY - 6), ImVec2(btnX + 8, btnSprintY + 2), IM_COL32(255, 255, 255, 180), 3.0f);
     draw->AddLine(ImVec2(btnX - 8, btnSprintY), ImVec2(btnX + 8, btnSprintY + 6), IM_COL32(255, 255, 255, 180), 3.0f);
     draw->AddLine(ImVec2(btnX - 8, btnSprintY + 6), ImVec2(btnX + 8, btnSprintY + 10), IM_COL32(255, 255, 255, 180), 3.0f);
+
+    // ===== 准星（屏幕中央） =====
+    float cx = w * 0.5f;
+    float cy = h * 0.5f;
+    const float CROSS_SIZE = 16.0f;
+    const float CROSS_GAP = 0.0f;
+    const float CROSS_THICK = 3.0f;
+    ImU32 crossCol = IM_COL32(255, 255, 255, 200);
+    draw->AddLine(ImVec2(cx - CROSS_SIZE, cy), ImVec2(cx - CROSS_GAP, cy), crossCol, CROSS_THICK);
+    draw->AddLine(ImVec2(cx + CROSS_GAP, cy), ImVec2(cx + CROSS_SIZE, cy), crossCol, CROSS_THICK);
+    draw->AddLine(ImVec2(cx, cy - CROSS_SIZE), ImVec2(cx, cy - CROSS_GAP), crossCol, CROSS_THICK);
+    draw->AddLine(ImVec2(cx, cy + CROSS_GAP), ImVec2(cx, cy + CROSS_SIZE), crossCol, CROSS_THICK);
 
     // ===== 快捷栏 =====
     ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -635,6 +652,60 @@ void GameUI::renderInGameUI() {
         }
     }
 
+    ImGui::End();
+}
+
+void GameUI::renderInGameMenu() {
+    ImGuiIO& io = ImGui::GetIO();
+    float w = io.DisplaySize.x;
+    float h = io.DisplaySize.y;
+
+    // 半透明黑色遮罩
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    draw->AddRectFilled(ImVec2(0, 0), ImVec2(w, h), IM_COL32(0, 0, 0, 180));
+
+    // 游戏菜单窗口（包含可点击按钮）
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::Begin("GameMenu", nullptr,
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground);
+
+    const float BTN_W = 220.0f;
+    const float BTN_H = 50.0f;
+    const float SPACING = 20.0f;
+    const float CENTER_X = w * 0.5f;
+    float startY = h * 0.5f - BTN_H * 1.5f - SPACING;
+
+    // 按钮样式
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(50, 50, 50, 220));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(80, 80, 80, 240));
+    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(100, 100, 100, 255));
+
+    // 回到游戏
+    ImGui::SetCursorPos(ImVec2(CENTER_X - BTN_W * 0.5f, startY));
+    if (ImGui::Button("回到游戏", ImVec2(BTN_W, BTN_H))) {
+        gameMenuOpen = false;
+    }
+
+    // 选项
+    ImGui::SetCursorPos(ImVec2(CENTER_X - BTN_W * 0.5f, startY + BTN_H + SPACING));
+    ImGui::Button("选项", ImVec2(BTN_W, BTN_H));
+
+    // 断开连接
+    ImGui::SetCursorPos(ImVec2(CENTER_X - BTN_W * 0.5f, startY + (BTN_H + SPACING) * 2));
+    if (ImGui::Button("断开连接", ImVec2(BTN_W, BTN_H))) {
+        gameMenuOpen = false;
+        if (disconnectCallback) {
+            disconnectCallback();
+        }
+    }
+
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar();
     ImGui::End();
 }
 
@@ -740,6 +811,12 @@ bool GameUI::isRoleTaken(TouchPoint::Role role) const {
 // ===== 多点触控入口 =====
 
 void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
+    // 游戏内菜单打开时，触摸事件交给 ImGui 处理按钮点击
+    if (currentState == UIState::IN_GAME && gameMenuOpen) {
+        queueTouchEvent(x, y, action);
+        return;
+    }
+
     if (action == 0) {
         // DOWN：分配触摸点，根据位置分配角色
         auto* pt = allocTouchPoint(pointerId);

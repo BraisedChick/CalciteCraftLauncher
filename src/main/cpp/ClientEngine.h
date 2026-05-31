@@ -43,6 +43,9 @@ public:
     // 发送手持物品槽位切换（0-8）
     void sendHeldItemChange(int slot);
 
+    // 断开连接（线程安全）
+    void disconnect();
+
 private:
     void handlePlayPacket(int packetId,
                          const std::vector<uint8_t>& data, size_t startPos);

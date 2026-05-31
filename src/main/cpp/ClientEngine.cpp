@@ -320,6 +320,13 @@ void ClientEngine::sendHeldItemChange(int slot) {
     net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
 }
 
+void ClientEngine::disconnect() {
+    std::lock_guard<std::mutex> lock(netMutex);
+    if (net) {
+        net->disconnect();
+    }
+}
+
 void ClientEngine::handlePlayPacket(int packetId,
                                     const std::vector<uint8_t>& data, size_t startPos) {
     try {

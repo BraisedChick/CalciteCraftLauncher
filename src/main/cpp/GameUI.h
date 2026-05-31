@@ -41,7 +41,15 @@ public:
     using ExitCallback = std::function<void()>;
     void setExitCallback(ExitCallback cb) { exitCallback = cb; }
 
+    // 断开连接回调（返回服务器列表）
+    using DisconnectCallback = std::function<void()>;
+    void setDisconnectCallback(DisconnectCallback cb) { disconnectCallback = cb; }
+
     bool isInitialized() const { return initialized; }
+
+    // 游戏内菜单
+    void setGameMenuOpen(bool open) { gameMenuOpen = open; }
+    bool isGameMenuOpen() const { return gameMenuOpen; }
 
 private:
     GameUI() = default;
@@ -58,6 +66,7 @@ private:
     void renderAddServer();
     void renderConnecting();
     void renderInGameUI();
+    void renderInGameMenu();
     void processTouchEvents();
 
     void loadServerList();
@@ -92,6 +101,7 @@ private:
     UIState currentState = UIState::MAIN_MENU;
     ConnectCallback connectCallback;
     ExitCallback exitCallback;
+    DisconnectCallback disconnectCallback;
     std::string connectingAddress;
 
     // 服务器列表
@@ -111,6 +121,9 @@ private:
     };
     std::vector<TouchEvent> touchEvents;
     std::mutex touchMutex;
+
+    // 游戏内菜单状态
+    bool gameMenuOpen = false;
 
     // 游戏内 UI 状态
     struct {
