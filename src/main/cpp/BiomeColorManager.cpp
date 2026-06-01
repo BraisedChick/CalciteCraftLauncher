@@ -144,8 +144,8 @@ bool BiomeColorManager::loadBiomeDefaults() {
         float temp = parseJsonFloat(content, "temperature");
         float downfall = parseJsonFloat(content, "downfall");
 
-        if (temp >= 0.0f) biomes[id].temperature = temp;
-        if (downfall >= 0.0f) biomes[id].downfall = downfall;
+        if (temp != -1.0f) biomes[id].temperature = temp;
+        if (downfall != -1.0f) biomes[id].downfall = downfall;
 
         // 解析 water_color（在 effects 对象内）
         std::string effectsKey = "\"effects\":";
@@ -185,17 +185,38 @@ bool BiomeColorManager::loadBiomeDefaults() {
     return loaded > 0;
 }
 
-void BiomeColorManager::applyServerBiomeMapping(const std::map<int32_t, BiomeEntry>& serverBiomes) {
+void BiomeColorManager::applyServerBiomeMapping(const std::map<std::string, BiomeEntry>& serverBiomes) {
     LOGI("Applying server biome registry mapping with %zu entries", serverBiomes.size());
 
     int loadedCount = 0;
-    for (const auto& [serverId, entry] : serverBiomes) {
-        if (serverId < 0 || serverId >= BIOME_COUNT) {
-            LOGW("Server biome ID %d out of range [0,%d), skipping", serverId, BIOME_COUNT);
+    for (const auto& [name, entry] : serverBiomes) {
+        // 从 "minecraft:ocean" 格式提取名称
+        std::string biomeName = name;
+        size_t colonPos = biomeName.find(':');
+        if (colonPos != std::string::npos) {
+            biomeName = biomeName.substr(colonPos + 1);
+        }
+
+        // 在 BIOME_NAMES 中找到匹配的本地索引
+        int localId = -1;
+        for (int i = 0; i < BIOME_NAME_COUNT; i++) {
+            if (biomeName == BIOME_NAMES[i]) {
+                localId = i;
+                break;
+            }
+        }
+
+        if (localId < 0 || localId >= BIOME_COUNT) {
+            LOGW("Server biome '%s' not found in local BIOME_NAMES, skipping", name.c_str());
             continue;
         }
 
-        biomes[serverId] = entry;
+        biomes[localId] = entry;
+        // TEMP LOG: snowy_taiga after server mapping
+        if (biomeName == "snowy_taiga") {
+            LOGI("TEMP: snowy_taiga after server mapping: localId=%d temp=%.2f downfall=%.2f",
+                 localId, biomes[localId].temperature, biomes[localId].downfall);
+        }
         loadedCount++;
     }
 

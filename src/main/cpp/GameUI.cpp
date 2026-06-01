@@ -662,10 +662,10 @@ void GameUI::renderInGameUI() {
         }
     }
 
-    // ===== 生命值（顶部左侧） =====
+    // ===== 生命值 + 饥饿值（创造模式不显示） =====
     {
         auto* engine = ClientEngine::getInstance();
-        if (engine) {
+        if (engine && engine->getGameMode() != 1) {
             float healthVal = engine->getHealth();
             int foodVal = engine->getFood();
             const float ICON_SIZE = 18.0f;

@@ -34,6 +34,8 @@ public:
     void setKeyState(int key, bool pressed);
     void setJoystickInput(float dx, float dy);
     void update(float deltaTime, float camPitch, float camYaw);
+    void setGameMode(int mode);
+    int getGameMode() const { return gameMode; }
     glm::vec3 getPosition() const;
     glm::vec3 getSmoothPosition() const;
     bool isOnGround() const;
@@ -64,6 +66,9 @@ private:
     float yaw = 0.0f;
     ChunkManager* chunkManager = nullptr;
     mutable std::mutex mutex;
+
+    int gameMode = 0;  // 0=survival, 1=creative, 2=adventure, 3=spectator
+    bool noClip = false;
 
     static constexpr float TICK_DURATION = 1.0f / 20.0f;
     static constexpr float GRAVITY = 0.08f;

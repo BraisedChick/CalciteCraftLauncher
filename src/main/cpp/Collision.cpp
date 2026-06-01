@@ -123,6 +123,28 @@ void Collision::tick() {
         moveDir += right * (joystickDX > 0.1f ? joystickDX : joystickDX);
     }
 
+    // ===== 旁观者模式：无视碰撞，自由飞行 =====
+    if (noClip) {
+        const float SPECTATOR_SPEED = 0.5f;
+        glm::vec3 specDir(0.0f);
+        if (keyW) specDir += front;
+        if (keyS) specDir -= front;
+        if (keyA) specDir -= right;
+        if (keyD) specDir += right;
+        if (fabs(joystickDY) > 0.1f) specDir += front * -joystickDY;
+        if (fabs(joystickDX) > 0.1f) specDir += right * joystickDX;
+        if (glm::length(specDir) > 0.001f) {
+            specDir = glm::normalize(specDir);
+            position += specDir * SPECTATOR_SPEED;
+        }
+        if (jumpPressed) position.y += SPECTATOR_SPEED;
+        if (keyDown) position.y -= SPECTATOR_SPEED;
+        velocity = glm::vec3(0.0f);
+        onGround = false;
+        prevPosition = position;
+        return;
+    }
+
     // ---- 水平输入 → 速度 ----
     // 疾跑判定：按下疾跑键且正在向前移动
     bool sprinting = keySprint && (keyW || joystickDY < -0.1f);
@@ -135,27 +157,51 @@ void Collision::tick() {
         velocity.z += moveDir.z * accel;
     }
 
-    // 地面摩擦力 / 空气阻力
-    if (onGround) {
-        velocity.x *= 0.6f;
-        velocity.z *= 0.6f;
-    } else {
-        velocity.x *= 0.98f;
-        velocity.z *= 0.98f;
-    }
+    // ---- 创造模式飞行 ----
+    bool isFlying = (gameMode == 1 || gameMode == 3);
+    if (isFlying) {
+        // 垂直控制（升/降）
+        if (jumpPressed) velocity.y = 0.4f;
+        else if (keyDown) velocity.y = -0.4f;
+        else velocity.y *= 0.6f;
 
-    // 限制水平速度（使用疾跑速度限制）
-    float horizSpeed = sqrtf(velocity.x * velocity.x + velocity.z * velocity.z);
-    if (horizSpeed > speedCap) {
-        velocity.x = velocity.x / horizSpeed * speedCap;
-        velocity.z = velocity.z / horizSpeed * speedCap;
-    }
-
-    // ---- 跳跃（在移动前设置速度）----
-    if (jumpPressed && onGround) {
-        velocity.y = JUMP_VELOCITY;
+        // 水平：飞行时施加阻力（松开按键后逐渐停下）
+        if (glm::length(moveDir) < 0.001f) {
+            velocity.x *= 0.8f;
+            velocity.z *= 0.8f;
+            if (fabs(velocity.x) < 0.001f) velocity.x = 0.0f;
+            if (fabs(velocity.z) < 0.001f) velocity.z = 0.0f;
+        }
+        speedCap = 0.5f;
+        float hSpeed = sqrtf(velocity.x * velocity.x + velocity.z * velocity.z);
+        if (hSpeed > speedCap) {
+            velocity.x = velocity.x / hSpeed * speedCap;
+            velocity.z = velocity.z / hSpeed * speedCap;
+        }
         onGround = false;
-        jumpPressed = false;
+    } else {
+        // ---- 地面摩擦力 / 空气阻力（仅非飞行）----
+        if (onGround) {
+            velocity.x *= 0.6f;
+            velocity.z *= 0.6f;
+        } else {
+            velocity.x *= 0.98f;
+            velocity.z *= 0.98f;
+        }
+
+        // 限制水平速度
+        float horizSpeed = sqrtf(velocity.x * velocity.x + velocity.z * velocity.z);
+        if (horizSpeed > speedCap) {
+            velocity.x = velocity.x / horizSpeed * speedCap;
+            velocity.z = velocity.z / horizSpeed * speedCap;
+        }
+
+        // ---- 跳跃 ----
+        if (jumpPressed && onGround) {
+            velocity.y = JUMP_VELOCITY;
+            onGround = false;
+            jumpPressed = false;
+        }
     }
 
     // ---- 碰撞处理（原版Minecraft顺序：Y → X → Z，每轴后立即更新位置）----
@@ -163,7 +209,7 @@ void Collision::tick() {
     float preVelY = velocity.y;
 
     // Y轴（垂直优先）
-    if (velocity.y != 0.0f) {
+    if (velocity.y != 0.0f && !isFlying) {
         AABB box = getPlayerAABB().offset(0.0f, velocity.y, 0.0f);
         int minBX = (int)floorf(box.minX);
         int maxBX = (int)floorf(box.maxX - 1e-5f);
@@ -198,9 +244,10 @@ void Collision::tick() {
     float actualY = velocity.y;
     position.y += actualY;
 
-    // 重力（基于碰撞前的速度计算下一 tick 的垂直速度）
-    velocity.y = preVelY - GRAVITY;
-    if (velocity.y < -3.0f) velocity.y = -3.0f;
+    if (!isFlying) {
+        velocity.y = preVelY - GRAVITY;
+        if (velocity.y < -3.0f) velocity.y = -3.0f;
+    }
 
     // 自动踏步标记（如果 X 踏步成功，Z 不再重复抬高）
     bool steppedUp = false;
@@ -451,4 +498,11 @@ void Collision::setPosition(float x, float y, float z) {
     velocity = glm::vec3(0.0f);
     onGround = false;
     LOGI("Player position set to (%.2f, %.2f, %.2f)", x, y, z);
+}
+
+void Collision::setGameMode(int mode) {
+    std::lock_guard<std::mutex> lock(mutex);
+    gameMode = mode;
+    noClip = (mode == 3);
+    LOGI("Game mode set to %d (noClip=%s)", mode, noClip ? "true" : "false");
 }

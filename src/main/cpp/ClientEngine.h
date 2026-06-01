@@ -50,6 +50,7 @@ public:
     float getHealth() const { return health; }
     int getFood() const { return food; }
     float getFoodSaturation() const { return foodSaturation; }
+    int getGameMode() const { return gameMode; }
 
 private:
     void handlePlayPacket(int packetId,
@@ -91,5 +92,8 @@ private:
     float health = 20.0f;
     int food = 20;
     float foodSaturation = 5.0f;
+
+    // 游戏模式
+    int gameMode = 0;
 };
 

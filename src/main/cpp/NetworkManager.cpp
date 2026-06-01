@@ -51,13 +51,9 @@ bool NetworkManager::sendRawPacket(const std::vector<uint8_t>& fullPacketData) {
 
     if (Compression::isEnabled()) {
         int threshold = Compression::getThreshold();
-        LOGI("Sending raw packet, size=%d, compression enabled, threshold=%d",
-             static_cast<int>(fullPacketData.size()), threshold);
-
         // fullPacketData 已经包含了 Packet ID
         if ((int)fullPacketData.size() >= threshold) {
             // 需要压缩
-            LOGI("Compressing raw packet, uncompressed size=%d", static_cast<int>(fullPacketData.size()));
             std::vector<uint8_t> compressed = Compression::compress(fullPacketData);
             if (compressed.empty()) return false;
 
@@ -68,7 +64,6 @@ bool NetworkManager::sendRawPacket(const std::vector<uint8_t>& fullPacketData) {
             packetData.insert(packetData.end(), compressed.begin(), compressed.end());
         } else {
             // 未压缩，结构：[VarInt(0)] [Packet ID + payload]
-            LOGI("Raw packet below threshold, sending uncompressed");
             packetData.push_back(0); // VarInt(0)
             packetData.insert(packetData.end(), fullPacketData.begin(), fullPacketData.end());
         }
@@ -84,7 +79,6 @@ bool NetworkManager::sendRawPacket(const std::vector<uint8_t>& fullPacketData) {
     finalPacket.insert(finalPacket.end(), lenBytes.begin(), lenBytes.end());
     finalPacket.insert(finalPacket.end(), packetData.begin(), packetData.end());
 
-    printBytes(finalPacket, "Sending raw");
     int sent = send(sock, finalPacket.data(), finalPacket.size(), 0);
     return sent == (int)finalPacket.size();
 }

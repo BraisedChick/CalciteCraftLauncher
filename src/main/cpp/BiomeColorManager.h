@@ -30,7 +30,8 @@ public:
     };
 
     // 应用服务器端的 biome 注册表数据（从 LoginPacket RegistryHolder 解析）
-    void applyServerBiomeMapping(const std::map<int32_t, BiomeEntry>& serverBiomes);
+    // 用 name 匹配 BIOME_NAMES 找到本地索引，而非直接使用服务器 ID
+    void applyServerBiomeMapping(const std::map<std::string, BiomeEntry>& serverBiomes);
 
     // 根据 biome ID (0-63, 1.18.2 默认注册顺序) 获取草/树叶/水颜色
     void getGrassColor(int32_t biomeId, uint8_t& r, uint8_t& g, uint8_t& b) const;

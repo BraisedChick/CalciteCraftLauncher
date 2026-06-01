@@ -6,6 +6,7 @@
 #include "utils.h"
 #include "MinecraftVersion.h"
 #include "CameraController.h"
+#include "Collision.h"
 
 // ProtocolCraft 头文件
 #include "protocolCraft/include/protocolCraft/BinaryReadWrite.hpp"
@@ -33,6 +34,8 @@
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundContainerSetContentPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundContainerSetSlotPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundSetHealthPacket.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundGameEventPacket.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundRespawnPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Types/NBT/Tag.hpp"
 #include "BiomeColorManager.h"
 #include "PlayerInventory.h"
@@ -332,7 +335,7 @@ void ClientEngine::handlePlayPacket(int packetId,
                                     const std::vector<uint8_t>& data, size_t startPos) {
     try {
         switch (packetId) {
-            case 0x25: { // Login (Play) - 玩家初始状态
+            case 0x26: { // Login (Play) - 玩家初始状态
                 LOGI("Received ClientboundLoginPacket (Play)");
 
                 ProtocolCraft::ClientboundLoginPacket loginPacket;
@@ -342,9 +345,11 @@ void ClientEngine::handlePlayPacket(int packetId,
 
                 try {
                     loginPacket.Read(iter, length);
+                    gameMode = loginPacket.GetGameType();
+                    Collision::getInstance().setGameMode(gameMode);
                     LOGI("Player ID: %d, GameType: %d",
                          loginPacket.GetPlayerId(),
-                         loginPacket.GetGameType());
+                         gameMode);
 
                     // 从 RegistryHolder 解析服务器端 biome 注册表
                     try {
@@ -356,13 +361,13 @@ void ClientEngine::handlePlayPacket(int packetId,
                                 const auto& value = biomeRegistry["value"];
                                 if (value.is_list_of<ProtocolCraft::NBT::TagCompound>()) {
                                     const auto& entries = value.as_list_of<ProtocolCraft::NBT::TagCompound>();
-                                    std::map<int32_t, BiomeColorManager::BiomeEntry> serverBiomes;
+                                    std::map<std::string, BiomeColorManager::BiomeEntry> serverBiomes;
                                     for (const auto& entry : entries) {
-                                        auto idIt = entry.find("id");
+                                        auto nameIt = entry.find("name");
                                         auto elementIt = entry.find("element");
-                                        if (idIt == entry.end() || elementIt == entry.end()) continue;
+                                        if (nameIt == entry.end() || elementIt == entry.end()) continue;
 
-                                        int32_t id = idIt->second.get<int>();
+                                        std::string biomeName = nameIt->second.get<std::string>();
                                         const auto& element = elementIt->second;
 
                                         BiomeColorManager::BiomeEntry biomeEntry;
@@ -372,10 +377,34 @@ void ClientEngine::handlePlayPacket(int packetId,
                                             const auto& elemCompound = element.get<ProtocolCraft::NBT::TagCompound>();
                                             auto tempIt = elemCompound.find("temperature");
                                             auto downIt = elemCompound.find("downfall");
-                                            if (tempIt != elemCompound.end() && tempIt->second.is<ProtocolCraft::NBT::TagDouble>())
-                                                biomeEntry.temperature = tempIt->second.get<double>();
-                                            if (downIt != elemCompound.end() && downIt->second.is<ProtocolCraft::NBT::TagDouble>())
-                                                biomeEntry.downfall = downIt->second.get<double>();
+                                            if (tempIt != elemCompound.end()) {
+                                                if (tempIt->second.is<ProtocolCraft::NBT::TagDouble>())
+                                                    biomeEntry.temperature = tempIt->second.get<double>();
+                                                else if (tempIt->second.is<ProtocolCraft::NBT::TagFloat>())
+                                                    biomeEntry.temperature = tempIt->second.get<float>();
+                                            }
+                                            if (downIt != elemCompound.end()) {
+                                                if (downIt->second.is<ProtocolCraft::NBT::TagDouble>())
+                                                    biomeEntry.downfall = downIt->second.get<double>();
+                                                else if (downIt->second.is<ProtocolCraft::NBT::TagFloat>())
+                                                    biomeEntry.downfall = downIt->second.get<float>();
+                                            }
+
+                                            // TEMP LOG: snowy_taiga raw hex dump
+                                            if (biomeName == "minecraft:snowy_taiga") {
+                                                ProtocolCraft::WriteContainer hexBuf;
+                                                element.Write(hexBuf);
+                                                std::string hexStr;
+                                                for (size_t i = 0; i < hexBuf.size(); i++) {
+                                                    char buf[4];
+                                                    snprintf(buf, sizeof(buf), "%02x ", hexBuf[i]);
+                                                    hexStr += buf;
+                                                }
+                                                LOGI("TEMP: snowy_taiga element hex (%zu bytes): %s",
+                                                     hexBuf.size(), hexStr.c_str());
+                                                LOGI("TEMP: snowy_taiga parsed: temp=%.2f downfall=%.2f",
+                                                     biomeEntry.temperature, biomeEntry.downfall);
+                                            }
 
                                             // 解析 effects
                                             auto effectsIt = elemCompound.find("effects");
@@ -431,7 +460,7 @@ void ClientEngine::handlePlayPacket(int packetId,
                                             }
                                         }
 
-                                        serverBiomes[id] = biomeEntry;
+                                        serverBiomes[biomeName] = biomeEntry;
                                     }
                                     if (!serverBiomes.empty()) {
                                         LOGI("Applying server biome registry mapping, %zu entries",
@@ -763,9 +792,35 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            default: {
-                // 静默忽略未处理的数据包
+            case 0x1E: { // Game Event（包含游戏模式变更）
+                ProtocolCraft::ClientboundGameEventPacket gameEventPacket;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t len = pktData.size();
+                gameEventPacket.Read(iter, len);
+                if (gameEventPacket.GetType() == 3) {
+                    int newMode = static_cast<int>(gameEventPacket.GetParam());
+                    gameMode = newMode;
+                    Collision::getInstance().setGameMode(newMode);
+                }
+                LOGI("gamemode change");
                 break;
+            }
+
+            case 0x3D: { // Respawn（重生，包含新游戏模式）
+                ProtocolCraft::ClientboundRespawnPacket respawnPacket;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t len = pktData.size();
+                respawnPacket.Read(iter, len);
+                int newMode = respawnPacket.GetPlayerGameType();
+                gameMode = newMode;
+                Collision::getInstance().setGameMode(newMode);
+                LOGI("Respawn: game mode=%d", newMode);
+                break;
+            }
+
+            default: {
             }
         }
     } catch (const std::exception& e) {
