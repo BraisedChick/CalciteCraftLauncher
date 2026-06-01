@@ -154,11 +154,7 @@ static void renderLoop() {
         } else if (g_useVulkan && g_vulkanRenderer) {
             g_vulkanRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
         }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
-
-    JNI_LOGI("Render thread stopped after %d frames", frameCount);
 }
 
 // 辅助函数：通过 JNI 调用 Java 层的 UI 方法（自动附加线程）
@@ -296,6 +292,15 @@ Java_com_calcite_MainActivity_initRenderer(
         JNI_LOGI("OpenGL ES renderer initialized successfully");
     }
 
+    // 初始化后应用保存的 FOV 和渲染距离设置
+    if (g_glRenderer) {
+        g_glRenderer->setFov(GameUI::getInstance().getOptionsFov());
+        JNI_LOGI("Applied saved FOV: %.0f", GameUI::getInstance().getOptionsFov());
+
+        g_glRenderer->setRenderDistance(GameUI::getInstance().getRenderDistance());
+        JNI_LOGI("Applied saved render distance: %d", GameUI::getInstance().getRenderDistance());
+    }
+
     // 设置 ImGui 连接回调（在任意渲染器初始化后）
     if (g_glRenderer) {
         GameUI::getInstance().setConnectCallback([](const std::string& ip, int port) {
@@ -327,6 +332,20 @@ Java_com_calcite_MainActivity_initRenderer(
             JNI_LOGI("In-game disconnect requested");
             if (g_engine) {
                 g_engine->disconnect();
+            }
+        });
+
+        // 设置 FOV 更新回调
+        GameUI::getInstance().setFovCallback([](float fov) {
+            if (g_glRenderer) {
+                g_glRenderer->setFov(fov);
+            }
+        });
+
+        // 设置渲染距离更新回调
+        GameUI::getInstance().setRenderDistanceCallback([](int chunks) {
+            if (g_glRenderer) {
+                g_glRenderer->setRenderDistance(chunks);
             }
         });
 
@@ -561,9 +580,34 @@ Java_com_calcite_MainActivity_onBackPressedNative(
 
     auto& ui = GameUI::getInstance();
     if (ui.getState() == UIState::IN_GAME) {
-        // 游戏内：切换菜单打开/关闭
-        ui.setGameMenuOpen(!ui.isGameMenuOpen());
+        if (ui.isVideoSettingsOpen()) {
+            // 视频设置：返回选项界面
+            ui.setVideoSettingsOpen(false);
+        } else if (ui.isOptionsOpen()) {
+            // 选项界面：返回游戏菜单
+            ui.setOptionsOpen(false);
+        } else if (ui.isGameMenuOpen()) {
+            // 游戏菜单已打开：关闭菜单，返回游戏
+            ui.setGameMenuOpen(false);
+        } else {
+            // 游戏中：打开游戏菜单
+            ui.setGameMenuOpen(true);
+        }
         return JNI_TRUE;
+    }
+    if (ui.getState() == UIState::MAIN_MENU) {
+        if (ui.isVideoSettingsOpen()) {
+            // 视频设置：返回选项界面
+            ui.setVideoSettingsOpen(false);
+            return JNI_TRUE;
+        }
+        if (ui.isOptionsOpen()) {
+            // 选项界面：关闭返回主菜单
+            ui.setOptionsOpen(false);
+            return JNI_TRUE;
+        }
+        // 主菜单其他情况不处理
+        return JNI_FALSE;
     }
     if (ui.getState() == UIState::MULTIPLAYER) {
         ui.setState(UIState::MAIN_MENU);

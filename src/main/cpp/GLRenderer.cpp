@@ -414,8 +414,8 @@ bool GLRenderer::rebuildMeshFromChunks() {
 
     int chunksEnqueued = 0;
 
-    // 摄像机位置（用于视锥体裁剪）
-    glm::vec3 cameraPos(cameraMatrix[12], cameraMatrix[13], cameraMatrix[14]);
+    // 摄像机位置（使用帧开始时保存的实际坐标，而非从视图矩阵提取）
+    glm::vec3 cameraPos(lastCameraX, lastCameraY, lastCameraZ);
 
     // ===== 第一步：处理脏区块（由 markChunkForUpdate 标记的）=====
     std::unordered_set<uint64_t> localDirty;
@@ -818,11 +818,10 @@ void GLRenderer::updateCamera(float cx, float cy, float cz, float pitch, float y
 
     // 5. 透视投影矩阵（与 Botcraft 相同）
     float aspect = (float)screenWidth / screenHeight;
-    float fov = glm::radians(70.0f);  // 70度转弧度
+    float fovRad = glm::radians(fov);  // 使用可调节的 fov 成员
     float nearP = 0.1f;
-    float farP = 1000.0f;
 
-    glm::mat4 projMatrix = glm::perspective(fov, aspect, nearP, farP);
+    glm::mat4 projMatrix = glm::perspective(fovRad, aspect, nearP, farPlane);
 
     // 将 GLM 矩阵复制到数组（列主序）
     memcpy(projectionMatrix, glm::value_ptr(projMatrix), sizeof(float) * 16);
@@ -932,6 +931,11 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         return;
     }
 
+    // 保存当前帧的相机位置（供 rebuildMeshFromChunks 等使用）
+    lastCameraX = cx;
+    lastCameraY = cy;
+    lastCameraZ = cz;
+
     auto& ui = GameUI::getInstance();
 
     // 菜单状态：只渲染 ImGui，不渲染 3D 场景
@@ -1032,6 +1036,16 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
             continue;
         }
 
+        // ===== 距离剔除（基于渲染距离设置）=====
+        float chunkCenterX = renderData.position.x + 8.0f;
+        float chunkCenterZ = renderData.position.z + 8.0f;
+        float dx = chunkCenterX - lastCameraX;
+        float dz = chunkCenterZ - lastCameraZ;
+        float dist = sqrtf(dx * dx + dz * dz);
+        if (dist > farPlane) {
+            continue;
+        }
+
         // ===== 视锥体裁剪：检查区块 AABB 是否在视锥体内 =====
         float minX = renderData.position.x;
         float maxX = minX + 16.0f;
@@ -1084,6 +1098,11 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     for (auto& [chunkKey, renderData] : chunkRenderCache) {
         if (!renderData.visible || renderData.indexCount == 0) continue;
         if (renderData.waterIndexCount == 0) continue;
+        // 距离剔除
+        float cx = renderData.position.x + 8.0f;
+        float cz = renderData.position.z + 8.0f;
+        float dx = cx - lastCameraX, dz = cz - lastCameraZ;
+        if (sqrtf(dx * dx + dz * dz) > farPlane) continue;
         // 视锥体测试
         float minX = renderData.position.x;
         float maxX = minX + 16.0f;
@@ -1105,6 +1124,12 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         for (auto& [chunkKey, renderData] : chunkRenderCache) {
             if (!renderData.visible || renderData.indexCount == 0) continue;
             if (renderData.waterIndexCount == 0) continue;
+
+            // 距离剔除
+            float cx = renderData.position.x + 8.0f;
+            float cz = renderData.position.z + 8.0f;
+            float dx = cx - lastCameraX, dz = cz - lastCameraZ;
+            if (sqrtf(dx * dx + dz * dz) > farPlane) continue;
 
             float minX = renderData.position.x;
             float maxX = minX + 16.0f;
@@ -1159,6 +1184,14 @@ bool GLRenderer::initImGui() {
 
 void GLRenderer::renderUI() {
     GameUI::getInstance().render();
+}
+
+void GLRenderer::setFov(float degrees) {
+    fov = degrees;
+}
+
+void GLRenderer::setRenderDistance(int chunks) {
+    farPlane = chunks * 16.0f;
 }
 
 void GLRenderer::recreateSurface(int width, int height) {

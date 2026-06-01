@@ -73,6 +73,14 @@ public:
     // 设置 ChunkManager 引用
     void setChunkManager(ChunkManager* manager);
 
+    // FOV 控制
+    void setFov(float degrees);
+    float getFov() const { return fov; }
+
+    // 渲染距离控制
+    void setRenderDistance(int chunks);
+    int getRenderDistance() const { return static_cast<int>(farPlane / 16.0f); }
+
     // 从区块数据重建网格，返回 true 表示还有更多区块需要处理
     bool rebuildMeshFromChunks();
     
@@ -211,4 +219,7 @@ private:
     float fov = 70.0f;
     float nearPlane = 0.1f;
     float farPlane = 500.0f;  // 渲染距离
+
+    // 上一帧的相机位置（用于区块加载距离计算）
+    float lastCameraX = 0.0f, lastCameraY = 0.0f, lastCameraZ = 0.0f;
 };

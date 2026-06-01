@@ -193,6 +193,11 @@ void GameUI::render() {
 // ===== 菜单 UI =====
 
 void GameUI::renderMainMenu() {
+    if (optionsOpen) {
+        renderGameOptions();
+        return;
+    }
+
     ImGuiIO& io = ImGui::GetIO();
     float w = io.DisplaySize.x;
     float h = io.DisplaySize.y;
@@ -219,6 +224,7 @@ void GameUI::renderMainMenu() {
 
     ImGui::SetCursorPos(ImVec2(w * 0.5f - btnW * 0.5f, startY + (btnH + spacing) * 1));
     if (ImGui::Button("选项", ImVec2(btnW, btnH))) {
+        optionsOpen = true;
     }
 
     ImGui::SetCursorPos(ImVec2(w * 0.5f - btnW * 0.5f, startY + (btnH + spacing) * 2));
@@ -513,6 +519,10 @@ void GameUI::renderInGameUI() {
     float w = io.DisplaySize.x;
     float h = io.DisplaySize.y;
 
+    if (optionsOpen) {
+        renderGameOptions();
+        return;
+    }
     if (gameMenuOpen) {
         renderInGameMenu();
         return;
@@ -693,7 +703,9 @@ void GameUI::renderInGameMenu() {
 
     // 选项
     ImGui::SetCursorPos(ImVec2(CENTER_X - BTN_W * 0.5f, startY + BTN_H + SPACING));
-    ImGui::Button("选项", ImVec2(BTN_W, BTN_H));
+    if (ImGui::Button("选项", ImVec2(BTN_W, BTN_H))) {
+        optionsOpen = true;
+    }
 
     // 断开连接
     ImGui::SetCursorPos(ImVec2(CENTER_X - BTN_W * 0.5f, startY + (BTN_H + SPACING) * 2));
@@ -706,6 +718,148 @@ void GameUI::renderInGameMenu() {
 
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar();
+    ImGui::End();
+}
+
+void GameUI::renderGameOptions() {
+    if (videoSettingsOpen) {
+        renderVideoSettings();
+        return;
+    }
+
+    ImGuiIO& io = ImGui::GetIO();
+    float w = io.DisplaySize.x;
+    float h = io.DisplaySize.y;
+
+    // 半透明黑色遮罩
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    draw->AddRectFilled(ImVec2(0, 0), ImVec2(w, h), IM_COL32(0, 0, 0, 180));
+
+    // 选项窗口
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::Begin("GameOptions", nullptr,
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground);
+
+    const float PANEL_W = 300.0f;
+    const float PANEL_H = 260.0f;
+    float panelX = w * 0.5f - PANEL_W * 0.5f;
+    float panelY = h * 0.5f - PANEL_H * 0.5f;
+
+    // 面板背景
+    ImGui::GetWindowDrawList()->AddRectFilled(
+        ImVec2(panelX, panelY),
+        ImVec2(panelX + PANEL_W, panelY + PANEL_H),
+        IM_COL32(40, 40, 50, 220), 8.0f);
+    ImGui::GetWindowDrawList()->AddRect(
+        ImVec2(panelX, panelY),
+        ImVec2(panelX + PANEL_W, panelY + PANEL_H),
+        IM_COL32(100, 100, 120, 255), 8.0f);
+
+    // FOV 滑块
+    ImGui::SetCursorPos(ImVec2(panelX + 20, panelY + 30));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(60, 60, 70, 200));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrab, IM_COL32(120, 180, 255, 220));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, IM_COL32(150, 200, 255, 255));
+    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
+
+    ImGui::SetNextItemWidth(PANEL_W - 40);
+    if (ImGui::SliderFloat("##fov", &optionsFov, 30.0f, 120.0f, "视场角: %.0f°")) {
+        if (fovCallback) fovCallback(optionsFov);
+    }
+
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar();
+
+    // 视频设置按钮
+    ImGui::SetCursorPos(ImVec2(panelX + PANEL_W * 0.5f - 100.0f, panelY + 95));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(50, 50, 50, 220));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(80, 80, 80, 240));
+    if (ImGui::Button("视频设置", ImVec2(200, 40))) {
+        videoSettingsOpen = true;
+    }
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar();
+
+    // 完成按钮
+    ImGui::SetCursorPos(ImVec2(panelX + PANEL_W * 0.5f - 60.0f, panelY + PANEL_H - 50));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(50, 50, 50, 220));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(80, 80, 80, 240));
+    if (ImGui::Button("完成", ImVec2(120, 40))) {
+        optionsOpen = false;
+    }
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar();
+
+    ImGui::End();
+}
+
+void GameUI::renderVideoSettings() {
+    ImGuiIO& io = ImGui::GetIO();
+    float w = io.DisplaySize.x;
+    float h = io.DisplaySize.y;
+
+    // 半透明黑色遮罩
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    draw->AddRectFilled(ImVec2(0, 0), ImVec2(w, h), IM_COL32(0, 0, 0, 180));
+
+    // 视频设置窗口
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::Begin("VideoSettings", nullptr,
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground);
+
+    const float PANEL_W = 300.0f;
+    const float PANEL_H = 200.0f;
+    float panelX = w * 0.5f - PANEL_W * 0.5f;
+    float panelY = h * 0.5f - PANEL_H * 0.5f;
+
+    // 面板背景
+    ImGui::GetWindowDrawList()->AddRectFilled(
+        ImVec2(panelX, panelY),
+        ImVec2(panelX + PANEL_W, panelY + PANEL_H),
+        IM_COL32(40, 40, 50, 220), 8.0f);
+    ImGui::GetWindowDrawList()->AddRect(
+        ImVec2(panelX, panelY),
+        ImVec2(panelX + PANEL_W, panelY + PANEL_H),
+        IM_COL32(100, 100, 120, 255), 8.0f);
+
+    // 渲染距离滑块
+    ImGui::SetCursorPos(ImVec2(panelX + 20, panelY + 40));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(60, 60, 70, 200));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrab, IM_COL32(120, 180, 255, 220));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, IM_COL32(150, 200, 255, 255));
+    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
+
+    ImGui::SetNextItemWidth(PANEL_W - 40);
+    int rd = renderDistance;
+    if (ImGui::SliderInt("##renderDist", &rd, 2, 20, "渲染距离: %d 区块")) {
+        renderDistance = rd;
+        if (renderDistanceCallback) renderDistanceCallback(renderDistance);
+    }
+
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar();
+
+    // 完成按钮
+    ImGui::SetCursorPos(ImVec2(panelX + PANEL_W * 0.5f - 60.0f, panelY + PANEL_H - 55));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(50, 50, 50, 220));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(80, 80, 80, 240));
+    if (ImGui::Button("完成", ImVec2(120, 40))) {
+        videoSettingsOpen = false;
+    }
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar();
+
     ImGui::End();
 }
 
@@ -811,8 +965,8 @@ bool GameUI::isRoleTaken(TouchPoint::Role role) const {
 // ===== 多点触控入口 =====
 
 void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
-    // 游戏内菜单打开时，触摸事件交给 ImGui 处理按钮点击
-    if (currentState == UIState::IN_GAME && gameMenuOpen) {
+    // 游戏内菜单或选项打开时，触摸事件交给 ImGui 处理
+    if (currentState == UIState::IN_GAME && (gameMenuOpen || optionsOpen)) {
         queueTouchEvent(x, y, action);
         return;
     }

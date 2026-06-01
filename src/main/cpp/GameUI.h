@@ -51,6 +51,26 @@ public:
     void setGameMenuOpen(bool open) { gameMenuOpen = open; }
     bool isGameMenuOpen() const { return gameMenuOpen; }
 
+    // 选项界面
+    void setOptionsOpen(bool open) { optionsOpen = open; }
+    bool isOptionsOpen() const { return optionsOpen; }
+    float getOptionsFov() const { return optionsFov; }
+
+    // 视频设置
+    void setVideoSettingsOpen(bool open) { videoSettingsOpen = open; }
+    bool isVideoSettingsOpen() const { return videoSettingsOpen; }
+    int getRenderDistance() const { return renderDistance; }
+
+    // FOV 更新回调
+    using FovCallback = std::function<void(float)>;
+    void setFovCallback(FovCallback cb) { fovCallback = cb; }
+    FovCallback fovCallback;
+
+    // 渲染距离回调
+    using RenderDistanceCallback = std::function<void(int)>;
+    void setRenderDistanceCallback(RenderDistanceCallback cb) { renderDistanceCallback = cb; }
+    RenderDistanceCallback renderDistanceCallback;
+
 private:
     GameUI() = default;
     ~GameUI() = default;
@@ -67,6 +87,8 @@ private:
     void renderConnecting();
     void renderInGameUI();
     void renderInGameMenu();
+    void renderGameOptions();
+    void renderVideoSettings();
     void processTouchEvents();
 
     void loadServerList();
@@ -124,6 +146,10 @@ private:
 
     // 游戏内菜单状态
     bool gameMenuOpen = false;
+    bool optionsOpen = false;
+    float optionsFov = 70.0f;
+    bool videoSettingsOpen = false;
+    int renderDistance = 10;
 
     // 游戏内 UI 状态
     struct {
