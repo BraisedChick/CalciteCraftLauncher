@@ -46,6 +46,11 @@ public:
     // 断开连接（线程安全）
     void disconnect();
 
+    // 玩家生命/饥饿值
+    float getHealth() const { return health; }
+    int getFood() const { return food; }
+    float getFoodSaturation() const { return foodSaturation; }
+
 private:
     void handlePlayPacket(int packetId,
                          const std::vector<uint8_t>& data, size_t startPos);
@@ -81,4 +86,10 @@ private:
     MovementState lastSent;
     int moveTickCounter = 0;
     std::atomic<bool> movementEnabled{false};
+
+    // 玩家生命/饥饿值
+    float health = 20.0f;
+    int food = 20;
+    float foodSaturation = 5.0f;
 };
+

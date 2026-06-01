@@ -32,6 +32,7 @@
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundSectionBlocksUpdatePacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundContainerSetContentPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundContainerSetSlotPacket.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundSetHealthPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Types/NBT/Tag.hpp"
 #include "BiomeColorManager.h"
 #include "PlayerInventory.h"
@@ -745,6 +746,20 @@ void ClientEngine::handlePlayPacket(int packetId,
                 PlayerInventory::getInstance().setSlot(containerId, slotIndex, is);
                 LOGI("Container Set Slot: id=%d, slot=%d, present=%d, itemId=%d, count=%d",
                      containerId, slotIndex, is.present, is.itemId, is.count);
+                break;
+            }
+
+            case 0x52: { // Set Health（玩家生命/饥饿值更新）
+                ProtocolCraft::ClientboundSetHealthPacket healthPacket;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t len = pktData.size();
+                healthPacket.Read(iter, len);
+                health = healthPacket.GetHealth();
+                food = healthPacket.GetFood();
+                foodSaturation = healthPacket.GetFoodSaturation();
+                LOGI("Health: %.1f, Food: %d, Saturation: %.1f",
+                     health, food, foodSaturation);
                 break;
             }
 

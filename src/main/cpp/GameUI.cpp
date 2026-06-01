@@ -14,7 +14,7 @@
 #include "Collision.h"
 #include "PlayerInventory.h"
 #include "ClientEngine.h"
-#include "ItemTextureManager.h"
+#include "ResourcepackManager.h"
 #include "BlockRegistry.h"
 
 #define LOG_TAG "GameUI"
@@ -640,7 +640,7 @@ void GameUI::renderInGameUI() {
                 // 物品ID在 items.json 中找不到对应的名字
                 LOGI("Hotbar[%d]: itemId=%d has no name mapping!", i, hotbar[i].itemId);
             } else {
-                GLuint tex = ItemTextureManager::getInstance().getTexture(itemName);
+                GLuint tex = ResourcepackManager::getInstance().getItemTexture(itemName);
                 if (tex != 0) {
                     float pad = 5.0f;
                     float iconSize = SLOT_SIZE - pad * 2;
@@ -658,6 +658,68 @@ void GameUI::renderInGameUI() {
                     sx + SLOT_SIZE - textSize.x - 4,
                     HOTBAR_Y + SLOT_SIZE - textSize.y - 2));
                 ImGui::TextColored(ImVec4(1, 1, 1, 1), "%s", countStr);
+            }
+        }
+    }
+
+    // ===== 生命值（顶部左侧） =====
+    {
+        auto* engine = ClientEngine::getInstance();
+        if (engine) {
+            float healthVal = engine->getHealth();
+            int foodVal = engine->getFood();
+            const float ICON_SIZE = 18.0f;
+            const float GAP = 1.0f;
+            const float HUD_Y = h - 55.0f - ICON_SIZE - 6.0f;  // 快捷栏上方
+
+            GLuint hContainer = ResourcepackManager::getInstance().getHudTexture("heart/container");
+            GLuint hFull = ResourcepackManager::getInstance().getHudTexture("heart/full");
+            GLuint hHalf = ResourcepackManager::getInstance().getHudTexture("heart/half");
+
+            for (int i = 0; i < 10; i++) {
+                float hx = hotbarX + i * (ICON_SIZE + GAP);
+                if (hContainer) {
+                    ImGui::GetWindowDrawList()->AddImage(
+                        (ImTextureID)(intptr_t)hContainer,
+                        ImVec2(hx, HUD_Y), ImVec2(hx + ICON_SIZE, HUD_Y + ICON_SIZE));
+                }
+                float remain = healthVal - i * 2.0f;
+                if (remain >= 2.0f && hFull) {
+                    ImGui::GetWindowDrawList()->AddImage(
+                        (ImTextureID)(intptr_t)hFull,
+                        ImVec2(hx, HUD_Y), ImVec2(hx + ICON_SIZE, HUD_Y + ICON_SIZE));
+                } else if (remain >= 1.0f && hHalf) {
+                    ImGui::GetWindowDrawList()->AddImage(
+                        (ImTextureID)(intptr_t)hHalf,
+                        ImVec2(hx, HUD_Y), ImVec2(hx + ICON_SIZE, HUD_Y + ICON_SIZE));
+                }
+            }
+
+            // ===== 饥饿值（顶部右侧） =====
+            GLuint fEmpty = ResourcepackManager::getInstance().getHudTexture("food_empty");
+            GLuint fFull = ResourcepackManager::getInstance().getHudTexture("food_full");
+            GLuint fHalf = ResourcepackManager::getInstance().getHudTexture("food_half");
+
+            float totalWFood = 10.0f * (ICON_SIZE + GAP) - GAP;
+            float foodStartX = hotbarX + totalW - totalWFood;
+
+            for (int i = 0; i < 10; i++) {
+                float fx = foodStartX + i * (ICON_SIZE + GAP);
+                if (fEmpty) {
+                    ImGui::GetWindowDrawList()->AddImage(
+                        (ImTextureID)(intptr_t)fEmpty,
+                        ImVec2(fx, HUD_Y), ImVec2(fx + ICON_SIZE, HUD_Y + ICON_SIZE));
+                }
+                int remain = foodVal - i * 2;
+                if (remain >= 2 && fFull) {
+                    ImGui::GetWindowDrawList()->AddImage(
+                        (ImTextureID)(intptr_t)fFull,
+                        ImVec2(fx, HUD_Y), ImVec2(fx + ICON_SIZE, HUD_Y + ICON_SIZE));
+                } else if (remain >= 1 && fHalf) {
+                    ImGui::GetWindowDrawList()->AddImage(
+                        (ImTextureID)(intptr_t)fHalf,
+                        ImVec2(fx, HUD_Y), ImVec2(fx + ICON_SIZE, HUD_Y + ICON_SIZE));
+                }
             }
         }
     }

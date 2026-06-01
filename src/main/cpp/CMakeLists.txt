@@ -42,7 +42,7 @@ set(SOURCES
     Collision.cpp
     BiomeColorManager.cpp
     GameUI.cpp
-    ItemTextureManager.cpp
+    ResourcepackManager.cpp
     PlayerInventory.cpp
     miniz.c
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui.cpp

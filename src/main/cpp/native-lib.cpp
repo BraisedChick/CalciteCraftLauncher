@@ -11,7 +11,7 @@
 #include "GLRenderer.h"
 #include "utils.h"
 #include "TextureLoader.h"
-#include "ItemTextureManager.h"
+#include "ResourcepackManager.h"
 #include "MinecraftVersion.h"
 #include "BlockRegistry.h"
 #include "CameraController.h"
@@ -414,7 +414,7 @@ Java_com_calcite_MainActivity_cleanupRenderer(
     JNI_LOGI("=== cleanupRenderer called ===");
 
     // 清除 GL 纹理缓存，防止切回前台时纹理 ID 失效变黑
-    ItemTextureManager::getInstance().clear();
+    ResourcepackManager::getInstance().clear();
 
     if (g_rendering) {
         g_rendering = false;
