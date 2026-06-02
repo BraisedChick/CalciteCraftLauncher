@@ -212,15 +212,33 @@ void BiomeColorManager::applyServerBiomeMapping(const std::map<std::string, Biom
         }
 
         biomes[localId] = entry;
-        // TEMP LOG: snowy_taiga after server mapping
-        if (biomeName == "snowy_taiga") {
-            LOGI("TEMP: snowy_taiga after server mapping: localId=%d temp=%.2f downfall=%.2f",
-                 localId, biomes[localId].temperature, biomes[localId].downfall);
-        }
         loadedCount++;
     }
 
     LOGI("Applied %d server biome mappings", loadedCount);
+}
+
+void BiomeColorManager::setServerIdMapping(const std::map<int32_t, int32_t>& mapping) {
+    serverIdToLocal = mapping;
+    LOGI("Server biome ID mapping set (direct) with %zu entries", mapping.size());
+}
+
+void BiomeColorManager::setServerIdMapping(const std::map<int32_t, std::string>& serverIdToName) {
+    serverIdToLocal.clear();
+    for (const auto& [serverId, name] : serverIdToName) {
+        std::string biomeName = name;
+        size_t colonPos = biomeName.find(':');
+        if (colonPos != std::string::npos) {
+            biomeName = biomeName.substr(colonPos + 1);
+        }
+        for (int i = 0; i < BIOME_NAME_COUNT; i++) {
+            if (biomeName == BIOME_NAMES[i]) {
+                serverIdToLocal[serverId] = i;
+                break;
+            }
+        }
+    }
+    LOGI("Server biome ID mapping set (by name) with %zu entries", serverIdToLocal.size());
 }
 
 void BiomeColorManager::sampleColor(const std::vector<uint8_t>& colormap,
@@ -256,6 +274,7 @@ void BiomeColorManager::sampleColor(const std::vector<uint8_t>& colormap,
 }
 
 void BiomeColorManager::getGrassColor(int32_t biomeId, uint8_t& r, uint8_t& g, uint8_t& b) const {
+    biomeId = resolveBiomeId(biomeId);
     if (!ready || biomeId < 0 || biomeId >= BIOME_COUNT) {
         r = 255; g = 255; b = 255;
         return;
@@ -274,9 +293,10 @@ void BiomeColorManager::getGrassColor(int32_t biomeId, uint8_t& r, uint8_t& g, u
     // 从 colormap 采样
     if (!grassColormap.empty()) {
         // Minecraft 原版：grass 使用调整后的降雨量 (downfall * temperature)
-        // 因为 grass colormap 的布局与 foliage 不同，不调整会落在白色区域
-        float adjustedDownfall = entry.temperature * entry.downfall;
-        sampleColor(grassColormap, entry.temperature, adjustedDownfall, r, g, b);
+        // 先用 clamped 后的温度乘降水，再算 y 坐标。否则负温度会导致 y 坐标落在底部
+        float clampedTemp = std::max(0.0f, std::min(1.0f, entry.temperature));
+        float adjustedDownfall = clampedTemp * std::max(0.0f, std::min(1.0f, entry.downfall));
+        sampleColor(grassColormap, clampedTemp, adjustedDownfall, r, g, b);
     } else {
         // fallback
         r = 170; g = 68; b = 170;
@@ -292,6 +312,7 @@ void BiomeColorManager::getGrassColor(int32_t biomeId, uint8_t& r, uint8_t& g, u
 }
 
 void BiomeColorManager::getFoliageColor(int32_t biomeId, uint8_t& r, uint8_t& g, uint8_t& b) const {
+    biomeId = resolveBiomeId(biomeId);
     if (!ready || biomeId < 0 || biomeId >= BIOME_COUNT) {
         r = 255; g = 255; b = 255;
         return;
@@ -309,7 +330,11 @@ void BiomeColorManager::getFoliageColor(int32_t biomeId, uint8_t& r, uint8_t& g,
 
     // 从 colormap 采样
     if (!foliageColormap.empty()) {
-        sampleColor(foliageColormap, entry.temperature, entry.downfall, r, g, b);
+        // 与 grass 一样使用 adjustedDownfall 公式，
+        // 这样寒冷群系会采样到 colormap 右下角的深色区域
+        float clampedTemp = std::max(0.0f, std::min(1.0f, entry.temperature));
+        float adjustedDownfall = clampedTemp * std::max(0.0f, std::min(1.0f, entry.downfall));
+        sampleColor(foliageColormap, clampedTemp, adjustedDownfall, r, g, b);
     } else {
         // fallback
         r = 170; g = 68; b = 170;
@@ -317,6 +342,7 @@ void BiomeColorManager::getFoliageColor(int32_t biomeId, uint8_t& r, uint8_t& g,
 }
 
 void BiomeColorManager::getWaterColor(int32_t biomeId, uint8_t& r, uint8_t& g, uint8_t& b) const {
+    biomeId = resolveBiomeId(biomeId);
     if (!ready || biomeId < 0 || biomeId >= BIOME_COUNT) {
         r = 0x3F; g = 0x76; b = 0xE4;
         return;

@@ -152,10 +152,7 @@ std::unique_ptr<Chunk> ChunkParser::parseChunkData(
     const auto& versionMgr = VersionManager::getInstance();
     int protocolVersion = versionMgr.getProtocolVersion();
     ChunkDataFormat format = versionMgr.getChunkFormat();
-    
-    LOGI("Parsing chunk (%d, %d) with protocol version %d (%s)",
-         chunkX, chunkZ, protocolVersion, versionMgr.getVersionName().c_str());
-    
+
     // 根据区块数据格式版本选择解析方法
     switch (format) {
         case ChunkDataFormat::Legacy:
@@ -306,9 +303,8 @@ std::unique_ptr<Chunk> ChunkParser::parseExtendedChunk(
     const std::vector<uint8_t>& heightmapsData,
     int dimensionMinY
 ) {
-    LOGI("Parsing extended chunk (1.18+)");
-    
-    auto chunk = std::make_unique<Chunk>(chunkX, chunkZ);
+
+	auto chunk = std::make_unique<Chunk>(chunkX, chunkZ);
     size_t pos = 0;
     
     // Initialize all sections as empty

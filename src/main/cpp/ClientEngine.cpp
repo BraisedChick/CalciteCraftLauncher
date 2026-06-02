@@ -362,13 +362,20 @@ void ClientEngine::handlePlayPacket(int packetId,
                                 if (value.is_list_of<ProtocolCraft::NBT::TagCompound>()) {
                                     const auto& entries = value.as_list_of<ProtocolCraft::NBT::TagCompound>();
                                     std::map<std::string, BiomeColorManager::BiomeEntry> serverBiomes;
+                                    std::map<int32_t, std::string> serverIdToName;
                                     for (const auto& entry : entries) {
                                         auto nameIt = entry.find("name");
+                                        auto idIt = entry.find("id");
                                         auto elementIt = entry.find("element");
                                         if (nameIt == entry.end() || elementIt == entry.end()) continue;
 
                                         std::string biomeName = nameIt->second.get<std::string>();
                                         const auto& element = elementIt->second;
+
+                                        // 记录服务器 ID → 名称的映射
+                                        if (idIt != entry.end() && idIt->second.is<int>()) {
+                                            serverIdToName[idIt->second.get<int>()] = biomeName;
+                                        }
 
                                         BiomeColorManager::BiomeEntry biomeEntry;
 
@@ -388,22 +395,6 @@ void ClientEngine::handlePlayPacket(int packetId,
                                                     biomeEntry.downfall = downIt->second.get<double>();
                                                 else if (downIt->second.is<ProtocolCraft::NBT::TagFloat>())
                                                     biomeEntry.downfall = downIt->second.get<float>();
-                                            }
-
-                                            // TEMP LOG: snowy_taiga raw hex dump
-                                            if (biomeName == "minecraft:snowy_taiga") {
-                                                ProtocolCraft::WriteContainer hexBuf;
-                                                element.Write(hexBuf);
-                                                std::string hexStr;
-                                                for (size_t i = 0; i < hexBuf.size(); i++) {
-                                                    char buf[4];
-                                                    snprintf(buf, sizeof(buf), "%02x ", hexBuf[i]);
-                                                    hexStr += buf;
-                                                }
-                                                LOGI("TEMP: snowy_taiga element hex (%zu bytes): %s",
-                                                     hexBuf.size(), hexStr.c_str());
-                                                LOGI("TEMP: snowy_taiga parsed: temp=%.2f downfall=%.2f",
-                                                     biomeEntry.temperature, biomeEntry.downfall);
                                             }
 
                                             // 解析 effects
@@ -466,6 +457,9 @@ void ClientEngine::handlePlayPacket(int packetId,
                                         LOGI("Applying server biome registry mapping, %zu entries",
                                              serverBiomes.size());
                                         BiomeColorManager::getInstance().applyServerBiomeMapping(serverBiomes);
+                                        if (!serverIdToName.empty()) {
+                                            BiomeColorManager::getInstance().setServerIdMapping(serverIdToName);
+                                        }
                                     }
                                 }
                             }
