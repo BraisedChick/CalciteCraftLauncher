@@ -3,6 +3,7 @@
 #include <fstream>
 #include <sstream>
 #include <cstdio>
+#include <chrono>
 
 // ImGui 配置：OpenGL ES3 + 自定义加载器（使用 Android NDK 的 GLES3 头文件）
 #define IMGUI_IMPL_OPENGL_ES3
@@ -581,6 +582,23 @@ void GameUI::renderInGameUI() {
     draw->AddLine(ImVec2(btnX - 8, btnSprintY), ImVec2(btnX + 8, btnSprintY + 6), IM_COL32(255, 255, 255, 180), 3.0f);
     draw->AddLine(ImVec2(btnX - 8, btnSprintY + 6), ImVec2(btnX + 8, btnSprintY + 10), IM_COL32(255, 255, 255, 180), 3.0f);
 
+    // ===== F3 按钮（屏幕最上方靠左四分之一处） =====
+    {
+        const float F3_W = 52.0f;
+        const float F3_H = 28.0f;
+        const float F3_X = w * 0.25f - F3_W * 0.5f;
+        const float F3_Y = 10.0f;
+        ImU32 f3Col = showDebugInfo ? IM_COL32(255, 255, 0, 200) : IM_COL32(255, 255, 255, 80);
+        ImU32 f3Bg = showDebugInfo ? IM_COL32(255, 255, 0, 40) : IM_COL32(255, 255, 255, 25);
+        draw->AddRectFilled(ImVec2(F3_X, F3_Y), ImVec2(F3_X + F3_W, F3_Y + F3_H), f3Bg, 6.0f);
+        draw->AddRect(ImVec2(F3_X, F3_Y), ImVec2(F3_X + F3_W, F3_Y + F3_H), f3Col, 6.0f, 0, 1.5f);
+        const char* f3Text = "F3";
+        ImVec2 textSize = ImGui::CalcTextSize(f3Text);
+        float textX = F3_X + (F3_W - textSize.x) * 0.5f;
+        float textY = F3_Y + (F3_H - textSize.y) * 0.5f;
+        draw->AddText(ImVec2(textX, textY), f3Col, f3Text);
+    }
+
     // ===== 准星（屏幕中央） =====
     float cx = w * 0.5f;
     float cy = h * 0.5f;
@@ -725,6 +743,38 @@ void GameUI::renderInGameUI() {
     }
 
     ImGui::End();
+
+    // ===== F3 调试信息 =====
+    if (showDebugInfo) {
+        // 手动计算 FPS（ImGui::GetIO().Framerate 在混合帧率下不准）
+        static auto lastFpsTime = std::chrono::steady_clock::now();
+        static int fpsCounter = 0;
+        static float displayFps = 0.0f;
+        fpsCounter++;
+        auto now = std::chrono::steady_clock::now();
+        float elapsed = std::chrono::duration<float>(now - lastFpsTime).count();
+        if (elapsed >= 1.0f) {
+            displayFps = fpsCounter / elapsed;
+            fpsCounter = 0;
+            lastFpsTime = now;
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
+        ImGui::Begin("DebugInfo", nullptr,
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoInputs |
+            ImGuiWindowFlags_NoBackground);
+
+        ImGui::TextColored(ImVec4(1, 1, 0, 1), "Minecraft 1.18.2");
+        ImGui::Text("FPS: %.0f", displayFps);
+        ImGui::Text("");
+
+        auto pos = CameraController::getInstance().getPosition();
+        ImGui::Text("XYZ: %.1f / %.1f / %.1f", pos.x, pos.y, pos.z);
+
+        ImGui::End();
+    }
 }
 
 void GameUI::renderInGameMenu() {
@@ -961,6 +1011,15 @@ bool GameUI::isInSprintButtonArea(float x, float y) const {
     return (dx * dx + dy * dy) <= (BTN_RADIUS * BTN_RADIUS * 1.5f);
 }
 
+bool GameUI::isInF3ButtonArea(float x, float y) const {
+    ImGuiIO& io = ImGui::GetIO();
+    const float F3_W = 52.0f;
+    const float F3_H = 28.0f;
+    const float F3_X = io.DisplaySize.x * 0.25f - F3_W * 0.5f;
+    const float F3_Y = 10.0f;
+    return x >= F3_X && x <= F3_X + F3_W && y >= F3_Y && y <= F3_Y + F3_H;
+}
+
 int GameUI::hotbarSlotAt(float x, float y) const {
     ImGuiIO& io = ImGui::GetIO();
     float h = io.DisplaySize.y;
@@ -1053,6 +1112,9 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
             pt->role = TouchPoint::SPRINT_BUTTON;
             Collision::getInstance().setKeyState(GAMEKEY_SPRINT, true);
             buttons.sprintPressed = !buttons.sprintPressed;  // 切换视觉状态
+        } else if (!isRoleTaken(TouchPoint::F3_BUTTON) && isInF3ButtonArea(x, y)) {
+            pt->role = TouchPoint::F3_BUTTON;
+            toggleDebugInfo();
         } else if (currentState == UIState::IN_GAME) {
             int hbSlot = hotbarSlotAt(x, y);
             if (hbSlot >= 0) {

@@ -71,6 +71,10 @@ public:
     void setRenderDistanceCallback(RenderDistanceCallback cb) { renderDistanceCallback = cb; }
     RenderDistanceCallback renderDistanceCallback;
 
+    // F3 调试信息
+    void toggleDebugInfo() { showDebugInfo = !showDebugInfo; }
+    bool isDebugInfoVisible() const { return showDebugInfo; }
+
 private:
     GameUI() = default;
     ~GameUI() = default;
@@ -99,7 +103,7 @@ private:
     struct TouchPoint {
         int id = -1;
         bool active = false;
-        enum Role { NONE, JOYSTICK, CAMERA, UP_BUTTON, DOWN_BUTTON, SPRINT_BUTTON };
+        enum Role { NONE, JOYSTICK, CAMERA, UP_BUTTON, DOWN_BUTTON, SPRINT_BUTTON, F3_BUTTON };
         Role role = NONE;
         float cameraLastX = 0, cameraLastY = 0;
     };
@@ -117,6 +121,7 @@ private:
     bool isInUpButtonArea(float x, float y) const;
     bool isInDownButtonArea(float x, float y) const;
     bool isInSprintButtonArea(float x, float y) const;
+    bool isInF3ButtonArea(float x, float y) const;
     // 快捷栏点击检测：返回槽位索引 (0-8)，不在快捷栏区域则返回 -1
     int hotbarSlotAt(float x, float y) const;
 
@@ -162,4 +167,6 @@ private:
         bool downPressed = false;
         bool sprintPressed = false;
     } buttons;
+
+    bool showDebugInfo = false;
 };

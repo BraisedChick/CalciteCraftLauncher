@@ -21,7 +21,7 @@ public class MainActivity extends Activity {
 
     private RendererSurfaceView rendererSurfaceView;
 
-    // 按键码常量（与 C++ CameraController 中的定义对应）
+    // 按键码常量（与 C++ 中的定义对应）
     private static final int KEY_W = 0;
     private static final int KEY_S = 1;
     private static final int KEY_A = 2;
