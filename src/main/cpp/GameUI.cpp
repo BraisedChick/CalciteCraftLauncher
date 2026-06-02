@@ -527,7 +527,8 @@ void GameUI::renderInGameUI() {
         if (!deathScreenActive && health <= 0.0f && prevHealth > 0.0f && engine && engine->getGameMode() != 3) {
             deathScreenActive = true;
             if (deathReason.empty()) {
-                deathReason = "你被杀死了";
+                std::string serverMsg = engine->getDeathMessage();
+                deathReason = serverMsg.empty() ? "你被杀死了" : serverMsg;
             }
         }
         prevHealth = health;
@@ -838,6 +839,7 @@ void GameUI::renderDeathScreen() {
         deathReason.clear();
         auto* engine = ClientEngine::getInstance();
         if (engine) {
+            engine->clearDeathMessage();
             engine->sendRespawn();
         }
     }
@@ -847,6 +849,9 @@ void GameUI::renderDeathScreen() {
     if (ImGui::Button("标题屏幕", ImVec2(BTN_W, BTN_H))) {
         deathScreenActive = false;
         deathReason.clear();
+        if (auto* engine = ClientEngine::getInstance()) {
+            engine->clearDeathMessage();
+        }
         if (disconnectCallback) {
             disconnectCallback();
         }

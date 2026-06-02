@@ -35,9 +35,11 @@
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundContainerSetContentPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundContainerSetSlotPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundSetHealthPacket.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundPlayerCombatKillPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundGameEventPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundRespawnPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Types/NBT/Tag.hpp"
+#include "protocolCraft/include/protocolCraft/Utilities/Json.hpp"
 #include "BiomeColorManager.h"
 #include "PlayerInventory.h"
 
@@ -821,6 +823,50 @@ void ClientEngine::handlePlayPacket(int packetId,
                      containerId, slotIndex, is.present, is.itemId, is.count);
                 break;
             }
+            case 0x35: { // Combat Kill (death message)
+                ProtocolCraft::ClientboundPlayerCombatKillPacket killPacket;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t len = pktData.size();
+                killPacket.Read(iter, len);
+                deathMessage = killPacket.GetMessage().GetText();
+                if (deathMessage.empty()) {
+                    // Chat::ParseChat doesn't handle translate-type death messages
+                    // Try to build a readable message from raw JSON
+                    const std::string& raw = killPacket.GetMessage().GetRawText();
+                    try {
+                        auto json = ProtocolCraft::Json::Parse(raw);
+                        if (json.is_object()) {
+                            if (json.contains("translate")) {
+                                const std::string& translate = json["translate"].get_string();
+                                if (json.contains("with") && json["with"].is_array() && json["with"].size() >= 1) {
+                                    std::string victim = json["with"][0].contains("text") ? json["with"][0]["text"].get_string() : "";
+                                    if (json["with"].size() >= 2) {
+                                        std::string attacker = json["with"][1].contains("text") ? json["with"][1]["text"].get_string() : "";
+                                        if (!victim.empty() && !attacker.empty()) {
+                                            deathMessage = victim + " 被 " + attacker + " 杀死了";
+                                        } else if (!victim.empty()) {
+                                            deathMessage = victim;
+                                        }
+                                    } else if (!victim.empty()) {
+                                        deathMessage = victim;
+                                    }
+                                }
+                            } else if (json.contains("text")) {
+                                deathMessage = json["text"].get_string();
+                            }
+                        }
+                    } catch (...) {
+                        // JSON parsing failed, leave deathMessage empty
+                    }
+                    if (deathMessage.empty()) {
+                        deathMessage = raw; // fallback to raw JSON
+                    }
+                }
+                LOGI("Death message: '%s'", deathMessage.c_str());
+                break;
+            }
+
 
             case 0x52: { // Set Health（玩家生命/饥饿值更新）
                 ProtocolCraft::ClientboundSetHealthPacket healthPacket;
@@ -865,6 +911,9 @@ void ClientEngine::handlePlayPacket(int packetId,
             }
 
             default: {
+                if (packetId >= 0x30 && packetId <= 0x3F) {
+                    LOGI("Unhandled play packet: 0x%02X", packetId);
+                }
             }
         }
     } catch (const std::exception& e) {

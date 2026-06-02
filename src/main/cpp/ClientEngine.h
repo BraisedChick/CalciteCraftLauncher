@@ -58,6 +58,10 @@ public:
     float getFoodSaturation() const { return foodSaturation; }
     int getGameMode() const { return gameMode; }
 
+    // 死亡消息（来自服务端 CombatKill 包）
+    std::string getDeathMessage() const { return deathMessage; }
+    void clearDeathMessage() { deathMessage.clear(); }
+
 private:
     struct ChunkLoadTask {
         std::vector<uint8_t> rawData;  // 完整原始包数据（从 VarInt packet ID 之后开始）
@@ -111,5 +115,8 @@ private:
 
     // 游戏模式
     int gameMode = 0;
+
+    // 死亡消息（服务端 CombatKill 包提供）
+    std::string deathMessage;
 };
 
