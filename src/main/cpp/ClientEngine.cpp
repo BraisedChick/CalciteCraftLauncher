@@ -523,12 +523,33 @@ void ClientEngine::handlePlayPacket(int packetId,
                 pitch = glm::radians(posPacket.GetXRot());
                 hasPosition = true;
 
-                LOGI("Received teleport request, ID=%d, pos=(%.2f, %.2f, %.2f), yaw=%.2f, pitch=%.2f",
-                     posPacket.GetId_(), playerX, playerY, playerZ, yaw, pitch);
+                {
+                    glm::vec3 curPos = Collision::getInstance().getPosition();
+                    glm::vec3 curVel = Collision::getInstance().getVelocity();
+                    float diffX = curPos.x - playerX;
+                    float diffY = curPos.y - playerY;
+                    float diffZ = curPos.z - playerZ;
+                    float dist = sqrtf(diffX * diffX + diffY * diffY + diffZ * diffZ);
+                    LOGI("Received teleport request, ID=%d, server=(%.3f, %.3f, %.3f), client=(%.3f, %.3f, %.3f), dist=%.3f, vel=(%.4f, %.4f, %.4f)",
+                         posPacket.GetId_(),
+                         playerX, playerY, playerZ,
+                         curPos.x, curPos.y, curPos.z,
+                         dist,
+                         curVel.x, curVel.y, curVel.z);
+                }
 
                 // 直接同步摄像机位置（每次收到都更新，支持传送、重生等）
                 CameraController::getInstance().setPosition(playerX, playerY, playerZ);
                 CameraController::getInstance().setRotation(pitch, yaw);
+
+                // 同步 lastSent 缓存，防止渲染线程发送旧位置再次触发回弹
+                lastSent.x = playerX;
+                lastSent.y = playerY;
+                lastSent.z = playerZ;
+                lastSent.yaw = yaw;
+                lastSent.pitch = pitch;
+                lastSent.onGround = true;
+                lastSent.initialized = true;
 
                 LOGI("Camera synced to player position");
 

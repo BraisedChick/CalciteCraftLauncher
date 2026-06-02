@@ -55,7 +55,7 @@ void Collision::setJoystickInput(float dx, float dy) {
 
 // ===== 物理更新 =====
 
-void Collision::update(float deltaTime, float camPitch, float camYaw) {
+void Collision::update(float deltaTime, float camPitch, float camYaw, glm::vec3* outPosition, bool* outOnGround) {
     std::lock_guard<std::mutex> lock(mutex);
 
     // 从 CameraController 同步视角方向
@@ -82,6 +82,9 @@ void Collision::update(float deltaTime, float camPitch, float camYaw) {
         tick();
         accumulatedTime -= TICK_DURATION;
     }
+
+    if (outPosition) *outPosition = position;
+    if (outOnGround) *outOnGround = onGround;
 }
 
 void Collision::tick() {
@@ -212,11 +215,11 @@ void Collision::tick() {
     if (velocity.y != 0.0f && !isFlying) {
         AABB box = getPlayerAABB().offset(0.0f, velocity.y, 0.0f);
         int minBX = (int)floorf(box.minX);
-        int maxBX = (int)floorf(box.maxX - 1e-5f);
+        int maxBX = (int)floorf(box.maxX + 1e-5f);
         int minBY = (int)floorf(box.minY);
-        int maxBY = (int)floorf(box.maxY - 1e-5f);
+        int maxBY = (int)floorf(box.maxY + 1e-5f);
         int minBZ = (int)floorf(box.minZ);
-        int maxBZ = (int)floorf(box.maxZ - 1e-5f);
+        int maxBZ = (int)floorf(box.maxZ + 1e-5f);
 
         AABB playerBox = getPlayerAABB();
         for (int by = minBY; by <= maxBY; by++) {
@@ -259,11 +262,11 @@ void Collision::tick() {
 
         AABB box = getPlayerAABB().offset(velocity.x, 0.0f, 0.0f);
         int minBX = (int)floorf(box.minX);
-        int maxBX = (int)floorf(box.maxX - 1e-5f);
+        int maxBX = (int)floorf(box.maxX + 1e-5f);
         int minBY = (int)floorf(box.minY);
-        int maxBY = (int)floorf(box.maxY - 1e-5f);
+        int maxBY = (int)floorf(box.maxY + 1e-5f);
         int minBZ = (int)floorf(box.minZ);
-        int maxBZ = (int)floorf(box.maxZ - 1e-5f);
+        int maxBZ = (int)floorf(box.maxZ + 1e-5f);
 
         AABB playerBox = getPlayerAABB();
         for (int by = minBY; by <= maxBY; by++) {
@@ -277,11 +280,11 @@ void Collision::tick() {
                                   (float)(bx + 1), (float)by + bh, (float)(bz + 1));
                     if (!box.intersects(blockBox)) continue;
 
-                    if (velocity.x > 0.0f && playerBox.maxX <= blockBox.minX) {
-                        float newDx = blockBox.minX - playerBox.maxX;
+                    if (velocity.x > 0.0f && playerBox.maxX <= blockBox.minX + 1e-5f) {
+                        float newDx = blockBox.minX - playerBox.maxX - 0.001f;
                         if (newDx < velocity.x) velocity.x = newDx;
-                    } else if (velocity.x < 0.0f && playerBox.minX >= blockBox.maxX) {
-                        float newDx = blockBox.maxX - playerBox.minX;
+                    } else if (velocity.x < 0.0f && playerBox.minX >= blockBox.maxX - 1e-5f) {
+                        float newDx = blockBox.maxX - playerBox.minX + 0.001f;
                         if (newDx > velocity.x) velocity.x = newDx;
                     }
                 }
@@ -294,11 +297,11 @@ void Collision::tick() {
             bool stepClear = true;
             AABB stepBox = getPlayerAABB().offset(desiredVelX, 0.0f, 0.0f);
             int sminBX = (int)floorf(stepBox.minX);
-            int smaxBX = (int)floorf(stepBox.maxX - 1e-5f);
+            int smaxBX = (int)floorf(stepBox.maxX + 1e-5f);
             int sminBY = (int)floorf(stepBox.minY);
-            int smaxBY = (int)floorf(stepBox.maxY - 1e-5f);
+            int smaxBY = (int)floorf(stepBox.maxY + 1e-5f);
             int sminBZ = (int)floorf(stepBox.minZ);
-            int smaxBZ = (int)floorf(stepBox.maxZ - 1e-5f);
+            int smaxBZ = (int)floorf(stepBox.maxZ + 1e-5f);
             for (int by = sminBY; by <= smaxBY && stepClear; by++) {
                 for (int bz = sminBZ; bz <= smaxBZ && stepClear; bz++) {
                     for (int bx = sminBX; bx <= smaxBX && stepClear; bx++) {
@@ -344,11 +347,11 @@ void Collision::tick() {
 
         AABB box = getPlayerAABB().offset(0.0f, 0.0f, velocity.z);
         int minBX = (int)floorf(box.minX);
-        int maxBX = (int)floorf(box.maxX - 1e-5f);
+        int maxBX = (int)floorf(box.maxX + 1e-5f);
         int minBY = (int)floorf(box.minY);
-        int maxBY = (int)floorf(box.maxY - 1e-5f);
+        int maxBY = (int)floorf(box.maxY + 1e-5f);
         int minBZ = (int)floorf(box.minZ);
-        int maxBZ = (int)floorf(box.maxZ - 1e-5f);
+        int maxBZ = (int)floorf(box.maxZ + 1e-5f);
 
         AABB playerBox = getPlayerAABB();
         for (int by = minBY; by <= maxBY; by++) {
@@ -362,11 +365,11 @@ void Collision::tick() {
                                   (float)(bx + 1), (float)by + bh, (float)(bz + 1));
                     if (!box.intersects(blockBox)) continue;
 
-                    if (velocity.z > 0.0f && playerBox.maxZ <= blockBox.minZ) {
-                        float newDz = blockBox.minZ - playerBox.maxZ;
+                    if (velocity.z > 0.0f && playerBox.maxZ <= blockBox.minZ + 1e-5f) {
+                        float newDz = blockBox.minZ - playerBox.maxZ - 0.001f;
                         if (newDz < velocity.z) velocity.z = newDz;
-                    } else if (velocity.z < 0.0f && playerBox.minZ >= blockBox.maxZ) {
-                        float newDz = blockBox.maxZ - playerBox.minZ;
+                    } else if (velocity.z < 0.0f && playerBox.minZ >= blockBox.maxZ - 1e-5f) {
+                        float newDz = blockBox.maxZ - playerBox.minZ + 0.001f;
                         if (newDz > velocity.z) velocity.z = newDz;
                     }
                 }
@@ -379,11 +382,11 @@ void Collision::tick() {
             bool stepClear = true;
             AABB stepBox = getPlayerAABB().offset(0.0f, 0.0f, desiredVelZ);
             int sminBX = (int)floorf(stepBox.minX);
-            int smaxBX = (int)floorf(stepBox.maxX - 1e-5f);
+            int smaxBX = (int)floorf(stepBox.maxX + 1e-5f);
             int sminBY = (int)floorf(stepBox.minY);
-            int smaxBY = (int)floorf(stepBox.maxY - 1e-5f);
+            int smaxBY = (int)floorf(stepBox.maxY + 1e-5f);
             int sminBZ = (int)floorf(stepBox.minZ);
-            int smaxBZ = (int)floorf(stepBox.maxZ - 1e-5f);
+            int smaxBZ = (int)floorf(stepBox.maxZ + 1e-5f);
             for (int by = sminBY; by <= smaxBY && stepClear; by++) {
                 for (int bz = sminBZ; bz <= smaxBZ && stepClear; bz++) {
                     for (int bx = sminBX; bx <= smaxBX && stepClear; bx++) {
@@ -436,6 +439,66 @@ void Collision::tick() {
         position.y = 320.0f;
         velocity = glm::vec3(0.0f);
         onGround = false;
+        return;
+    }
+
+    // ---- 安全网：强制将玩家推出任何重叠的方块 ----
+    {
+        AABB pBox = getPlayerAABB();
+        int pMinX, pMaxX, pMinY, pMaxY, pMinZ, pMaxZ;
+
+    restart:
+        pBox = getPlayerAABB();
+        pMinX = (int)floorf(pBox.minX);
+        pMaxX = (int)floorf(pBox.maxX + 1e-5f);
+        pMinY = (int)floorf(pBox.minY);
+        pMaxY = (int)floorf(pBox.maxY + 1e-5f);
+        pMinZ = (int)floorf(pBox.minZ);
+        pMaxZ = (int)floorf(pBox.maxZ + 1e-5f);
+
+        for (int by = pMinY; by <= pMaxY; by++) {
+            for (int bz = pMinZ; bz <= pMaxZ; bz++) {
+                for (int bx = pMinX; bx <= pMaxX; bx++) {
+                    if (!isBlockSolid(bx, by, bz)) continue;
+                    float bh = getBlockHeight(bx, by, bz);
+                    if (bh <= 0.0f) continue;
+
+                    AABB blockBox((float)bx, (float)by, (float)bz,
+                                  (float)(bx + 1), (float)by + bh, (float)(bz + 1));
+                    if (!pBox.intersects(blockBox)) continue;
+
+                    // 玩家与方块重叠，沿阻力最小的方向推出
+                    float pushLeft  = pBox.maxX - blockBox.minX;
+                    float pushRight = blockBox.maxX - pBox.minX;
+                    float pushDown  = pBox.maxY - blockBox.minY;
+                    float pushUp    = blockBox.maxY - pBox.minY;
+                    float pushBack  = pBox.maxZ - blockBox.minZ;
+                    float pushFront = blockBox.maxZ - pBox.minZ;
+
+                    float minOverlap = pushLeft;
+                    int axis = 0; float displace = -pushLeft;
+                    if (pushRight < minOverlap) { minOverlap = pushRight; axis = 0; displace = pushRight; }
+                    if (pushDown < minOverlap)  { minOverlap = pushDown;  axis = 1; displace = -pushDown; }
+                    if (pushUp < minOverlap)    { minOverlap = pushUp;    axis = 1; displace = pushUp; }
+                    if (pushBack < minOverlap)  { minOverlap = pushBack;  axis = 2; displace = -pushBack; }
+                    if (pushFront < minOverlap) { minOverlap = pushFront; axis = 2; displace = pushFront; }
+
+                    if (axis == 0) {
+                        position.x += displace;
+                        velocity.x = 0.0f;
+                    } else if (axis == 1) {
+                        position.y += displace;
+                        velocity.y = 0.0f;
+                        if (displace > 0) onGround = true;
+                    } else if (axis == 2) {
+                        position.z += displace;
+                        velocity.z = 0.0f;
+                    }
+
+                    goto restart;  // 位置变了，重新扫描所有方块
+                }
+            }
+        }
     }
 }
 
@@ -477,6 +540,11 @@ float Collision::getBlockHeight(int blockX, int blockY, int blockZ) const {
 glm::vec3 Collision::getPosition() const {
     std::lock_guard<std::mutex> lock(mutex);
     return position;
+}
+
+glm::vec3 Collision::getVelocity() const {
+    std::lock_guard<std::mutex> lock(mutex);
+    return velocity;
 }
 
 glm::vec3 Collision::getSmoothPosition() const {

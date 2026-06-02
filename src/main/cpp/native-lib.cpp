@@ -104,14 +104,14 @@ static void renderLoop() {
         // 更新玩家物理（传入视角方向计算移动）
         float camPitch = CameraController::getInstance().getPitch();
         float camYaw = CameraController::getInstance().getYaw();
-        Collision::getInstance().update(deltaTime, camPitch, camYaw);
+        glm::vec3 physPos;
+        bool onGround = false;
+        Collision::getInstance().update(deltaTime, camPitch, camYaw, &physPos, &onGround);
 
-        // 发送玩家移动数据包到服务器（使用精确物理位置，而非插值位置）
+        // 发送玩家移动数据包到服务器（使用精确物理位置，已原子读取，无竞态）
         if (g_engine) {
-            auto physPos = Collision::getInstance().getPosition();
             float curPitch = CameraController::getInstance().getPitch();
             float curYaw = CameraController::getInstance().getYaw();
-            bool onGround = Collision::getInstance().isOnGround();
             g_engine->sendPlayerMovement(physPos.x, physPos.y, physPos.z, curYaw, curPitch, onGround);
         }
 

@@ -33,10 +33,11 @@ public:
 
     void setKeyState(int key, bool pressed);
     void setJoystickInput(float dx, float dy);
-    void update(float deltaTime, float camPitch, float camYaw);
+    void update(float deltaTime, float camPitch, float camYaw, glm::vec3* outPosition = nullptr, bool* outOnGround = nullptr);
     void setGameMode(int mode);
     int getGameMode() const { return gameMode; }
     glm::vec3 getPosition() const;
+    glm::vec3 getVelocity() const;
     glm::vec3 getSmoothPosition() const;
     bool isOnGround() const;
     void setPosition(float x, float y, float z);
