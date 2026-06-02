@@ -75,6 +75,11 @@ public:
     void toggleDebugInfo() { showDebugInfo = !showDebugInfo; }
     bool isDebugInfoVisible() const { return showDebugInfo; }
 
+    // 死亡界面
+    void setDeathScreenActive(bool active) { deathScreenActive = active; }
+    bool isDeathScreenActive() const { return deathScreenActive; }
+    void setDeathReason(const std::string& reason) { deathReason = reason; }
+
 private:
     GameUI() = default;
     ~GameUI() = default;
@@ -90,6 +95,7 @@ private:
     void renderAddServer();
     void renderConnecting();
     void renderInGameUI();
+    void renderDeathScreen();
     void renderInGameMenu();
     void renderGameOptions();
     void renderVideoSettings();
@@ -169,4 +175,9 @@ private:
     } buttons;
 
     bool showDebugInfo = false;
+
+    // 死亡界面状态
+    bool deathScreenActive = false;
+    std::string deathReason;
+    float prevHealth = 20.0f;
 };

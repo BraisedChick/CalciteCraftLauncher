@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <mutex>
 #include <atomic>
+#include <queue>
+#include <thread>
+#include <condition_variable>
 
 class ChunkManager;
 class NetworkManager;
@@ -43,6 +46,9 @@ public:
     // 发送手持物品槽位切换（0-8）
     void sendHeldItemChange(int slot);
 
+    // 发送重生请求
+    void sendRespawn();
+
     // 断开连接（线程安全）
     void disconnect();
 
@@ -53,10 +59,20 @@ public:
     int getGameMode() const { return gameMode; }
 
 private:
+    struct ChunkLoadTask {
+        std::vector<uint8_t> rawData;  // 完整原始包数据（从 VarInt packet ID 之后开始）
+    };
+    std::queue<ChunkLoadTask> chunkQueue;
+    std::mutex chunkQueueMutex;
+    std::condition_variable chunkCV;
+    std::thread chunkWorker;
+    std::atomic<bool> chunkWorkerRunning{false};
+
     void handlePlayPacket(int packetId,
                          const std::vector<uint8_t>& data, size_t startPos);
     void parseChunkDataPacket(const std::vector<uint8_t>& data, size_t startPos);
     size_t calculateNBTSize(const std::vector<uint8_t>& data, size_t startPos);
+    void chunkWorkerFunc();
 
     std::unique_ptr<ChunkManager> chunkManager;
     std::unique_ptr<NetworkManager> net;

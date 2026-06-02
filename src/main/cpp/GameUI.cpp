@@ -520,6 +520,24 @@ void GameUI::renderInGameUI() {
     float w = io.DisplaySize.x;
     float h = io.DisplaySize.y;
 
+    // 检测死亡：生命值从 > 0 降到 <= 0 时激活死亡界面
+    {
+        auto* engine = ClientEngine::getInstance();
+        float health = engine ? engine->getHealth() : 20.0f;
+        if (!deathScreenActive && health <= 0.0f && prevHealth > 0.0f && engine && engine->getGameMode() != 3) {
+            deathScreenActive = true;
+            if (deathReason.empty()) {
+                deathReason = "你被杀死了";
+            }
+        }
+        prevHealth = health;
+    }
+
+    if (deathScreenActive) {
+        renderDeathScreen();
+        return;
+    }
+
     if (optionsOpen) {
         renderGameOptions();
         return;
@@ -775,6 +793,68 @@ void GameUI::renderInGameUI() {
 
         ImGui::End();
     }
+}
+
+void GameUI::renderDeathScreen() {
+    ImGuiIO& io = ImGui::GetIO();
+    float w = io.DisplaySize.x;
+    float h = io.DisplaySize.y;
+
+    // 半透明红色遮罩
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    draw->AddRectFilled(ImVec2(0, 0), ImVec2(w, h), IM_COL32(80, 0, 0, 160));
+
+    // 死亡窗口
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::Begin("DeathScreen", nullptr,
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground);
+
+    const float BTN_W = 240.0f;
+    const float BTN_H = 55.0f;
+    const float SPACING = 20.0f;
+    const float CENTER_X = w * 0.5f;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(100, 30, 30, 220));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(140, 50, 50, 240));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(160, 70, 70, 255));
+    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
+
+    // 第一行：你死了！
+    ImGui::SetCursorPos(ImVec2(CENTER_X - 80.0f, h * 0.3f));
+    ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "你死了！");
+
+    // 第二行：死亡原因
+    ImGui::SetCursorPos(ImVec2(CENTER_X - 120.0f, h * 0.3f + 45.0f));
+    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "%s", deathReason.c_str());
+
+    // 重生按钮
+    ImGui::SetCursorPos(ImVec2(CENTER_X - BTN_W * 0.5f, h * 0.5f));
+    if (ImGui::Button("重生", ImVec2(BTN_W, BTN_H))) {
+        deathScreenActive = false;
+        deathReason.clear();
+        auto* engine = ClientEngine::getInstance();
+        if (engine) {
+            engine->sendRespawn();
+        }
+    }
+
+    // 标题屏幕按钮
+    ImGui::SetCursorPos(ImVec2(CENTER_X - BTN_W * 0.5f, h * 0.5f + BTN_H + SPACING));
+    if (ImGui::Button("标题屏幕", ImVec2(BTN_W, BTN_H))) {
+        deathScreenActive = false;
+        deathReason.clear();
+        if (disconnectCallback) {
+            disconnectCallback();
+        }
+    }
+
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar();
+    ImGui::End();
 }
 
 void GameUI::renderInGameMenu() {
@@ -1086,8 +1166,8 @@ bool GameUI::isRoleTaken(TouchPoint::Role role) const {
 // ===== 多点触控入口 =====
 
 void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
-    // 游戏内菜单或选项打开时，触摸事件交给 ImGui 处理
-    if (currentState == UIState::IN_GAME && (gameMenuOpen || optionsOpen)) {
+    // 游戏内菜单、选项、死亡界面打开时，触摸事件交给 ImGui 处理
+    if (currentState == UIState::IN_GAME && (gameMenuOpen || optionsOpen || deathScreenActive)) {
         queueTouchEvent(x, y, action);
         return;
     }

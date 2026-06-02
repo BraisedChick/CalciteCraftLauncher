@@ -28,6 +28,7 @@
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundMovePlayerPacketStatusOnly.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundClientInformationPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundSetCarriedItemPacket.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundClientCommandPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundLoginPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundBlockUpdatePacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundSectionBlocksUpdatePacket.hpp"
@@ -45,6 +46,7 @@
 #include <string>
 #include <map>
 #include <cmath>
+#include <chrono>
 
 ClientEngine* ClientEngine::instance = nullptr;
 
@@ -223,6 +225,10 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
     // 进入 PLAY 状态，允许发送移动包
     movementEnabled = true;
 
+    // 启动区块异步加载线程
+    chunkWorkerRunning = true;
+    chunkWorker = std::thread(&ClientEngine::chunkWorkerFunc, this);
+
     // ========== PLAY 状态主循环 ==========
     while (true) {
         auto resp = net->receivePacket();
@@ -239,6 +245,13 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
         pos = resp.size() - remaining;  // 更新已读取的位置
 
         handlePlayPacket(pid, resp, pos);
+    }
+
+    // 停止区块加载线程
+    chunkWorkerRunning = false;
+    chunkCV.notify_all();
+    if (chunkWorker.joinable()) {
+        chunkWorker.join();
     }
 
     net->disconnect();
@@ -324,11 +337,84 @@ void ClientEngine::sendHeldItemChange(int slot) {
     net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
 }
 
+void ClientEngine::sendRespawn() {
+    std::lock_guard<std::mutex> lock(netMutex);
+    if (!net || !net->isConnected()) return;
+
+    ProtocolCraft::ServerboundClientCommandPacket cmdPacket;
+    cmdPacket.SetAction(0);  // PERFORM_RESPAWN
+
+    ProtocolCraft::WriteContainer writeData;
+    cmdPacket.Write(writeData);
+    net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+    LOGI("Sent respawn request (ClientCommand PERFORM_RESPAWN)");
+}
+
 void ClientEngine::disconnect() {
     std::lock_guard<std::mutex> lock(netMutex);
     if (net) {
         net->disconnect();
     }
+}
+
+void ClientEngine::chunkWorkerFunc() {
+    LOGI("Chunk worker thread started");
+    while (chunkWorkerRunning) {
+        std::unique_lock<std::mutex> lock(chunkQueueMutex);
+        chunkCV.wait_for(lock, std::chrono::milliseconds(100), [this]() {
+            return !chunkQueue.empty() || !chunkWorkerRunning;
+        });
+
+        if (chunkQueue.empty() || !chunkWorkerRunning) {
+            lock.unlock();
+            continue;
+        }
+
+        auto task = std::move(chunkQueue.front());
+        chunkQueue.pop();
+        lock.unlock();
+
+        // 处理这一个区块（ProtocolCraft 解析 + loadChunk + 标记更新）
+        ProtocolCraft::ClientboundLevelChunkWithLightPacket chunkPacket;
+        auto iter = task.rawData.cbegin();
+        size_t len = task.rawData.size();
+
+        try {
+            chunkPacket.Read(iter, len);
+        } catch (const std::exception& e) {
+            LOGE("Chunk worker: failed to parse chunk: %s", e.what());
+            continue;
+        }
+
+        int chunkX = chunkPacket.GetX();
+        int chunkZ = chunkPacket.GetZ();
+
+        auto rawIter = task.rawData.cbegin() + 8;
+        long long bitMask = 0;
+        for (int i = 0; i < 8; i++) {
+            bitMask = (bitMask << 8) | *rawIter;
+            ++rawIter;
+        }
+
+        const auto& buffer_data = chunkPacket.GetChunkData().GetBuffer();
+        if (buffer_data.empty()) continue;
+
+        std::vector<uint8_t> rawData(buffer_data.begin(), buffer_data.end());
+        std::vector<uint8_t> emptyHeightmaps;
+        std::vector<uint8_t> emptyBlockEntities;
+
+        try {
+            chunkManager->loadChunk(chunkX, chunkZ, rawData, true, bitMask,
+                                    emptyHeightmaps, emptyBlockEntities, dimensionMinY);
+            if (glRenderer) {
+                glRenderer->setChunkManager(chunkManager.get());
+                glRenderer->markChunkForUpdate(chunkX, chunkZ);
+            }
+        } catch (const std::exception& e) {
+            LOGE("Chunk worker: failed to load chunk (%d,%d): %s", chunkX, chunkZ, e.what());
+        }
+    }
+    LOGI("Chunk worker thread stopped");
 }
 
 void ClientEngine::handlePlayPacket(int packetId,
@@ -530,12 +616,11 @@ void ClientEngine::handlePlayPacket(int packetId,
                     float diffY = curPos.y - playerY;
                     float diffZ = curPos.z - playerZ;
                     float dist = sqrtf(diffX * diffX + diffY * diffY + diffZ * diffZ);
-                    LOGI("Received teleport request, ID=%d, server=(%.3f, %.3f, %.3f), client=(%.3f, %.3f, %.3f), dist=%.3f, vel=(%.4f, %.4f, %.4f)",
+                    LOGI("Received teleport request, ID=%d, server=(%.3f, %.3f, %.3f), client=(%.3f, %.3f, %.3f), dist=%.3f",
                          posPacket.GetId_(),
                          playerX, playerY, playerZ,
                          curPos.x, curPos.y, curPos.z,
-                         dist,
-                         curVel.x, curVel.y, curVel.z);
+                         dist);
                 }
 
                 // 直接同步摄像机位置（每次收到都更新，支持传送、重生等）
@@ -580,68 +665,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x22: { // Chunk Data (Level Chunk with Light)
-                ProtocolCraft::ClientboundLevelChunkWithLightPacket chunkPacket;
-
-                std::vector<unsigned char> packetData(data.begin() + startPos, data.end());
-                auto iter = packetData.cbegin();
-                size_t length = packetData.size();
-
-                try {
-                    chunkPacket.Read(iter, length);
-
-                    int chunkX = chunkPacket.GetX();
-                    int chunkZ = chunkPacket.GetZ();
-
-                    // Extract primary bit mask from the raw packet data (before ProtocolCraft parsing)
-                    // Packet structure: [Packet ID] [X: int] [Z: int] [Primary Bit Mask: long] [Heightmaps NBT] [Sections...]
-                    // ProtocolCraft consumed: Packet ID, X, Z, Primary Bit Mask
-                    // GetBuffer() returns: Heightmaps NBT + Sections + ...
-                    // So we need to extract bitmask from the original packetData
-
-                    auto rawIter = packetData.cbegin();
-
-                    // Skip Packet ID (VarInt) - but we already know it's 0x22
-                    // Actually, the packetData starts AFTER the packet ID in handlePlayPacket
-                    // So we just need to skip X and Z
-
-                    rawIter += 8;  // Skip X (4 bytes) and Z (4 bytes)
-
-                    // Now read the 8-byte bitmask (big-endian long long)
-                    long long extractedBitMask = 0;
-                    for (int i = 0; i < 8; i++) {
-                        extractedBitMask = (extractedBitMask << 8) | *rawIter;
-                        ++rawIter;
-                    }
-
-                    const auto& chunkData = chunkPacket.GetChunkData();
-                    const auto& buffer_data = chunkData.GetBuffer();
-
-                    if (chunkManager && !buffer_data.empty()) {
-                        std::vector<uint8_t> rawData(buffer_data.begin(), buffer_data.end());
-
-                        std::vector<uint8_t> emptyHeightmaps;
-                        std::vector<uint8_t> emptyBlockEntities;
-
-                        chunkManager->loadChunk(
-                                chunkX, chunkZ,
-                                rawData,
-                                true,
-                                extractedBitMask,  // Use the extracted bitmask!
-                                emptyHeightmaps,
-                                emptyBlockEntities,
-                                dimensionMinY
-                        );
-
-                        // 通知渲染器重建网格（增量更新，只重建当前区块）
-                        if (glRenderer) {
-                            glRenderer->setChunkManager(chunkManager.get());
-                            glRenderer->markChunkForUpdate(chunkX, chunkZ);
-                        }
-                    }
-                } catch (const std::exception& e) {
-                    LOGE("Failed to parse chunk packet: %s", e.what());
+            case 0x22: { // Chunk Data (Level Chunk with Light) — 入队异步处理，不阻塞网络循环
+                {
+                    std::lock_guard<std::mutex> lock(chunkQueueMutex);
+                    chunkQueue.push({std::vector<uint8_t>(data.begin() + startPos, data.end())});
                 }
+                chunkCV.notify_one();
                 break;
             }
 
