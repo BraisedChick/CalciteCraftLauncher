@@ -519,8 +519,8 @@ void ClientEngine::handlePlayPacket(int packetId,
                 playerX = posPacket.GetX();
                 playerY = posPacket.GetY();
                 playerZ = posPacket.GetZ();
-                yaw = posPacket.GetYRot();
-                pitch = posPacket.GetXRot();
+                yaw = glm::radians(posPacket.GetYRot());
+                pitch = glm::radians(posPacket.GetXRot());
                 hasPosition = true;
 
                 LOGI("Received teleport request, ID=%d, pos=(%.2f, %.2f, %.2f), yaw=%.2f, pitch=%.2f",
