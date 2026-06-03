@@ -442,64 +442,6 @@ void Collision::tick() {
         return;
     }
 
-    // ---- 安全网：强制将玩家推出任何重叠的方块 ----
-    {
-        AABB pBox = getPlayerAABB();
-        int pMinX, pMaxX, pMinY, pMaxY, pMinZ, pMaxZ;
-
-    restart:
-        pBox = getPlayerAABB();
-        pMinX = (int)floorf(pBox.minX);
-        pMaxX = (int)floorf(pBox.maxX + 1e-5f);
-        pMinY = (int)floorf(pBox.minY);
-        pMaxY = (int)floorf(pBox.maxY + 1e-5f);
-        pMinZ = (int)floorf(pBox.minZ);
-        pMaxZ = (int)floorf(pBox.maxZ + 1e-5f);
-
-        for (int by = pMinY; by <= pMaxY; by++) {
-            for (int bz = pMinZ; bz <= pMaxZ; bz++) {
-                for (int bx = pMinX; bx <= pMaxX; bx++) {
-                    if (!isBlockSolid(bx, by, bz)) continue;
-                    float bh = getBlockHeight(bx, by, bz);
-                    if (bh <= 0.0f) continue;
-
-                    AABB blockBox((float)bx, (float)by, (float)bz,
-                                  (float)(bx + 1), (float)by + bh, (float)(bz + 1));
-                    if (!pBox.intersects(blockBox)) continue;
-
-                    // 玩家与方块重叠，沿阻力最小的方向推出
-                    float pushLeft  = pBox.maxX - blockBox.minX;
-                    float pushRight = blockBox.maxX - pBox.minX;
-                    float pushDown  = pBox.maxY - blockBox.minY;
-                    float pushUp    = blockBox.maxY - pBox.minY;
-                    float pushBack  = pBox.maxZ - blockBox.minZ;
-                    float pushFront = blockBox.maxZ - pBox.minZ;
-
-                    float minOverlap = pushLeft;
-                    int axis = 0; float displace = -pushLeft;
-                    if (pushRight < minOverlap) { minOverlap = pushRight; axis = 0; displace = pushRight; }
-                    if (pushDown < minOverlap)  { minOverlap = pushDown;  axis = 1; displace = -pushDown; }
-                    if (pushUp < minOverlap)    { minOverlap = pushUp;    axis = 1; displace = pushUp; }
-                    if (pushBack < minOverlap)  { minOverlap = pushBack;  axis = 2; displace = -pushBack; }
-                    if (pushFront < minOverlap) { minOverlap = pushFront; axis = 2; displace = pushFront; }
-
-                    if (axis == 0) {
-                        position.x += displace;
-                        velocity.x = 0.0f;
-                    } else if (axis == 1) {
-                        position.y += displace;
-                        velocity.y = 0.0f;
-                        if (displace > 0) onGround = true;
-                    } else if (axis == 2) {
-                        position.z += displace;
-                        velocity.z = 0.0f;
-                    }
-
-                    goto restart;  // 位置变了，重新扫描所有方块
-                }
-            }
-        }
-    }
 }
 
 // ===== 碰撞检测 =====
