@@ -13,6 +13,9 @@ public:
     // HUD 纹理：gui/sprites/hud/<path>.png
     GLuint getHudTexture(const std::string& path);
 
+    // 通用 GUI 纹理：gui/<path>.png（如 container/inventory.png）
+    GLuint getGuiTexture(const std::string& path);
+
     // 缺失纹理（紫色棋盘格）
     GLuint getMissingTexture();
 

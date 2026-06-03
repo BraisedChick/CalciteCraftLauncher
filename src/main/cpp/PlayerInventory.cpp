@@ -88,6 +88,17 @@ void PlayerInventory::getHotbarSlots(InvSlot out[9]) const {
     }
 }
 
+const InvSlot& PlayerInventory::getMainSlot(int index) const {
+    static InvSlot empty;
+    if (index < 0 || index >= 27) return empty;
+    std::lock_guard<std::mutex> lock(mutex);
+    int slotIdx = 9 + index;
+    if (slotIdx < (int)slots.size()) {
+        return slots[slotIdx];
+    }
+    return empty;
+}
+
 int PlayerInventory::getHotbarStart() const {
     // 用于 setSlot 中同步 hotbar 的偏移量计算
     if (slots.size() >= 45) return 36;

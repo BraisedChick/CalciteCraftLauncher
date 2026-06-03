@@ -18,6 +18,7 @@ AAssetManager* TextureLoader::g_assetManager = nullptr;
 std::string TextureLoader::g_zipPath = "";
 void* TextureLoader::g_zip = nullptr;
 bool TextureLoader::g_zipOpen = false;
+std::unordered_map<std::string, TextureData> TextureLoader::s_cache;
 
 void TextureLoader::setAssetManager(AAssetManager* assetManager) {
     g_assetManager = assetManager;
@@ -31,6 +32,7 @@ void TextureLoader::setZipPath(const std::string& path) {
         g_zip = nullptr;
         g_zipOpen = false;
     }
+    s_cache.clear();
 
     g_zipPath = path;
     LOGI("Texture ZIP path set to: %s", path.c_str());
@@ -54,6 +56,7 @@ void TextureLoader::setZipPath(const std::string& path) {
 }
 
 void TextureLoader::closeZip() {
+    s_cache.clear();
     if (g_zipOpen) {
         mz_zip_reader_end(static_cast<mz_zip_archive*>(g_zip));
         delete static_cast<mz_zip_archive*>(g_zip);
@@ -61,6 +64,11 @@ void TextureLoader::closeZip() {
         g_zipOpen = false;
         LOGI("ZIP closed");
     }
+}
+
+void TextureLoader::clearCache() {
+    s_cache.clear();
+    LOGI("Texture cache cleared");
 }
 
 TextureData TextureLoader::loadFromZip(const std::string& filename) {
@@ -208,17 +216,25 @@ std::vector<std::pair<std::string, std::string>> TextureLoader::readAllTextFromZ
 }
 
 TextureData TextureLoader::loadPNG(const std::string& filename) {
-    TextureData result;
+    // 查缓存，命中则返回深拷贝
+    auto it = s_cache.find(filename);
+    if (it != s_cache.end()) {
+        return it->second.clone();
+    }
 
     if (g_zipPath.empty()) {
         LOGE("ZIP path not set, cannot load texture: %s", filename.c_str());
-        return result;
+        return TextureData();
     }
 
-    result = loadFromZip(filename);
-    if (result.data == nullptr) {
-        LOGE("Failed to load texture from ZIP: %s", filename.c_str());
+    TextureData result = loadFromZip(filename);
+    if (result.data) {
+        // 移入缓存，下次直接 clone 返回
+        s_cache.emplace(filename, std::move(result));
+        return s_cache[filename].clone();
     }
+
+    LOGE("Failed to load texture from ZIP: %s", filename.c_str());
     return result;
 }
 

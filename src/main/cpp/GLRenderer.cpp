@@ -1092,72 +1092,57 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         totalTriangles += renderData.indexCount / 3;
     }
 
-    // ===== 第二阶段：所有区块的水（在所有不透明几何体之后统一渲染）=====
-    // 先设好 blend 和水纹理状态（一次性，避免每 chunk 切换）
-    bool anyWater = false;
+    // ===== 第二阶段：所有区块的水（在不透明几何体之后统一渲染）=====
+    bool waterStateSet = false;
     for (auto& [chunkKey, renderData] : chunkRenderCache) {
         if (!renderData.visible || renderData.indexCount == 0) continue;
         if (renderData.waterIndexCount == 0) continue;
+
         // 距离剔除
         float cx = renderData.position.x + 8.0f;
         float cz = renderData.position.z + 8.0f;
         float dx = cx - lastCameraX, dz = cz - lastCameraZ;
         if (sqrtf(dx * dx + dz * dz) > farPlane) continue;
-        // 视锥体测试
+
         float minX = renderData.position.x;
         float maxX = minX + 16.0f;
         float minZ = renderData.position.z;
         float maxZ = minZ + 16.0f;
         if (!isAABBInFrustum(minX, worldMinY, minZ, maxX, worldMaxY, maxZ)) continue;
-        anyWater = true;
-        break;
-    }
 
-    if (anyWater) {
-        glEnable(GL_BLEND);
-        glBlendColor(1.0f, 1.0f, 1.0f, 0.5f);  // alpha=0.5，水下块更可见
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glDepthFunc(GL_LEQUAL);
-        glDepthMask(GL_FALSE);
-        if (uniformUseWaterTexture != -1) glUniform1i(uniformUseWaterTexture, 1);
-
-        for (auto& [chunkKey, renderData] : chunkRenderCache) {
-            if (!renderData.visible || renderData.indexCount == 0) continue;
-            if (renderData.waterIndexCount == 0) continue;
-
-            // 距离剔除
-            float cx = renderData.position.x + 8.0f;
-            float cz = renderData.position.z + 8.0f;
-            float dx = cx - lastCameraX, dz = cz - lastCameraZ;
-            if (sqrtf(dx * dx + dz * dz) > farPlane) continue;
-
-            float minX = renderData.position.x;
-            float maxX = minX + 16.0f;
-            float minZ = renderData.position.z;
-            float maxZ = minZ + 16.0f;
-            if (!isAABBInFrustum(minX, worldMinY, minZ, maxX, worldMaxY, maxZ)) continue;
-
-            glBindVertexArray(vao);
-            glBindBuffer(GL_ARRAY_BUFFER, renderData.vbo);
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderData.ebo);
-
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float)));
-            glEnableVertexAttribArray(1);
-            glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(5 * sizeof(float)));
-            glEnableVertexAttribArray(2);
-            glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex), (void*)(offsetof(Vertex, color)));
-            glEnableVertexAttribArray(3);
-
-            uint32_t baseEnd = renderData.indexCount - renderData.overlayIndexCount - renderData.waterIndexCount;
-            uint32_t grassEnd = baseEnd + renderData.overlayIndexCount;
-
-            glDrawElements(GL_TRIANGLES, renderData.waterIndexCount, GL_UNSIGNED_INT,
-                           (const GLvoid*)(uintptr_t)(grassEnd * sizeof(uint32_t)));
+        // 遇到第一个可见水区块时才设置渲染状态
+        if (!waterStateSet) {
+            glEnable(GL_BLEND);
+            glBlendColor(1.0f, 1.0f, 1.0f, 0.5f);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthFunc(GL_LEQUAL);
+            glDepthMask(GL_FALSE);
+            if (uniformUseWaterTexture != -1) glUniform1i(uniformUseWaterTexture, 1);
+            waterStateSet = true;
         }
 
-        // 恢复状态
+        glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, renderData.vbo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderData.ebo);
+
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(5 * sizeof(float)));
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex), (void*)(offsetof(Vertex, color)));
+        glEnableVertexAttribArray(3);
+
+        uint32_t baseEnd = renderData.indexCount - renderData.overlayIndexCount - renderData.waterIndexCount;
+        uint32_t grassEnd = baseEnd + renderData.overlayIndexCount;
+
+        glDrawElements(GL_TRIANGLES, renderData.waterIndexCount, GL_UNSIGNED_INT,
+                       (const GLvoid*)(uintptr_t)(grassEnd * sizeof(uint32_t)));
+    }
+
+    // 有水的区块才设置了状态，需要恢复
+    if (waterStateSet) {
         if (uniformUseWaterTexture != -1) glUniform1i(uniformUseWaterTexture, 0);
         glDepthMask(GL_TRUE);
         glDepthFunc(GL_LESS);

@@ -2,6 +2,8 @@
 
 #include <vector>
 #include <string>
+#include <cstring>
+#include <unordered_map>
 #include <android/asset_manager.h>
 
 struct TextureData {
@@ -21,6 +23,18 @@ struct TextureData {
 
     TextureData(const TextureData&) = delete;
     TextureData& operator=(const TextureData&) = delete;
+
+    TextureData clone() const {
+        TextureData result;
+        result.width = width;
+        result.height = height;
+        result.channels = channels;
+        if (data) {
+            result.data = new unsigned char[width * height * channels];
+            std::memcpy(result.data, data, width * height * channels);
+        }
+        return result;
+    }
 
     TextureData(TextureData&& other) noexcept {
         data = other.data;
@@ -61,4 +75,8 @@ private:
 
     static void* g_zip;       // mz_zip_archive 缓存
     static bool g_zipOpen;
+
+    // 已解码纹理缓存（文件名 → TextureData）
+    static std::unordered_map<std::string, TextureData> s_cache;
+    static void clearCache();
 };

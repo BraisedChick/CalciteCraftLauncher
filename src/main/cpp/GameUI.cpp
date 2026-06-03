@@ -766,9 +766,32 @@ void GameUI::renderInGameUI() {
         }
     }
 
+    // ===== E 按钮（物品栏右侧） =====
+    {
+        float eX = hotbarX + totalW + 10.0f;
+        ImU32 eCol = inventoryOpen ? IM_COL32(255, 255, 0, 200) : IM_COL32(255, 255, 255, 180);
+        ImU32 eBg = inventoryOpen ? IM_COL32(255, 255, 0, 40) : IM_COL32(40, 40, 50, 180);
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            ImVec2(eX, HOTBAR_Y), ImVec2(eX + SLOT_SIZE, HOTBAR_Y + SLOT_SIZE),
+            eBg, 4.0f);
+        ImGui::GetWindowDrawList()->AddRect(
+            ImVec2(eX, HOTBAR_Y), ImVec2(eX + SLOT_SIZE, HOTBAR_Y + SLOT_SIZE),
+            eCol, 4.0f, 0, 2.0f);
+        const char* eText = "E";
+        ImVec2 eTextSize = ImGui::CalcTextSize(eText);
+        float eTextX = eX + (SLOT_SIZE - eTextSize.x) * 0.5f;
+        float eTextY = HOTBAR_Y + (SLOT_SIZE - eTextSize.y) * 0.5f;
+        ImGui::GetWindowDrawList()->AddText(ImVec2(eTextX, eTextY), eCol, eText);
+    }
+
     ImGui::End();
 
     // ===== F3 调试信息 =====
+    // ===== 背包界面 =====
+    if (inventoryOpen) {
+        renderInventory();
+    }
+
     if (showDebugInfo) {
         // 手动计算 FPS（ImGui::GetIO().Framerate 在混合帧率下不准）
         static auto lastFpsTime = std::chrono::steady_clock::now();
@@ -798,6 +821,122 @@ void GameUI::renderInGameUI() {
         ImGui::Text("XYZ: %.1f / %.1f / %.1f", pos.x, pos.y, pos.z);
 
         ImGui::End();
+    }
+}
+
+void GameUI::renderInventory() {
+    ImGuiIO& io = ImGui::GetIO();
+    float w = io.DisplaySize.x;
+    float h = io.DisplaySize.y;
+
+    const float INV_SLOT = 50.0f;
+
+    // 纹理坐标 → 屏幕坐标缩放
+    const float TEX_SLOT = 18.0f;
+    const float TEX_LEFT = 7.0f;
+    const float TEX_TOP = 83.0f;
+    const float TEX_HOTBAR = 141.0f;
+    const float TEX_CONTAINER_W = 176.0f;
+    const float TEX_CONTAINER_H = 166.0f;
+    float S = INV_SLOT / TEX_SLOT;
+
+    // 容器居中
+    float containerW = TEX_CONTAINER_W * S;
+    float containerH = TEX_CONTAINER_H * S;
+    float containerX = (w - containerW) * 0.5f;
+    float containerY = h * 0.5f - containerH * 0.5f;
+
+    // 格子的起始坐标（由纹理位置决定）
+    float gridX = containerX + TEX_LEFT * S;
+    float gridY = containerY + TEX_TOP * S;
+    float hotbarY = containerY + TEX_HOTBAR * S;
+
+    // 背景遮罩
+    ImGui::GetForegroundDrawList()->AddRectFilled(
+        ImVec2(0, 0), ImVec2(w, h), IM_COL32(0, 0, 0, 160));
+
+    // 容器纹理
+    GLuint bgTex = ResourcepackManager::getInstance().getGuiTexture("container/inventory");
+    if (bgTex != 0) {
+        ImGui::GetForegroundDrawList()->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
+            glBindSampler(0, 0);
+        }, nullptr);
+        ImGui::GetForegroundDrawList()->AddImage(
+            (ImTextureID)(intptr_t)bgTex,
+            ImVec2(containerX, containerY),
+            ImVec2(containerX + containerW, containerY + containerH),
+            ImVec2(0, 0),
+            ImVec2(TEX_CONTAINER_W / 256.0f, TEX_CONTAINER_H / 256.0f));
+    }
+
+    // 标题
+    const char* title = "背包";
+    ImVec2 titleSize = ImGui::CalcTextSize(title);
+    ImGui::GetForegroundDrawList()->AddText(
+        ImVec2(containerX + (containerW - titleSize.x) * 0.5f,
+               containerY + 8.0f * S),
+        IM_COL32(55, 55, 55, 255), title);
+
+    // 获取物品栏数据
+    auto& inv = PlayerInventory::getInstance();
+    InvSlot hotbar[9];
+    inv.getHotbarSlots(hotbar);
+
+    // 渲染格子中的物品（纹理自带格子背景，我们只需叠加物品）
+    auto renderItem = [&](float sx, float sy, const InvSlot& slot) {
+        if (!slot.present || slot.itemId <= 0) return;
+
+        std::string itemName = BlockRegistry::getInstance().getItemName(slot.itemId);
+        if (itemName.empty()) return;
+
+        GLuint tex = ResourcepackManager::getInstance().getItemTexture(itemName);
+        if (tex == 0) return;
+
+        ImGui::GetForegroundDrawList()->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
+            glBindSampler(0, 0);
+        }, nullptr);
+
+        float pad = 5.0f;
+        float iconSize = INV_SLOT - pad * 2;
+        ImGui::GetForegroundDrawList()->AddImage(
+            (ImTextureID)(intptr_t)tex,
+            ImVec2(sx + pad, sy + pad),
+            ImVec2(sx + pad + iconSize, sy + pad + iconSize));
+
+        if (slot.count > 1) {
+            char countStr[8];
+            snprintf(countStr, sizeof(countStr), "%d", slot.count);
+            ImVec2 textSize = ImGui::CalcTextSize(countStr);
+            ImGui::GetForegroundDrawList()->AddText(
+                ImVec2(sx + INV_SLOT - textSize.x - 3,
+                       sy + INV_SLOT - textSize.y - 2),
+                IM_COL32(255, 255, 255, 255), countStr);
+        }
+    };
+
+    // 主背包格（3行 x 9列）
+    for (int row = 0; row < 3; row++) {
+        float rowY = gridY + row * INV_SLOT;
+        for (int col = 0; col < 9; col++) {
+            float sx = gridX + col * INV_SLOT;
+            int slotIndex = row * 9 + col;
+            renderItem(sx, rowY, inv.getMainSlot(slotIndex));
+        }
+    }
+
+    // 快捷栏（1行 x 9列）
+    for (int i = 0; i < 9; i++) {
+        float sx = gridX + i * INV_SLOT;
+
+        // 选中高亮
+        if (i == inv.getSelectedSlot()) {
+            ImGui::GetForegroundDrawList()->AddRect(
+                ImVec2(sx - 2, hotbarY - 2),
+                ImVec2(sx + INV_SLOT + 2, hotbarY + INV_SLOT + 2),
+                IM_COL32(255, 255, 255, 255), 3.0f, 0, 2.5f);
+        }
+
+        renderItem(sx, hotbarY, hotbar[i]);
     }
 }
 
@@ -1112,6 +1251,19 @@ bool GameUI::isInF3ButtonArea(float x, float y) const {
     return x >= F3_X && x <= F3_X + F3_W && y >= F3_Y && y <= F3_Y + F3_H;
 }
 
+bool GameUI::isInEButtonArea(float x, float y) const {
+    ImGuiIO& io = ImGui::GetIO();
+    float w = io.DisplaySize.x;
+    float h = io.DisplaySize.y;
+    const float SLOT_SIZE = 55.0f;
+    const float SLOT_GAP = 5.0f;
+    const float HOTBAR_Y = h - 61.0f;
+    float totalW = 9.0f * SLOT_SIZE + 8.0f * SLOT_GAP;
+    float hotbarX = w * 0.5f - totalW * 0.5f;
+    float btnX = hotbarX + totalW + 10.0f;
+    return x >= btnX && x <= btnX + SLOT_SIZE && y >= HOTBAR_Y && y <= HOTBAR_Y + SLOT_SIZE;
+}
+
 int GameUI::hotbarSlotAt(float x, float y) const {
     ImGuiIO& io = ImGui::GetIO();
     float h = io.DisplaySize.y;
@@ -1183,6 +1335,15 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
         queueTouchEvent(x, y, action);
         return;
     }
+    // 背包打开时，触摸事件交给 ImGui，但 E 按钮区域例外（用来关闭背包）
+    if (currentState == UIState::IN_GAME && inventoryOpen) {
+        if (isInEButtonArea(x, y) && action == 0) {
+            inventoryOpen = false;
+            return;
+        }
+        queueTouchEvent(x, y, action);
+        return;
+    }
 
     if (action == 0) {
         // DOWN：分配触摸点，根据位置分配角色
@@ -1207,6 +1368,9 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
         } else if (!isRoleTaken(TouchPoint::F3_BUTTON) && isInF3ButtonArea(x, y)) {
             pt->role = TouchPoint::F3_BUTTON;
             toggleDebugInfo();
+        } else if (!isRoleTaken(TouchPoint::E_BUTTON) && isInEButtonArea(x, y)) {
+            pt->role = TouchPoint::E_BUTTON;
+            inventoryOpen = !inventoryOpen;
         } else if (currentState == UIState::IN_GAME) {
             int hbSlot = hotbarSlotAt(x, y);
             if (hbSlot >= 0) {

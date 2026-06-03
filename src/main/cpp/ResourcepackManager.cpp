@@ -109,6 +109,22 @@ GLuint ResourcepackManager::getHudTexture(const std::string& path) {
     return glTex;
 }
 
+GLuint ResourcepackManager::getGuiTexture(const std::string& path) {
+    auto it = cache.find(path);
+    if (it != cache.end()) return it->second;
+
+    std::string fullPath = "gui/" + path + ".png";
+    GLuint glTex = loadAndUploadTexture(fullPath);
+    if (glTex == 0) {
+        LOGE("Failed to load GUI texture: %s", fullPath.c_str());
+        cache[path] = 0;
+        return 0;
+    }
+
+    cache[path] = glTex;
+    return glTex;
+}
+
 void ResourcepackManager::clear() {
     for (auto& pair : cache) {
         if (pair.second != 0 && pair.second != missingTex) {

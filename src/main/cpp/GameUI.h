@@ -96,6 +96,7 @@ private:
     void renderConnecting();
     void renderInGameUI();
     void renderDeathScreen();
+    void renderInventory();
     void renderInGameMenu();
     void renderGameOptions();
     void renderVideoSettings();
@@ -109,7 +110,7 @@ private:
     struct TouchPoint {
         int id = -1;
         bool active = false;
-        enum Role { NONE, JOYSTICK, CAMERA, UP_BUTTON, DOWN_BUTTON, SPRINT_BUTTON, F3_BUTTON };
+        enum Role { NONE, JOYSTICK, CAMERA, UP_BUTTON, DOWN_BUTTON, SPRINT_BUTTON, F3_BUTTON, E_BUTTON };
         Role role = NONE;
         float cameraLastX = 0, cameraLastY = 0;
     };
@@ -128,6 +129,8 @@ private:
     bool isInDownButtonArea(float x, float y) const;
     bool isInSprintButtonArea(float x, float y) const;
     bool isInF3ButtonArea(float x, float y) const;
+    // E 按钮区域（打开背包）
+    bool isInEButtonArea(float x, float y) const;
     // 快捷栏点击检测：返回槽位索引 (0-8)，不在快捷栏区域则返回 -1
     int hotbarSlotAt(float x, float y) const;
 
@@ -180,4 +183,7 @@ private:
     bool deathScreenActive = false;
     std::string deathReason;
     float prevHealth = 20.0f;
+
+    // 背包界面
+    bool inventoryOpen = false;
 };

@@ -31,6 +31,10 @@ public:
     // 快捷栏 9 格（用于渲染）
     void getHotbarSlots(InvSlot out[9]) const;
 
+    // 主背包格访问（索引 0-26 对应 slots[9]~slots[35]）
+    const InvSlot& getMainSlot(int index) const;
+    int getMainSlotCount() const { return 27; }
+
 private:
     PlayerInventory();
 
