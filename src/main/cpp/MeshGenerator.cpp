@@ -230,7 +230,8 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         return 0;
     };
 
-    std::unordered_map<int32_t, bool> solidCache;
+    static thread_local std::unordered_map<int32_t, bool> solidCache;
+
     auto isSolid = [&](int32_t state) -> bool {
         if (state == 0) return false;
         auto it = solidCache.find(state);
@@ -238,7 +239,9 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         bool solid = BlockRegistry::getInstance().getBlockMetadata(state).isFullBlock;
         solidCache[state] = solid;
         return solid;
-    };
+    }
+
+// 在函数末尾（return 之前）打印统计
 
     // 遍历所有方块
     for (int localY = 0; localY < SECTION_HEIGHT; localY++) {
