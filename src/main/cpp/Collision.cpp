@@ -120,10 +120,10 @@ void Collision::tick() {
 
     // 摇杆
     if (fabs(joystickDY) > 0.1f) {
-        moveDir += horizontalFront * (joystickDY < -0.1f ? -joystickDY : -joystickDY);
+        moveDir += horizontalFront * (-joystickDY);
     }
     if (fabs(joystickDX) > 0.1f) {
-        moveDir += right * (joystickDX > 0.1f ? joystickDX : joystickDX);
+        moveDir += right * joystickDX;
     }
 
     // ===== 旁观者模式：无视碰撞，自由飞行 =====
