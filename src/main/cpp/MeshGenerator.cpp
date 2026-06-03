@@ -239,7 +239,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         bool solid = BlockRegistry::getInstance().getBlockMetadata(state).isFullBlock;
         solidCache[state] = solid;
         return solid;
-    }
+    };
 
 // 在函数末尾（return 之前）打印统计
 
