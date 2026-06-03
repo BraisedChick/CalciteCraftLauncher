@@ -8,6 +8,7 @@
 #include <queue>
 #include <thread>
 #include <condition_variable>
+#include <map>
 
 class ChunkManager;
 class NetworkManager;
@@ -61,6 +62,9 @@ public:
     // 死亡消息（来自服务端 CombatKill 包）
     std::string getDeathMessage() const { return deathMessage; }
     void clearDeathMessage() { deathMessage.clear(); }
+
+    // 加载语言文件（如 zh_cn.json）
+    void loadLanguage(const std::string& json);
 
 private:
     struct ChunkLoadTask {
@@ -118,5 +122,8 @@ private:
 
     // 死亡消息（服务端 CombatKill 包提供）
     std::string deathMessage;
+
+    // 语言翻译表（从 zh_cn.json 加载）
+    std::map<std::string, std::string> translations;
 };
 

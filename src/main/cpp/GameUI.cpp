@@ -639,9 +639,9 @@ void GameUI::renderInGameUI() {
         ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoInputs |
         ImGuiWindowFlags_NoBackground);
 
-    const float SLOT_SIZE = 50.0f;
-    const float SLOT_GAP = 4.0f;
-    const float HOTBAR_Y = h - 55.0f;
+    const float SLOT_SIZE = 55.0f;
+    const float SLOT_GAP = 5.0f;
+    const float HOTBAR_Y = h - 61.0f;
     float totalW = 9.0f * SLOT_SIZE + 8.0f * SLOT_GAP;
     float hotbarX = w * 0.5f - totalW * 0.5f;
 
@@ -679,9 +679,14 @@ void GameUI::renderInGameUI() {
             } else {
                 GLuint tex = ResourcepackManager::getInstance().getItemTexture(itemName);
                 if (tex != 0) {
+                    // ImGui 的字体纹理使用 GL_LINEAR sampler，会泄漏到后续绘制
+                    // 解除 sampler 绑定，让物品纹理使用自己的 GL_NEAREST 过滤
+                    ImGui::GetWindowDrawList()->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
+                        glBindSampler(0, 0);
+                    }, nullptr);
                     float pad = 5.0f;
                     float iconSize = SLOT_SIZE - pad * 2;
-                    ImGui::SetCursorScreenPos(ImVec2(sx + pad, HOTBAR_Y + pad));
+                    ImGui::SetCursorScreenPos(ImVec2((int)(sx + pad), (int)(HOTBAR_Y + pad)));
                     ImGui::Image((ImTextureID)(intptr_t)tex, ImVec2(iconSize, iconSize));
                 }
             }
@@ -705,9 +710,9 @@ void GameUI::renderInGameUI() {
         if (engine && engine->getGameMode() != 1) {
             float healthVal = engine->getHealth();
             int foodVal = engine->getFood();
-            const float ICON_SIZE = 18.0f;
+            const float ICON_SIZE = 20.0f;
             const float GAP = 1.0f;
-            const float HUD_Y = h - 55.0f - ICON_SIZE - 6.0f;  // 快捷栏上方
+            const float HUD_Y = h - 61.0f - ICON_SIZE - 8.0f;  // 快捷栏上方
 
             GLuint hContainer = ResourcepackManager::getInstance().getHudTexture("heart/container");
             GLuint hFull = ResourcepackManager::getInstance().getHudTexture("heart/full");
@@ -813,7 +818,7 @@ void GameUI::renderDeathScreen() {
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
         ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground);
 
-    const float BTN_W = 240.0f;
+    const float BTN_W = 360.0f;
     const float BTN_H = 55.0f;
     const float SPACING = 20.0f;
     const float CENTER_X = w * 0.5f;
@@ -825,11 +830,13 @@ void GameUI::renderDeathScreen() {
     ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
 
     // 第一行：你死了！
-    ImGui::SetCursorPos(ImVec2(CENTER_X - 80.0f, h * 0.3f));
+    float textW = ImGui::CalcTextSize("你死了！").x;
+    ImGui::SetCursorPos(ImVec2(CENTER_X - textW * 0.5f, h * 0.3f));
     ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "你死了！");
 
     // 第二行：死亡原因
-    ImGui::SetCursorPos(ImVec2(CENTER_X - 120.0f, h * 0.3f + 45.0f));
+    textW = ImGui::CalcTextSize(deathReason.c_str()).x;
+    ImGui::SetCursorPos(ImVec2(CENTER_X - textW * 0.5f, h * 0.3f + 45.0f));
     ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "%s", deathReason.c_str());
 
     // 重生按钮
@@ -1109,9 +1116,9 @@ int GameUI::hotbarSlotAt(float x, float y) const {
     ImGuiIO& io = ImGui::GetIO();
     float h = io.DisplaySize.y;
     float w = io.DisplaySize.x;
-    const float SLOT_SIZE = 50.0f;
-    const float SLOT_GAP = 4.0f;
-    const float HOTBAR_Y = h - 55.0f;
+    const float SLOT_SIZE = 55.0f;
+    const float SLOT_GAP = 5.0f;
+    const float HOTBAR_Y = h - 61.0f;
     float totalW = 9.0f * SLOT_SIZE + 8.0f * SLOT_GAP;
     float hotbarX = w * 0.5f - totalW * 0.5f;
 

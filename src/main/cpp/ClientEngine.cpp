@@ -359,6 +359,27 @@ void ClientEngine::disconnect() {
     }
 }
 
+void ClientEngine::loadLanguage(const std::string& json) {
+    try {
+        auto root = ProtocolCraft::Json::Parse(json);
+        if (!root.is_object()) {
+            LOGE("Language file is not a JSON object");
+            return;
+        }
+        const auto& obj = root.get_object();
+        for (const auto& [key, value] : obj) {
+            if (value.is_string()) {
+                translations[key] = value.get_string();
+            }
+        }
+        LOGI("Loaded %zu translations", translations.size());
+    } catch (const std::exception& e) {
+        LOGE("Failed to parse language file: %s", e.what());
+    } catch (...) {
+        LOGE("Failed to parse language file: unknown error");
+    }
+}
+
 void ClientEngine::chunkWorkerFunc() {
     LOGI("Chunk worker thread started");
     while (chunkWorkerRunning) {
@@ -831,36 +852,58 @@ void ClientEngine::handlePlayPacket(int packetId,
                 killPacket.Read(iter, len);
                 deathMessage = killPacket.GetMessage().GetText();
                 if (deathMessage.empty()) {
-                    // Chat::ParseChat doesn't handle translate-type death messages
-                    // Try to build a readable message from raw JSON
+                    // Chat::ParseChat doesn't handle translate-type death messages.
+                    // Use the language file (zh_cn.json) to translate.
                     const std::string& raw = killPacket.GetMessage().GetRawText();
                     try {
                         auto json = ProtocolCraft::Json::Parse(raw);
-                        if (json.is_object()) {
-                            if (json.contains("translate")) {
-                                const std::string& translate = json["translate"].get_string();
-                                if (json.contains("with") && json["with"].is_array() && json["with"].size() >= 1) {
-                                    std::string victim = json["with"][0].contains("text") ? json["with"][0]["text"].get_string() : "";
-                                    if (json["with"].size() >= 2) {
-                                        std::string attacker = json["with"][1].contains("text") ? json["with"][1]["text"].get_string() : "";
-                                        if (!victim.empty() && !attacker.empty()) {
-                                            deathMessage = victim + " 被 " + attacker + " 杀死了";
-                                        } else if (!victim.empty()) {
-                                            deathMessage = victim;
+                        if (json.is_object() && json.contains("translate")) {
+                            const std::string& translate = json["translate"].get_string();
+                            auto it = translations.find(translate);
+                            if (it != translations.end()) {
+                                // Found a translation template, e.g. "%1$s被%2$s杀死了"
+                                deathMessage = it->second;
+                                // Extract text from "with" array
+                                std::vector<std::string> args;
+                                if (json.contains("with") && json["with"].is_array()) {
+                                    for (size_t i = 0; i < json["with"].size(); i++) {
+                                        const auto& elem = json["with"][i];
+                                        if (elem.contains("text") && elem["text"].is_string()) {
+                                            args.push_back(elem["text"].get_string());
+                                        } else if (elem.contains("translate") && elem["translate"].is_string()) {
+                                            // 实体名称也是 translate 类型，如 entity.minecraft.zombie
+                                            const std::string& subKey = elem["translate"].get_string();
+                                            auto subIt = translations.find(subKey);
+                                            if (subIt != translations.end()) {
+                                                args.push_back(subIt->second);
+                                            } else {
+                                                args.push_back(subKey);
+                                            }
+                                        } else {
+                                            args.push_back("");
                                         }
-                                    } else if (!victim.empty()) {
-                                        deathMessage = victim;
+                                    }
+                                }
+                                // Replace %1$s, %2$s, %3$s with args
+                                for (size_t i = 0; i < args.size(); i++) {
+                                    std::string placeholder = "%" + std::to_string(i + 1) + "$s";
+                                    size_t pos = 0;
+                                    while ((pos = deathMessage.find(placeholder, pos)) != std::string::npos) {
+                                        deathMessage.replace(pos, placeholder.length(), args[i]);
+                                        pos += args[i].length();
                                     }
                                 }
                             } else if (json.contains("text")) {
                                 deathMessage = json["text"].get_string();
+                            } else {
+                                // No translation found, use raw JSON as fallback
+                                deathMessage = raw;
                             }
+                        } else if (json.contains("text")) {
+                            deathMessage = json["text"].get_string();
                         }
                     } catch (...) {
-                        // JSON parsing failed, leave deathMessage empty
-                    }
-                    if (deathMessage.empty()) {
-                        deathMessage = raw; // fallback to raw JSON
+                        deathMessage = raw;
                     }
                 }
                 LOGI("Death message: '%s'", deathMessage.c_str());

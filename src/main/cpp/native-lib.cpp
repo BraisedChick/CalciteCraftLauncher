@@ -64,6 +64,17 @@ Java_com_calcite_MainActivity_connectToServer(
     }
 
     g_engine = new ClientEngine();
+
+    // 加载语言文件（如 zh_cn.json，用于死亡消息翻译）
+    {
+        std::string langJson = TextureLoader::readTextFromZip("lang/zh_cn.json");
+        if (!langJson.empty()) {
+            g_engine->loadLanguage(langJson);
+        } else {
+            JNI_LOGI("No lang/zh_cn.json found in resourcepack");
+        }
+    }
+
     bool success = g_engine->start(addr, port, name);
 
     env->ReleaseStringUTFChars(address, addr);
@@ -212,6 +223,7 @@ Java_com_calcite_MainActivity_initRenderer(
         } else {
             JNI_LOGI("No items.json in ZIP, blocks-only mode");
         }
+
         blockRegistryLoaded = true;
     }
 
@@ -307,6 +319,15 @@ Java_com_calcite_MainActivity_initRenderer(
             JNI_LOGI("UI Connect: %s:%d user=%s", ip.c_str(), port, g_username.c_str());
             std::thread([ip, port]() {
                 g_engine = new ClientEngine();
+
+                // 加载语言文件
+                {
+                    std::string langJson = TextureLoader::readTextFromZip("lang/zh_cn.json");
+                    if (!langJson.empty()) {
+                        g_engine->loadLanguage(langJson);
+                    }
+                }
+
                 if (g_glRenderer) {
                     g_glRenderer->setChunkManager(g_engine->getChunkManager());
                     Collision::getInstance().setChunkManager(g_engine->getChunkManager());
