@@ -697,6 +697,21 @@ void GLRenderer::processCompletedWork() {
                 glBufferData(GL_ELEMENT_ARRAY_BUFFER, result.indices.size() * sizeof(uint32_t),
                             result.indices.data(), GL_STATIC_DRAW);
 
+                // 创建并配置该 chunk 的 VAO（捕获 attrib 格式 + VBO/EBO 绑定）
+                if (renderData.vao == 0) glGenVertexArrays(1, &renderData.vao);
+                glBindVertexArray(renderData.vao);
+                glBindBuffer(GL_ARRAY_BUFFER, renderData.vbo);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderData.ebo);
+                glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
+                glEnableVertexAttribArray(0);
+                glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float)));
+                glEnableVertexAttribArray(1);
+                glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(5 * sizeof(float)));
+                glEnableVertexAttribArray(2);
+                glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex), (void*)(offsetof(Vertex, color)));
+                glEnableVertexAttribArray(3);
+                glBindVertexArray(0);
+
                 renderData.vertexCount = static_cast<uint32_t>(result.vertices.size());
                 renderData.indexCount = static_cast<uint32_t>(result.indices.size());
                 renderData.overlayIndexCount = result.overlayIndexCount;
@@ -1056,20 +1071,8 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
             continue;
         }
 
-        // 绑定该区块的 VBO/EBO
-        glBindVertexArray(vao);
-        glBindBuffer(GL_ARRAY_BUFFER, renderData.vbo);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderData.ebo);
-
-        // 重新设置顶点属性（因为 VBO 变了）
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float)));
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(5 * sizeof(float)));
-        glEnableVertexAttribArray(2);
-        glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex), (void*)(offsetof(Vertex, color)));
-        glEnableVertexAttribArray(3);
+        // 绑定该区块的 VAO（captures VBO/EBO + attrib 配置）
+        glBindVertexArray(renderData.vao);
 
         // 索引区域划分：[不透明基体 | 草覆盖层(共面，需 LEQUAL) | 水(透明)]
         uint32_t baseEnd = renderData.indexCount - renderData.overlayIndexCount - renderData.waterIndexCount;
@@ -1121,18 +1124,7 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
             waterStateSet = true;
         }
 
-        glBindVertexArray(vao);
-        glBindBuffer(GL_ARRAY_BUFFER, renderData.vbo);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderData.ebo);
-
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float)));
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(5 * sizeof(float)));
-        glEnableVertexAttribArray(2);
-        glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex), (void*)(offsetof(Vertex, color)));
-        glEnableVertexAttribArray(3);
+        glBindVertexArray(renderData.vao);
 
         uint32_t baseEnd = renderData.indexCount - renderData.overlayIndexCount - renderData.waterIndexCount;
         uint32_t grassEnd = baseEnd + renderData.overlayIndexCount;
@@ -1221,6 +1213,9 @@ void GLRenderer::cleanup() {
     
     // 清理所有区块的渲染数据
     for (auto& [chunkKey, renderData] : chunkRenderCache) {
+        if (renderData.vao != 0) {
+            glDeleteVertexArrays(1, &renderData.vao);
+        }
         if (renderData.vbo != 0) {
             glDeleteBuffers(1, &renderData.vbo);
         }

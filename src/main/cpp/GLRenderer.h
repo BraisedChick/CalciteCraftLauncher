@@ -199,6 +199,7 @@ private:
     
     // ===== 区块合批渲染优化 =====
     struct ChunkRenderData {
+        GLuint vao = 0;          // 顶点数组对象（捕获 attrib 配置 + VBO/EBO 绑定）
         GLuint vbo = 0;          // 顶点缓冲
         GLuint ebo = 0;          // 索引缓冲
         uint32_t vertexCount = 0;
