@@ -1,6 +1,7 @@
 #pragma once
 #include <glm/glm.hpp>
 #include <mutex>
+#include <atomic>
 
 class ChunkManager;
 
@@ -55,8 +56,8 @@ private:
     bool keyDown = false;
     bool keySprint = false;
     bool jumpPressed = false;
-    float joystickDX = 0.0f;
-    float joystickDY = 0.0f;
+    std::atomic<float> joystickDX{0.0f};
+    std::atomic<float> joystickDY{0.0f};
 
     glm::vec3 position{-176.0f, 65.0f, -56.0f};
     glm::vec3 prevPosition{-176.0f, 65.0f, -56.0f};

@@ -10,6 +10,7 @@
 #include "BiomeColorManager.h"
 #include "MinecraftVersion.h"
 #include "imgui.h"
+#include "imgui_impl_opengl3.h"
 
 #define LOG_TAG "GLRenderer"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -85,77 +86,6 @@ bool GLRenderer::initialize(ANativeWindow* window) {
         io.DisplaySize = ImVec2((float)screenWidth, (float)screenHeight);
     }
 
-    // 加载纹理到纹理数组
-    LOGI("Loading textures to texture array...");
-
-    int textureCount = TEXTURE_LAYER_COUNT;
-    int texWidth = 16;
-    int texHeight = 16;
-
-    // 先尝试加载第一个纹理获取尺寸
-    {
-        TextureData firstTex = TextureLoader::loadImage(getTextureFileName(0));
-        if (firstTex.data) {
-            texWidth = firstTex.width;
-            texHeight = firstTex.height;
-        } else {
-            LOGW("No texture files found at all, using 16x16 placeholder textures");
-        }
-    }
-
-    // 创建 2D 纹理数组
-    glGenTextures(1, &textureArrayID);
-    glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayID);
-
-    // 分配存储空间
-    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA,
-                 texWidth, texHeight, textureCount,
-                 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-
-    // 加载每个纹理到对应的层
-    for (int i = 0; i < textureCount; i++) {
-        std::string filename = getTextureFileName(i);
-        TextureData texData = TextureLoader::loadImage(filename);
-        if (texData.data) {
-            // 纹理文件加载成功，上传到 GPU
-            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0,
-                           0, 0, i,  // x, y, layer
-                           texWidth, texHeight, 1,
-                           GL_RGBA, GL_UNSIGNED_BYTE,
-                           texData.data);
-            LOGI("Loaded texture %d: %s (layer %d)", i, filename.c_str(), i);
-        } else {
-            // 纹理文件不存在，生成纯色占位纹理
-            LOGW("Texture not found: %s, using placeholder color for layer %d", filename.c_str(), i);
-            uint8_t r, g, b;
-            getPlaceholderColor(i, r, g, b);
-
-            std::vector<uint8_t> placeholder(texWidth * texHeight * 4);
-            for (int p = 0; p < texWidth * texHeight; p++) {
-                placeholder[p * 4 + 0] = r;
-                placeholder[p * 4 + 1] = g;
-                placeholder[p * 4 + 2] = b;
-                placeholder[p * 4 + 3] = 255;
-            }
-
-            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0,
-                           0, 0, i,
-                           texWidth, texHeight, 1,
-                           GL_RGBA, GL_UNSIGNED_BYTE,
-                           placeholder.data());
-        }
-    }
-
-    // 初始化 BiomeColorManager（加载 colormap 和 biome JSON）
-    LOGI("Initializing BiomeColorManager...");
-    BiomeColorManager::getInstance().initialize();
-
-    // 设置纹理参数（必须设置，默认 GL_NEAREST_MIPMAP_LINEAR 在没有 mipmap 时会显示黑色）
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
 
@@ -164,59 +94,133 @@ bool GLRenderer::initialize(ANativeWindow* window) {
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);  // 逆时针为正面
 
-    // ===== 加载水纹理（water_still.png，16x512，32 帧动画）=====
-    glGenTextures(1, &waterTextureID);
-    glBindTexture(GL_TEXTURE_2D, waterTextureID);
-    {
-        TextureData waterTex = TextureLoader::loadImage("water_still.png");
-        if (waterTex.data) {
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-                         waterTex.width, waterTex.height, 0,
-                         GL_RGBA, GL_UNSIGNED_BYTE, waterTex.data);
-            LOGI("Loaded water_still.png: %dx%d", waterTex.width, waterTex.height);
-        } else {
-            // 兜底：生成 16x512 蓝色占位纹理
-            LOGW("water_still.png not found, using placeholder");
-            std::vector<uint8_t> placeholder(16 * 512 * 4, 0);
-            for (int y = 0; y < 512; y++) {
-                for (int x = 0; x < 16; x++) {
-                    int p = (y * 16 + x) * 4;
-                    placeholder[p + 0] = 0x3F;
-                    placeholder[p + 1] = 0x76;
-                    placeholder[p + 2] = 0xE4;
-                    placeholder[p + 3] = 255;
-                }
-            }
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-                         16, 512, 0, GL_RGBA, GL_UNSIGNED_BYTE, placeholder.data());
-        }
-    }
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    // 同步加载 TextureAtlas（仅模型解析，快速 ~1 秒，在 UI 线程执行）
+    LOGI("Initializing TextureAtlas...");
+    TextureAtlas::getInstance().initialize();
+    LOGI("TextureAtlas initialized: %d layers", TextureAtlas::getInstance().getLayerCount());
 
-    // 强制清空旧缓存，重新构建（确保使用最新的 MeshGenerator 代码）
-    LOGI("Clearing chunk render cache...");
-    {
-        std::lock_guard<std::mutex> lock(cacheMutex);
-        for (auto& [chunkKey, renderData] : chunkRenderCache) {
-            if (renderData.vbo != 0) {
-                glDeleteBuffers(1, &renderData.vbo);
-            }
-            if (renderData.ebo != 0) {
-                glDeleteBuffers(1, &renderData.ebo);
-            }
-        }
-        chunkRenderCache.clear();
-    }
-    
-    // 初始化时创建测试方块
-    LOGI("Rebuilding mesh from chunks...");
-    rebuildMeshFromChunks();
+    // 初始化 BiomeColorManager
+    LOGI("Initializing BiomeColorManager...");
+    BiomeColorManager::getInstance().initialize();
+
+    // GL 纹理数组创建和上传延迟到渲染线程（finishTextureInit），避免 ANR
 
     eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     LOGI("=== GLRenderer::initialize SUCCESS ===");
+    return true;
+}
+
+bool GLRenderer::finishTextureInit() {
+    if (!textureInitPending) return true;
+
+    if (textureArrayID == 0) {
+        // 第一帧：创建纹理数组
+        textureTotalCount = TextureAtlas::getInstance().getLayerCount();
+        if (textureTotalCount <= 0) {
+            LOGE("No texture layers to initialize");
+            textureInitPending = false;
+            return false;
+        }
+
+        // 获取第一张纹理的尺寸
+        {
+            TextureData firstTex = TextureLoader::loadImage(
+                TextureAtlas::getInstance().getTextureFileName(0));
+            if (firstTex.data) {
+                textureWidth = firstTex.width;
+                textureHeight = firstTex.height;
+            } else {
+                LOGW("No texture files found, using 16x16 placeholder textures");
+            }
+        }
+
+        LOGI("Creating texture array: %d layers, %dx%d",
+             textureTotalCount, textureWidth, textureHeight);
+
+        glGenTextures(1, &textureArrayID);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayID);
+
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA,
+                     textureWidth, textureHeight, textureTotalCount,
+                     0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+        textureNextBatch = 0;
+    }
+
+    // 逐帧分批上传纹理
+    int end = std::min(textureNextBatch + TEXTURES_PER_FRAME, textureTotalCount);
+    for (int i = textureNextBatch; i < end; i++) {
+        std::string filename = TextureAtlas::getInstance().getTextureFileName(i);
+        TextureData texData = TextureLoader::loadImage(filename);
+        if (texData.data) {
+            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0,
+                           0, 0, i,
+                           textureWidth, textureHeight, 1,
+                           GL_RGBA, GL_UNSIGNED_BYTE,
+                           texData.data);
+        } else {
+            LOGW("Texture not found: %s, using placeholder for layer %d", filename.c_str(), i);
+            uint8_t r, g, b;
+            TextureAtlas::getInstance().getPlaceholderColor(i, r, g, b);
+            std::vector<uint8_t> placeholder(textureWidth * textureHeight * 4);
+            for (int p = 0; p < textureWidth * textureHeight; p++) {
+                placeholder[p * 4 + 0] = r;
+                placeholder[p * 4 + 1] = g;
+                placeholder[p * 4 + 2] = b;
+                placeholder[p * 4 + 3] = 255;
+            }
+            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0,
+                           0, 0, i,
+                           textureWidth, textureHeight, 1,
+                           GL_RGBA, GL_UNSIGNED_BYTE,
+                           placeholder.data());
+        }
+    }
+    textureNextBatch = end;
+
+    if (textureNextBatch >= textureTotalCount) {
+        // 全部纹理上传完成，加载水纹理
+        LOGI("All %d textures uploaded, loading water texture...", textureTotalCount);
+
+        glGenTextures(1, &waterTextureID);
+        glBindTexture(GL_TEXTURE_2D, waterTextureID);
+        {
+            TextureData waterTex = TextureLoader::loadImage("water_still.png");
+            if (waterTex.data) {
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+                             waterTex.width, waterTex.height, 0,
+                             GL_RGBA, GL_UNSIGNED_BYTE, waterTex.data);
+                LOGI("Loaded water_still.png: %dx%d", waterTex.width, waterTex.height);
+            } else {
+                LOGW("water_still.png not found, using placeholder");
+                std::vector<uint8_t> placeholder(16 * 512 * 4, 0);
+                for (int y = 0; y < 512; y++) {
+                    for (int x = 0; x < 16; x++) {
+                        int p = (y * 16 + x) * 4;
+                        placeholder[p + 0] = 0x3F;
+                        placeholder[p + 1] = 0x76;
+                        placeholder[p + 2] = 0xE4;
+                        placeholder[p + 3] = 255;
+                    }
+                }
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+                             16, 512, 0, GL_RGBA, GL_UNSIGNED_BYTE, placeholder.data());
+            }
+        }
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+        textureInitPending = false;
+        LOGI("=== finishTextureInit COMPLETE ===");
+    }
+
     return true;
 }
 
@@ -965,6 +969,11 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     // 处理工作线程完成的网格结果（每帧优先上传）
     processCompletedWork();
 
+    // 逐帧分批加载纹理数组（每帧 TEXTURES_PER_FRAME 张，不阻塞 UI 线程）
+    if (textureInitPending) {
+        finishTextureInit();
+    }
+
     // 如果需要重建网格，在渲染线程中入队新任务
     if (needRebuildMesh) {
         needRebuildMesh = rebuildMeshFromChunks();
@@ -1198,6 +1207,9 @@ void GLRenderer::cleanup() {
         std::lock_guard<std::mutex> lock(pendingMutex);
         pendingChunks.clear();
     }
+
+    // 重置纹理初始化状态
+    textureInitPending = true;
 
     // 清理纹理数组
     if (textureArrayID != 0) {

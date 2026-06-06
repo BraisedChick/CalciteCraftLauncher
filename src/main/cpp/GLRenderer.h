@@ -81,11 +81,17 @@ public:
     void setRenderDistance(int chunks);
     int getRenderDistance() const { return static_cast<int>(farPlane / 16.0f); }
 
+    // 纹理数组初始化是否已完成（渲染线程延迟初始化）
+    bool isTextureInitComplete() const { return !textureInitPending; }
+
     // 从区块数据重建网格，返回 true 表示还有更多区块需要处理
     bool rebuildMeshFromChunks();
-    
+
     // 标记指定区块需要更新
     void markChunkForUpdate(int chunkX, int chunkZ);
+
+    // 在渲染线程上完成纹理数组初始化（避免 ANR）
+    bool finishTextureInit();
 
 private:
     // ===== 工作线程（离线网格生成）=====
@@ -223,4 +229,12 @@ private:
 
     // 上一帧的相机位置（用于区块加载距离计算）
     float lastCameraX = 0.0f, lastCameraY = 0.0f, lastCameraZ = 0.0f;
+
+    // 纹理数组延迟初始化标志（在渲染线程上分批完成，避免 ANR）
+    bool textureInitPending = true;
+    int textureTotalCount = 0;
+    int textureNextBatch = 0;
+    int textureWidth = 16;
+    int textureHeight = 16;
+    static constexpr int TEXTURES_PER_FRAME = 200;  // 每帧最多上传的纹理数
 };

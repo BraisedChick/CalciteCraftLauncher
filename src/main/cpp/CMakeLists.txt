@@ -40,6 +40,7 @@ set(SOURCES
     BlockRegistry.cpp
     CameraController.cpp
     Collision.cpp
+    TextureAtlas.cpp
     BiomeColorManager.cpp
     GameUI.cpp
     ResourcepackManager.cpp

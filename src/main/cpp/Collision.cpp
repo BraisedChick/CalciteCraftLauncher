@@ -48,9 +48,8 @@ void Collision::setKeyState(int key, bool pressed) {
 }
 
 void Collision::setJoystickInput(float dx, float dy) {
-    std::lock_guard<std::mutex> lock(mutex);
-    joystickDX = dx;
-    joystickDY = dy;
+    joystickDX.store(dx);
+    joystickDY.store(dy);
 }
 
 // ===== 物理更新 =====
@@ -119,11 +118,13 @@ void Collision::tick() {
     if (keyD) moveDir += right;
 
     // 摇杆
-    if (fabs(joystickDY) > 0.1f) {
-        moveDir += horizontalFront * (-joystickDY);
+    float jdy = joystickDY.load();
+    if (fabs(jdy) > 0.1f) {
+        moveDir += horizontalFront * (-jdy);
     }
-    if (fabs(joystickDX) > 0.1f) {
-        moveDir += right * joystickDX;
+    float jdx = joystickDX.load();
+    if (fabs(jdx) > 0.1f) {
+        moveDir += right * jdx;
     }
 
     // ===== 旁观者模式：无视碰撞，自由飞行 =====
@@ -134,8 +135,8 @@ void Collision::tick() {
         if (keyS) specDir -= front;
         if (keyA) specDir -= right;
         if (keyD) specDir += right;
-        if (fabs(joystickDY) > 0.1f) specDir += front * -joystickDY;
-        if (fabs(joystickDX) > 0.1f) specDir += right * joystickDX;
+        if (fabs(jdy) > 0.1f) specDir += front * -jdy;
+        if (fabs(jdx) > 0.1f) specDir += right * jdx;
         if (glm::length(specDir) > 0.001f) {
             specDir = glm::normalize(specDir);
             position += specDir * SPECTATOR_SPEED;
@@ -150,7 +151,7 @@ void Collision::tick() {
 
     // ---- 水平输入 → 速度 ----
     // 疾跑判定：按下疾跑键且正在向前移动
-    bool sprinting = keySprint && (keyW || joystickDY < -0.1f);
+    bool sprinting = keySprint && (keyW || joystickDY.load(std::memory_order_relaxed) < -0.1f);
     float accel = sprinting ? SPRINT_MOVE_ACCELERATION : MOVE_ACCELERATION;
     float speedCap = sprinting ? SPRINT_MOVE_SPEED : MOVE_SPEED;
 

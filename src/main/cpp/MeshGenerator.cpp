@@ -7,12 +7,24 @@
 #include <string>
 #include <cmath>
 
+// 添加 GLM（用于模型元素旋转）
+#define GLM_FORCE_RADIANS
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
 #define LOG_TAG "MeshGenerator"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 // 面索引
 enum Face : int { TOP = 0, BOTTOM, RIGHT, LEFT, FRONT, BACK };
+
+// 模型 FaceDir → Face 映射表（用于 FV 顶点模板索引和 cullface 邻居查询）
+// FaceDir:   DOWN=0, UP=1, NORTH=2, SOUTH=3, WEST=4, EAST=5
+// Face:      TOP=0, BOTTOM=1, RIGHT=2, LEFT=3, FRONT=4, BACK=5
+// DOWN→BOTTOM(1), UP→TOP(0), NORTH→BACK(5), SOUTH→FRONT(4), WEST→LEFT(3), EAST→RIGHT(2)
+static const int8_t FACEDIR_TO_FACE[6] = {1, 0, 5, 4, 3, 2};
 
 // ===== 面顶点模板 =====
 // 每个面 4 个顶点: {ox, oy, oz, u, v}，相对 (0,0,0) 偏移，范围 [0,1]
@@ -51,7 +63,212 @@ static void addCubicFace(
     indices.push_back(base);     indices.push_back(base + 2); indices.push_back(base + 3);
 }
 
+// ===== 模型驱动渲染辅助函数 =====
+
+// 绕轴旋转点（在元素 0-16 坐标空间中）
+static void rotateVertex(float& x, float& y, float& z,
+                          const ElementRotation& rot) {
+    if (rot.angle == 0.0f) return;
+
+    // 平移到旋转原点
+    float dx = x - rot.origin[0];
+    float dy = y - rot.origin[1];
+    float dz = z - rot.origin[2];
+
+    float rad = rot.angle * (3.14159265f / 180.0f);
+    float cosA = cosf(rad);
+    float sinA = sinf(rad);
+
+    float nx, ny, nz;
+    switch (rot.axis) {
+        case 0: // X 轴
+            ny = dy * cosA - dz * sinA;
+            nz = dy * sinA + dz * cosA;
+            nx = dx;
+            break;
+        case 1: // Y 轴
+            nx = dx * cosA + dz * sinA;
+            nz = -dx * sinA + dz * cosA;
+            ny = dy;
+            break;
+        case 2: // Z 轴
+            nx = dx * cosA - dy * sinA;
+            ny = dx * sinA + dy * cosA;
+            nz = dz;
+            break;
+        default:
+            return;
+    }
+
+    x = rot.origin[0] + nx;
+    y = rot.origin[1] + ny;
+    z = rot.origin[2] + nz;
+}
+
+// 根据模型元素 elements 生成顶点
+// vertices/indices: 输出到 base 几何体
+// overlayVertices/overlayIndices: 输出草覆盖层几何体
+// isGrassBlock, isSnowCovered, grassSideLayer, grassOverlayLayer 用于草地覆盖层特判
+static void generateFromModel(
+    std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
+    std::vector<Vertex>& overlayVertices, std::vector<uint32_t>& overlayIndices,
+    const ResolvedBlockModel& model,
+    float blockX, float blockY, float blockZ,  // 方块世界坐标
+    const int32_t neighborStates[6],           // 6 个方向的邻居 blockState
+    bool isGrassBlock, bool isSnowCovered,
+    float grassSideLayer, float grassOverlayLayer,
+    uint8_t tintR, uint8_t tintG, uint8_t tintB,
+    int biomeId,
+    const std::unordered_map<int32_t, bool>* solidCache) {
+
+    // 用于 face 面剔除检测（优先使用外部缓存，避免重复 getBlockMetadata）
+    auto isNeighborSolid = [solidCache](int32_t state) -> bool {
+        if (state == 0) return false;
+        if (solidCache) {
+            auto it = solidCache->find(state);
+            if (it != solidCache->end()) return it->second;
+        }
+        return BlockRegistry::getInstance().getBlockMetadata(state).isFullBlock;
+    };
+
+    for (const auto& elem : model.elements) {
+        float ew = elem.to[0] - elem.from[0];
+        float eh = elem.to[1] - elem.from[1];
+        float ed = elem.to[2] - elem.from[2];
+        float fx = elem.from[0], fy = elem.from[1], fz = elem.from[2];
+
+        for (int dir = 0; dir < 6; dir++) {
+            if (!elem.hasFaces[dir]) continue;
+
+            const ModelFaceData& face = elem.faces[dir];
+
+            // cullface 剔除：检查 cull 方向的邻居
+            // FaceDir 枚举值 ≠ Face 枚举值，用 FACEDIR_TO_FACE 映射
+            if (face.cullface >= 0 && face.cullface < 6) {
+                int32_t neighbor = neighborStates[FACEDIR_TO_FACE[face.cullface]];
+                if (neighbor != 0 && isNeighborSolid(neighbor)) {
+                    continue; // 被邻居遮挡，跳过该面
+                }
+            }
+
+            // 确定该面的顶点 UV 和坐标缩放
+            // 使用 FACE_VERTS 作为模板，但映射到元素尺寸
+            // FACE_VERTS 定义: {ox, oy, oz, u, v} 在 0-1 范围
+
+            uint32_t baseIdx = static_cast<uint32_t>(vertices.size());
+            uint32_t overlayBase = static_cast<uint32_t>(overlayVertices.size());
+
+            // UV 范围 (0-1)
+            float u1 = face.uv[0] / 16.0f;
+            float v1 = face.uv[1] / 16.0f;
+            float u2 = face.uv[2] / 16.0f;
+            float v2 = face.uv[3] / 16.0f;
+
+            // 根据面方向生成 4 个顶点
+            // dir 是 FaceDir 枚举值(DOWN=0,UP=1,NORTH=2,SOUTH=3,WEST=4,EAST=5)，
+            // 用 FACEDIR_TO_FACE 映射到 FV 数组的 Face 枚举索引
+            static const float FV[6][4][5] = {
+                {{0,1,1,0,0},{1,1,1,1,0},{1,1,0,1,1},{0,1,0,0,1}}, // TOP (0)
+                {{0,0,0,0,1},{1,0,0,1,1},{1,0,1,1,0},{0,0,1,0,0}}, // BOTTOM (1)
+                {{1,0,1,0,1},{1,0,0,1,1},{1,1,0,1,0},{1,1,1,0,0}}, // RIGHT / EAST (2)
+                {{0,0,0,0,1},{0,0,1,1,1},{0,1,1,1,0},{0,1,0,0,0}}, // LEFT / WEST (3)
+                {{0,0,1,0,1},{1,0,1,1,1},{1,1,1,1,0},{0,1,1,0,0}}, // FRONT / NORTH (4)
+                {{1,0,0,0,1},{0,0,0,1,1},{0,1,0,1,0},{1,1,0,0,0}}, // BACK / SOUTH (5)
+            };
+            int fvIndex = FACEDIR_TO_FACE[dir];
+
+            // 是否需要草覆盖层（grass block side overlay 的特判）
+            bool needsOverlay = false;
+            float texLayer = static_cast<float>(face.textureLayer);
+
+            // 草地特判：如果是 grass_block 的 side 面且不是雪覆盖
+            if (isGrassBlock && !isSnowCovered) {
+                // 侧边四个面（不是顶/底）
+                if (dir == FACE_NORTH || dir == FACE_SOUTH ||
+                    dir == FACE_WEST || dir == FACE_EAST) {
+                    // 检查纹理是否为 grass_side，若是则覆盖为 grass_side + overlay
+                    // 这里简化处理：草地侧面固定使用 grassSideLayer 和 overlay
+                    // 因为 grass_block 的 side 纹理总是 grass_block_side
+                    needsOverlay = true;
+                    texLayer = grassSideLayer;
+                }
+            } else if (isSnowCovered && dir == FACE_UP) {
+                // 雪覆盖的草地顶面
+                texLayer = static_cast<float>(TextureAtlas::getInstance().getGrassBlockSnowLayer());
+            }
+
+            // 确定面的颜色（所有 4 个顶点相同，提出到循环外）
+            uint8_t cr = 255, cg = 255, cb = 255;
+            if (face.tintindex == 0) {
+                BiomeColorManager::getInstance().getGrassColor(biomeId, cr, cg, cb);
+            } else if (face.tintindex == 1) {
+                BiomeColorManager::getInstance().getFoliageColor(biomeId, cr, cg, cb);
+            } else if (needsOverlay) {
+                // overlay 面：base 面白色，颜色由 overlay 携带
+                cr = 255; cg = 255; cb = 255;
+            } else if (tintR != 255 || tintG != 255 || tintB != 255) {
+                cr = tintR; cg = tintG; cb = tintB;
+            }
+
+            // 批量生成 4 个顶点到局部数组，一次性 insert
+            Vertex faceVerts[4];
+            for (int v = 0; v < 4; v++) {
+                const float* fv = FV[fvIndex][v];
+
+                float lx = fx + fv[0] * ew;
+                float ly = fy + fv[1] * eh;
+                float lz = fz + fv[2] * ed;
+
+                if (elem.rotation.angle != 0.0f) {
+                    rotateVertex(lx, ly, lz, elem.rotation);
+                }
+
+                faceVerts[v].pos[0] = blockX + lx / 16.0f;
+                faceVerts[v].pos[1] = blockY + ly / 16.0f;
+                faceVerts[v].pos[2] = blockZ + lz / 16.0f;
+                faceVerts[v].texCoord[0] = u1 + fv[3] * (u2 - u1);
+                faceVerts[v].texCoord[1] = v1 + fv[4] * (v2 - v1);
+                faceVerts[v].texIndex = texLayer;
+                faceVerts[v].color[0] = cr;
+                faceVerts[v].color[1] = cg;
+                faceVerts[v].color[2] = cb;
+                faceVerts[v].color[3] = 255;
+            }
+            vertices.insert(vertices.end(), faceVerts, faceVerts + 4);
+
+            // 两个三角形 (CCW)，批量插入
+            uint32_t triIdx[6] = {
+                baseIdx, baseIdx + 1, baseIdx + 2,
+                baseIdx, baseIdx + 2, baseIdx + 3
+            };
+            indices.insert(indices.end(), triIdx, triIdx + 6);
+
+            // 草覆盖层（额外的半透明 overlay 四边形）
+            if (needsOverlay) {
+                Vertex overlayVerts[4];
+                for (int v = 0; v < 4; v++) {
+                    overlayVerts[v] = faceVerts[v];
+                    overlayVerts[v].texIndex = grassOverlayLayer;
+                    overlayVerts[v].color[0] = tintR;
+                    overlayVerts[v].color[1] = tintG;
+                    overlayVerts[v].color[2] = tintB;
+                    overlayVerts[v].color[3] = 255;
+                }
+                overlayVertices.insert(overlayVertices.end(), overlayVerts, overlayVerts + 4);
+                uint32_t ovIdx[6] = {
+                    overlayBase, overlayBase + 1, overlayBase + 2,
+                    overlayBase, overlayBase + 2, overlayBase + 3
+                };
+                overlayIndices.insert(overlayIndices.end(), ovIdx, ovIdx + 6);
+            }
+        }
+    }
+
+}
+
+// ============================================================
 // 辅助函数：获取全局坐标的 blockState
+// ============================================================
 int32_t MeshGenerator::getBlockStateAt(int x, int y, int z, const ChunkManager* chunkManager) {
     if (!chunkManager) return 0;
 
@@ -83,24 +300,6 @@ int32_t MeshGenerator::getBlockStateAt(int x, int y, int z, const ChunkManager* 
     return 0;
 }
 
-std::vector<Vertex> MeshGenerator::generateMesh(const Chunk& chunk) {
-    std::vector<Vertex> vertices;
-    std::vector<uint32_t> indices;
-
-    for (size_t sectionIdx = 0; sectionIdx < chunk.sections.size(); ++sectionIdx) {
-        const auto& section = chunk.sections[sectionIdx];
-        if (!section || section->isEmpty) continue;
-        int sectionY = section->y;
-        auto meshOut = generateSectionMesh(*section, chunk.pos.x, sectionY, chunk.pos.z, nullptr);
-        uint32_t vertexOffset = static_cast<uint32_t>(vertices.size());
-        for (uint32_t idx : meshOut.indices) {
-            indices.push_back(vertexOffset + idx);
-        }
-        vertices.insert(vertices.end(), meshOut.vertices.begin(), meshOut.vertices.end());
-    }
-    return vertices;
-}
-
 std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateMeshWithIndices(const Chunk& chunk) {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
@@ -128,15 +327,21 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
     std::vector<uint32_t> overlayIndices;
     std::vector<Vertex> waterVertices;
     std::vector<uint32_t> waterIndices;
-    baseVertices.reserve(20000);
-    baseIndices.reserve(30000);
-    overlayVertices.reserve(4000);
-    overlayIndices.reserve(6000);
-    waterVertices.reserve(2000);
-    waterIndices.reserve(3000);
+    baseVertices.reserve(50000);
+    baseIndices.reserve(75000);
+    overlayVertices.reserve(8000);
+    overlayIndices.reserve(12000);
+    waterVertices.reserve(4000);
+    waterIndices.reserve(6000);
     float baseX = chunkX * CHUNK_WIDTH;
     float baseY = static_cast<float>(sectionY);
     float baseZ = chunkZ * CHUNK_DEPTH;
+
+    // 缓存特殊纹理层索引（从 TextureAtlas 动态查询）
+    auto& atlas = TextureAtlas::getInstance();
+    float grassSideLayer = static_cast<float>(atlas.getGrassSideLayer());
+    float grassOverlayLayer = static_cast<float>(atlas.getGrassSideOverlayLayer());
+    float grassSnowLayer = static_cast<float>(atlas.getGrassBlockSnowLayer());
 
     // ---- 相邻 Section blockStates 缓存 ----
     const int32_t* const selfData = section.blockStates.data();
@@ -241,6 +446,16 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         return solid;
     };
 
+    // 模型缓存：按方块名缓存 getBlockModel 结果，避免重复 string map 查找
+    std::unordered_map<std::string, const ResolvedBlockModel*> modelCache;
+    auto getModel = [&](const std::string& name) -> const ResolvedBlockModel* {
+        auto it = modelCache.find(name);
+        if (it != modelCache.end()) return it->second;
+        auto* m = atlas.getBlockModel(name);
+        modelCache[name] = m;
+        return m;
+    };
+
 // 在函数末尾（return 之前）打印统计
 
     // 遍历所有方块
@@ -255,6 +470,9 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
 
                 auto& registry = BlockRegistry::getInstance();
                 const auto& blockMeta = registry.getBlockMetadata(blockState);
+
+                // 跳过空气变种（如 cave_air, void_air）
+                if (blockMeta.isAir) continue;
 
                 // 生物群系颜色
                 uint8_t tintR = 255, tintG = 255, tintB = 255;
@@ -296,7 +514,29 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     n[BACK]   = getLocalBlockState(x, localY, z - 1);
                 }
 
-                // ===== 植物 =====
+                // ===== 模型驱动渲染（优先，适用于所有有模型数据的方块） =====
+                // 跳过水：水使用独立的渲染管道（alpha blend + 动画纹理）
+                bool isSnowCovered2 = (blockMeta.isGrassBlock && n[TOP] != 0 &&
+                                      BlockRegistry::getInstance().getBlockMetadata(n[TOP]).isSnow);
+                if (!blockMeta.isWater) {
+                    const auto* blockModel = getModel(blockMeta.name);
+                    if (blockModel && !blockModel->elements.empty()) {
+                        generateFromModel(
+                            baseVertices, baseIndices,
+                            overlayVertices, overlayIndices,
+                            *blockModel,
+                            posX, posY, posZ,
+                            n,
+                            blockMeta.isGrassBlock, isSnowCovered2,
+                            grassSideLayer, grassOverlayLayer,
+                            tintR, tintG, tintB,
+                            biomeId,
+                            &solidCache);
+                        continue;
+                    }
+                }
+
+                // ===== 植物（旧回退） =====
                 if (blockMeta.isPlant) {
                     uint8_t plantR = 255, plantG = 255, plantB = 255;
                     BiomeColorManager::getInstance().getGrassColor(biomeId, plantR, plantG, plantB);
@@ -364,7 +604,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                 // 顶面
                 if (renderTop) {
                     float topTex = isSnowCovered
-                        ? static_cast<float>(TEX_GRASS_BLOCK_SNOW)
+                        ? grassSnowLayer
                         : static_cast<float>(tex.top);
                     addCubicFace(baseVertices, baseIndices, TOP,
                                  posX, posY, posZ, blockHeight, topTex, tintR, tintG, tintB, 255);
@@ -387,10 +627,10 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     bool needsOverlay = false;
 
                     if (isGrassSide) {
-                        sideTex = static_cast<float>(TEX_GRASS_SIDE);
+                        sideTex = grassSideLayer;
                         needsOverlay = true;
                     } else if (isSnowCovered) {
-                        sideTex = static_cast<float>(TEX_GRASS_BLOCK_SNOW);
+                        sideTex = grassSnowLayer;
                     } else {
                         sideTex = static_cast<float>(tex.side);
                         sr = tintR; sg = tintG; sb = tintB;
@@ -402,7 +642,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     if (needsOverlay) {
                         addCubicFace(overlayVertices, overlayIndices, sf,
                                      posX, posY, posZ, blockHeight,
-                                     static_cast<float>(TEX_GRASS_SIDE_OVERLAY),
+                                     grassOverlayLayer,
                                      tintR, tintG, tintB, 255);
                     }
                 }

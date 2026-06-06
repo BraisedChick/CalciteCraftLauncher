@@ -58,30 +58,44 @@ Java_com_calcite_MainActivity_connectToServer(
     g_mainActivityObj = env->NewGlobalRef(thiz);
     JNI_LOGI("Saved JavaVM=%p and MainActivity global ref", g_jvm);
 
-    if (g_engine) {
-        delete g_engine;
-        g_engine = nullptr;
-    }
-
-    g_engine = new ClientEngine();
-
-    // 加载语言文件（如 zh_cn.json，用于死亡消息翻译）
-    {
-        std::string langJson = TextureLoader::readTextFromZip("lang/zh_cn.json");
-        if (!langJson.empty()) {
-            g_engine->loadLanguage(langJson);
-        } else {
-            JNI_LOGI("No lang/zh_cn.json found in resourcepack");
+    // 在后台线程中启动网络连接，避免阻塞主线程
+    std::thread([addr = std::string(addr), port, name = std::string(name)]() {
+        if (g_engine) {
+            delete g_engine;
+            g_engine = nullptr;
         }
-    }
 
-    bool success = g_engine->start(addr, port, name);
+        g_engine = new ClientEngine();
+
+        // 加载语言文件
+        {
+            std::string langJson = TextureLoader::readTextFromZip("lang/zh_cn.json");
+            if (!langJson.empty()) {
+                g_engine->loadLanguage(langJson);
+            } else {
+                JNI_LOGI("No lang/zh_cn.json found in resourcepack");
+            }
+        }
+
+        // 先设置 ChunkManager，让 render 线程能从 g_engine 中获取
+        if (g_glRenderer) {
+            g_engine->setRenderer(g_glRenderer);
+        }
+        GameUI::getInstance().setState(UIState::IN_GAME);
+
+        g_engine->start(addr, port, name);
+
+        // 断开连接后回到服务器列表
+        JNI_LOGI("Disconnected, returning to server list");
+        GameUI::getInstance().setState(UIState::MULTIPLAYER);
+        GameUI::getInstance().setGameMenuOpen(false);
+    }).detach();
 
     env->ReleaseStringUTFChars(address, addr);
     env->ReleaseStringUTFChars(username, name);
 
-    JNI_LOGI("Connection result: %s", success ? "success" : "failed");
-    return success ? JNI_TRUE : JNI_FALSE;
+    JNI_LOGI("Connection thread started");
+    return JNI_TRUE;
 }
 
 static void renderLoop() {
@@ -411,7 +425,8 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_calcite_MainActivity_renderFrame(
         JNIEnv* env, jobject thiz) {
 
-    if (!g_initialized) {
+    if (!g_initialized || g_rendering) {
+        // C++ 渲染线程已在运行，避免双重渲染冲突
         return;
     }
 

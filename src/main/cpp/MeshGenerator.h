@@ -24,7 +24,6 @@ public:
         uint32_t waterIndexCount = 0;    // 水索引数（需 alpha blend，不写深度）
     };
 
-    static std::vector<Vertex> generateMesh(const Chunk& chunk);
     static std::pair<std::vector<Vertex>, std::vector<uint32_t>> generateMeshWithIndices(const Chunk& chunk);
     static SectionMeshOutput generateSectionMesh(
         const ChunkSection& section,
