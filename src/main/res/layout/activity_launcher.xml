@@ -4,7 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="horizontal"
-    android:background="@drawable/background_light">
+    android:background="@drawable/hmcl_bakcground">
 
     <!-- 左侧菜单栏 -->
     <LinearLayout

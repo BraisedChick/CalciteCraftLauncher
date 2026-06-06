@@ -105,6 +105,77 @@ static void rotateVertex(float& x, float& y, float& z,
     z = rot.origin[2] + nz;
 }
 
+// 将 cullface 方向（FaceDir）依次经元素旋转 + blockstate 旋转后，返回变换后的 FaceDir
+static int8_t transformCullface(int8_t cullface, const ElementRotation& elemRot, int bsRotX, int bsRotY) {
+    // FaceDir: DOWN=0,UP=1,NORTH=2,SOUTH=3,WEST=4,EAST=5
+    static const float DIRS[6][3] = {
+        { 0, -1,  0},  // DOWN
+        { 0,  1,  0},  // UP
+        { 0,  0, -1},  // NORTH
+        { 0,  0,  1},  // SOUTH
+        {-1,  0,  0},  // WEST
+        { 1,  0,  0},  // EAST
+    };
+
+    float x = DIRS[cullface][0];
+    float y = DIRS[cullface][1];
+    float z = DIRS[cullface][2];
+
+    // 1. 元素旋转（与 rotateVertex 一致，正角度）
+    if (elemRot.angle != 0.0f) {
+        float rad = elemRot.angle * (3.14159265f / 180.0f);
+        float cosA = cosf(rad), sinA = sinf(rad);
+        float nx, ny, nz;
+        switch (elemRot.axis) {
+            case 0: // X
+                ny = y * cosA - z * sinA;
+                nz = y * sinA + z * cosA;
+                nx = x;
+                break;
+            case 1: // Y
+                nx = x * cosA + z * sinA;
+                nz = -x * sinA + z * cosA;
+                ny = y;
+                break;
+            case 2: // Z
+                nx = x * cosA - y * sinA;
+                ny = x * sinA + y * cosA;
+                nz = z;
+                break;
+            default:
+                nx = x; ny = y; nz = z;
+        }
+        x = nx; y = ny; z = nz;
+    }
+
+    // 2. Blockstate 旋转 bsRotX（与顶点代码一致，负角度）
+    if (bsRotX != 0) {
+        float rad = -bsRotX * (3.14159265f / 180.0f);
+        float cosA = cosf(rad), sinA = sinf(rad);
+        float ny = y * cosA - z * sinA;
+        float nz = y * sinA + z * cosA;
+        y = ny; z = nz;
+    }
+
+    // 3. Blockstate 旋转 bsRotY（与顶点代码一致，负角度）
+    if (bsRotY != 0) {
+        float rad = -bsRotY * (3.14159265f / 180.0f);
+        float cosA = cosf(rad), sinA = sinf(rad);
+        float nx = x * cosA + z * sinA;
+        float nz = -x * sinA + z * cosA;
+        x = nx; z = nz;
+    }
+
+    // 找到最接近的单位轴向
+    int8_t best = cullface;
+    float bestDot = -999.0f;
+    for (int d = 0; d < 6; d++) {
+        float dot = x * DIRS[d][0] + y * DIRS[d][1] + z * DIRS[d][2];
+        if (dot > bestDot) { bestDot = dot; best = (int8_t)d; }
+    }
+    return best;
+}
+
 // 根据模型元素 elements 生成顶点
 // vertices/indices: 输出到 base 几何体
 // overlayVertices/overlayIndices: 输出草覆盖层几何体
@@ -145,8 +216,10 @@ static void generateFromModel(
 
             // cullface 剔除：检查 cull 方向的邻居
             // FaceDir 枚举值 ≠ Face 枚举值，用 FACEDIR_TO_FACE 映射
+            // cullface 方向需经元素旋转和 blockstate 旋转变换
             if (face.cullface >= 0 && face.cullface < 6) {
-                int32_t neighbor = neighborStates[FACEDIR_TO_FACE[face.cullface]];
+                int8_t actualCullface = transformCullface(face.cullface, elem.rotation, bsRotX, bsRotY);
+                int32_t neighbor = neighborStates[FACEDIR_TO_FACE[actualCullface]];
                 if (neighbor != 0 && isNeighborSolid(neighbor)) {
                     continue; // 被邻居遮挡，跳过该面
                 }
