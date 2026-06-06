@@ -578,6 +578,51 @@ void GLRenderer::stopWorker() {
     workerThreads.clear();
 }
 
+void GLRenderer::clearChunks() {
+    pendingClear.store(true);
+}
+
+void GLRenderer::doClearChunks() {
+    LOGI("doClearChunks: Clearing all chunk render data...");
+
+    // 1. 停止所有工作线程
+    stopWorker();
+
+    // 2. 清空所有队列
+    {
+        std::lock_guard<std::mutex> lock(workMutex);
+        while (!workQueue.empty()) workQueue.pop();
+    }
+    {
+        std::lock_guard<std::mutex> lock(resultMutex);
+        while (!resultQueue.empty()) resultQueue.pop();
+    }
+    {
+        std::lock_guard<std::mutex> lock(pendingMutex);
+        pendingChunks.clear();
+    }
+
+    // 3. 删除所有区块的 VAO/VBO/EBO（渲染线程，GL context 已 current）
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        for (auto& [chunkKey, renderData] : chunkRenderCache) {
+            if (renderData.vao != 0) glDeleteVertexArrays(1, &renderData.vao);
+            if (renderData.vbo != 0) glDeleteBuffers(1, &renderData.vbo);
+            if (renderData.ebo != 0) glDeleteBuffers(1, &renderData.ebo);
+        }
+        chunkRenderCache.clear();
+        dirtyChunks.clear();
+        lastChunkCount = 0;
+    }
+
+    needRebuildMesh.store(false);
+
+    // 4. 重新启动工作线程
+    startWorker();
+
+    LOGI("doClearChunks: All chunk render data cleared");
+}
+
 void GLRenderer::enqueueWork(ChunkWorkItem item) {
     {
         std::lock_guard<std::mutex> lock(workMutex);
@@ -964,6 +1009,11 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         renderUI();
         eglSwapBuffers(display, surface);
         return;
+    }
+
+    // 检查是否需要清除所有区块（断连时清理 VAO/VBO）
+    if (pendingClear.exchange(false)) {
+        doClearChunks();
     }
 
     // 处理工作线程完成的网格结果（每帧优先上传）

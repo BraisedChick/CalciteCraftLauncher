@@ -93,6 +93,10 @@ public:
     // 在渲染线程上完成纹理数组初始化（避免 ANR）
     bool finishTextureInit();
 
+    // 断开连接时清理所有区块 VAO/VBO/EBO（线程安全，渲染线程实际执行）
+    void clearChunks();
+    void doClearChunks();
+
 private:
     // ===== 工作线程（离线网格生成）=====
     struct ChunkWorkItem {
@@ -188,6 +192,7 @@ private:
     // 区块管理（原子指针，跨线程安全）
     std::atomic<ChunkManager*> chunkManager{nullptr};
     std::atomic<bool> needRebuildMesh{false};  // 标记是否需要重建网格
+    std::atomic<bool> pendingClear{false};     // 标记是否需要清除所有区块（断连时）
 
     // 脏区块集合（只记录需要更新网格的区块，避免每次遍历所有区块）
     std::unordered_set<uint64_t> dirtyChunks;  // 由 cacheMutex 保护

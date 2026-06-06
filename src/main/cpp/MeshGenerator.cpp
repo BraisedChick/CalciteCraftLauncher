@@ -618,10 +618,30 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     // Blockstate 变体查找（获取朝向对应的模型和旋转）
                     const BlockStateVariant* variant = atlas.getBlockStateVariant(
                         blockMeta.name, blockState, blockMeta.minStateId);
-                    const std::string* modelName = variant ? &variant->modelName : &blockMeta.name;
-                    int bsRotX = variant ? variant->rotX : 0;
-                    int bsRotY = variant ? variant->rotY : 0;
-
+                    if (variant && !variant->models.empty()) {
+                        bool renderedAny = false;
+                        for (const auto& modelEntry : variant->models) {
+                            const auto* blockModel = getModel(modelEntry.modelName);
+                            if (blockModel && !blockModel->elements.empty()) {
+                                generateFromModel(
+                                    baseVertices, baseIndices,
+                                    overlayVertices, overlayIndices,
+                                    *blockModel,
+                                    posX, posY, posZ,
+                                    n,
+                                    blockMeta.isGrassBlock, isSnowCovered2,
+                                    grassSideLayer, grassOverlayLayer,
+                                    tintR, tintG, tintB,
+                                    biomeId,
+                                    &solidCache,
+                                    modelEntry.rotX, modelEntry.rotY);
+                                renderedAny = true;
+                            }
+                        }
+                        if (renderedAny) continue;
+                    }
+                    // 无变体：使用 blockMeta.name 回退
+                    const std::string* modelName = &blockMeta.name;
                     const auto* blockModel = getModel(*modelName);
                     if (blockModel && !blockModel->elements.empty()) {
                         generateFromModel(
@@ -635,7 +655,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                             tintR, tintG, tintB,
                             biomeId,
                             &solidCache,
-                            bsRotX, bsRotY);
+                            0, 0);
                         continue;
                     }
                 }

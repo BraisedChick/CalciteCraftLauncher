@@ -87,6 +87,9 @@ Java_com_calcite_MainActivity_connectToServer(
 
         // 断开连接后回到服务器列表
         JNI_LOGI("Disconnected, returning to server list");
+        if (g_glRenderer) {
+            g_glRenderer->clearChunks();
+        }
         GameUI::getInstance().setState(UIState::MULTIPLAYER);
         GameUI::getInstance().setGameMenuOpen(false);
     }).detach();
@@ -356,6 +359,9 @@ Java_com_calcite_MainActivity_initRenderer(
 
                 // 断开连接后回到服务器列表
                 JNI_LOGI("Disconnected, returning to server list");
+                if (g_glRenderer) {
+                    g_glRenderer->clearChunks();
+                }
                 auto& ui = GameUI::getInstance();
                 ui.setState(UIState::MULTIPLAYER);
                 ui.setGameMenuOpen(false);

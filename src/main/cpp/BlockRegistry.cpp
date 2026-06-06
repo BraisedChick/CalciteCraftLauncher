@@ -223,7 +223,9 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         || meta.name == "allium" || meta.name == "azure_bluet" || meta.name == "oxeye_daisy"
         || meta.name == "cornflower" || meta.name == "lily_of_the_valley"
         || meta.name == "wither_rose" || meta.name == "sunflower"
-        || meta.name == "lilac" || meta.name == "rose_bush" || meta.name == "peony");
+        || meta.name == "lilac" || meta.name == "rose_bush" || meta.name == "peony"
+	        || meta.name == "wheat" || meta.name == "carrots" || meta.name == "potatoes"
+	        || meta.name == "beetroots" || meta.name == "nether_wart");
 
     // ---- 水 ----
     meta.isWater = (meta.name == "water");
@@ -286,6 +288,15 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         auto& atlas = TextureAtlas::getInstance();
         if (atlas.isInitialized()) {
             const auto* model = atlas.getBlockModel(meta.name);
+            // 如果基础模型不存在（如活板门、农作物等使用 blockstate 变体模型名的方块），
+            // 尝试使用 blockstate 变体模型进行完整方块判定
+            if ((!model || model->elements.empty()) && meta.minStateId >= 0) {
+                const auto* variant = atlas.getBlockStateVariant(
+                    meta.name, blockState, meta.minStateId);
+                if (variant) {
+                    model = atlas.getBlockModel(variant->modelName());
+                }
+            }
             if (model && !model->elements.empty()) {
                 // 检查是否有元素完整覆盖 16x16x16 且 6 个面都有 cullface
                 for (const auto& elem : model->elements) {

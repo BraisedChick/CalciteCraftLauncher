@@ -1008,7 +1008,11 @@ std::vector<std::pair<std::string, std::string>> TextureAtlas::parseVariantKey(c
 void TextureAtlas::parseBlockState(const std::string& blockName, const std::string& json) {
     // 查找 "variants": {
     size_t varPos = json.find("\"variants\"");
-    if (varPos == std::string::npos) return;
+    if (varPos == std::string::npos) {
+        // 没有 variants → 尝试 multipart（玻璃板、栅栏等）
+        parseMultipart(blockName, json);
+        return;
+    }
 
     size_t bracePos = json.find('{', varPos);
     if (bracePos == std::string::npos) return;
@@ -1099,18 +1103,19 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
         std::string entryContent = varContent.substr(entryContentStart, entryContentEnd - entryContentStart + 1);
 
         BlockStateVariant bsv;
-        bsv.modelName = extractStringValue(entryContent, "model");
-        if (bsv.modelName.empty()) { pos = valEnd + 1; continue; }
-
         {
-            size_t mcPos = bsv.modelName.find(':');
-            if (mcPos != std::string::npos) bsv.modelName = bsv.modelName.substr(mcPos + 1);
-            if (bsv.modelName.find("block/") == 0) bsv.modelName = bsv.modelName.substr(6);
+            std::string mname = extractStringValue(entryContent, "model");
+            if (mname.empty()) { pos = valEnd + 1; continue; }
+            size_t mcPos = mname.find(':');
+            if (mcPos != std::string::npos) mname = mname.substr(mcPos + 1);
+            if (mname.find("block/") == 0) mname = mname.substr(6);
+            BlockStateVariant::ModelEntry me;
+            me.modelName = mname;
+            me.rotX = extractIntValue(entryContent, "x", 0);
+            me.rotY = extractIntValue(entryContent, "y", 0);
+            me.uvlock = extractBool(entryContent, "uvlock", false);
+            bsv.models.push_back(std::move(me));
         }
-
-        bsv.rotX = extractIntValue(entryContent, "x", 0);
-        bsv.rotY = extractIntValue(entryContent, "y", 0);
-        bsv.uvlock = extractBool(entryContent, "uvlock", false);
 
         auto props = parseVariantKey(variantKey);
 
@@ -1173,16 +1178,27 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
             }
             propValueList[prop] = std::move(ordered);
         } else {
-            // 未知属性：字母序回退
-            std::vector<std::string> sorted(collectedValues.begin(), collectedValues.end());
-            std::sort(sorted.begin(), sorted.end());
-            propValueList[prop] = std::move(sorted);
+            // 检查是否是布尔属性（值恰好为 "true" 和 "false"）
+            // Minecraft 的 BooleanProperty 使用 [true, false] 顺序，而非字母序
+            if (collectedValues.size() == 2 &&
+                collectedValues.find("true") != collectedValues.end() &&
+                collectedValues.find("false") != collectedValues.end()) {
+                propValueList[prop] = {"true", "false"};
+            } else {
+                // 其他未知属性：字母序回退
+                std::vector<std::string> sorted(collectedValues.begin(), collectedValues.end());
+                std::sort(sorted.begin(), sorted.end());
+                propValueList[prop] = std::move(sorted);
+            }
         }
     }
 
-    // ===== 检测并补充缺失的 waterlogged 属性 =====
-    // Minecraft 1.13+ 中许多方块有 waterlogged（boolean）属性，但 blockstate JSON
-    // 的 variant keys 中可能不包含它（因为默认值为 false），导致偏移量计算缺了 2 倍因子。
+    std::unordered_set<std::string> autoAddedProps;
+
+    // ===== 检测并补充缺失的布尔属性（waterlogged、powered 等）=====
+    // Minecraft 1.13+ 中许多方块有 waterlogged/powered 等 boolean 属性，
+    // 但 blockstate JSON 的 variant keys 中可能不包含它们（因为默认值为 false），
+    // 导致偏移量计算缺少了 2^n 倍因子。
     if (propValueList.find("waterlogged") == propValueList.end() && !hasSimpleVariant) {
         const auto& registry = BlockRegistry::getInstance();
         const auto* blockInfo = registry.getBlockInfoByName(blockName);
@@ -1194,12 +1210,22 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
             int actualStates = blockInfo->maxStateId - blockInfo->minStateId + 1;
             if (actualStates > expectedStates && actualStates % expectedStates == 0) {
                 int factor = actualStates / expectedStates;
-                if (factor == 2) {
-                    // 缺少 boolean 属性 → waterlogged
+                // factor 必须是 2 的幂（缺失 n 个 boolean 属性时 factor = 2^n）
+                if (factor == 2 || factor == 4) {
+                    autoAddedProps.insert("waterlogged");
                     propValueList["waterlogged"] = {"false", "true"};
-                    // 给所有 entries 添加 waterlogged=false（默认值）
                     for (auto& entry : entries) {
                         entry.props.emplace_back("waterlogged", "false");
+                    }
+                    if (factor == 4) {
+                        autoAddedProps.insert("powered");
+                        propValueList["powered"] = {"false", "true"};
+                        for (auto& entry : entries) {
+                            entry.props.emplace_back("powered", "false");
+                        }
+                    }
+                    // 重新按属性名排序
+                    for (auto& entry : entries) {
                         std::sort(entry.props.begin(), entry.props.end(),
                             [](const auto& a, const auto& b) { return a.first < b.first; });
                     }
@@ -1207,7 +1233,7 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
             }
         }
     }
-    // ===== END waterlogged 检测 =====
+    // ===== END 布尔属性检测 =====
 
     // 第二遍：用实际值列表计算 offset
     int maxOffset = -1;
@@ -1239,30 +1265,30 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
         if (offset > maxOffset) maxOffset = offset;
     }
 
-    // ===== 补充 waterlogged=true 的变体条目 =====
-    // 如果 waterlogged 是由检测代码添加的（所有变体都是 waterlogged=false），
-    // 则为每个变体复制一份 waterlogged=true 的条目
-    if (propValueList.find("waterlogged") != propValueList.end()) {
-        bool waterTrueCollected = false;
-        auto wlSetIt = propValueSet.find("waterlogged");
-        if (wlSetIt != propValueSet.end() && wlSetIt->second.find("true") != wlSetIt->second.end()) {
-            waterTrueCollected = true;
+    // ===== 补充自动添加的布尔属性变体条目 =====
+    // 对于自动检测添加的属性（如 powered、waterlogged），
+    // 原始条目只包含默认值（false），需复制到所有 true 组合
+    if (!autoAddedProps.empty()) {
+        int expandBits = 0;
+        for (const auto& prop : autoAddedProps) {
+            auto setIt = propValueSet.find(prop);
+            bool hasBothValues = (setIt != propValueSet.end() &&
+                                  setIt->second.find("true") != setIt->second.end());
+            if (!hasBothValues) expandBits++;
         }
-        if (!waterTrueCollected) {
-            // waterlogged 是最后一个属性（字母序），stride = 1
-            // waterlogged=false → offset X, waterlogged=true → offset X + 1
-            std::unordered_map<int, BlockStateVariant> waterMap;
+        if (expandBits > 0) {
+            int expandFactor = 1 << expandBits;
+            std::unordered_map<int, BlockStateVariant> expandedMap;
             for (const auto& [off, variant] : offsetMap) {
-                if (off >= 0) {
-                    waterMap[off] = variant;
-                    waterMap[off + 1] = variant;
+                for (int b = 0; b < expandFactor; b++) {
+                    expandedMap[off + b] = variant;
                 }
             }
-            offsetMap.swap(waterMap);
-            maxOffset = maxOffset * 2 + 1;
+            offsetMap.swap(expandedMap);
+            maxOffset = maxOffset + (expandFactor - 1);
         }
     }
-    // ===== END waterlogged=true 补充 =====
+    // ===== END 布尔属性补充 =====
 
     if (offsetMap.empty()) return;
 
@@ -1270,9 +1296,10 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
     int arraySize = maxOffset + 1;
     if (hasSimpleVariant && arraySize < 1) arraySize = 1;
     std::vector<BlockStateVariant> variants(arraySize);
-
     for (auto& v : variants) {
-        v.modelName = blockName;
+        BlockStateVariant::ModelEntry me;
+        me.modelName = blockName;
+        v.models.push_back(std::move(me));
     }
 
     for (auto& [off, variant] : offsetMap) {
@@ -1282,6 +1309,321 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
     }
 
     blockstateVariantCache[blockName] = std::move(variants);
+}
+
+void TextureAtlas::parseMultipart(const std::string& blockName, const std::string& json) {
+    // 查找 "multipart": [
+    size_t arrStart = json.find("\"multipart\"");
+    if (arrStart == std::string::npos) return;
+    arrStart = json.find('[', arrStart);
+    if (arrStart == std::string::npos) return;
+
+    size_t arrEnd = arrStart;
+    {
+        int depth = 0;
+        bool inStr = false;
+        for (; arrEnd < json.size(); arrEnd++) {
+            char c = json[arrEnd];
+            if (inStr) { if (c == '\\') { arrEnd++; continue; } if (c == '"') inStr = false; continue; }
+            if (c == '"') { inStr = true; continue; }
+            if (c == '[') depth++;
+            if (c == ']') { depth--; if (depth == 0) break; }
+        }
+        if (depth != 0 || arrEnd == json.size()) return;
+    }
+
+    // ===== 1. 解析所有 multipart entries =====
+    struct MultipartWhen {
+        std::vector<std::pair<std::string, std::string>> andProps; // AND 条件
+    };
+    struct MultipartEntry {
+        std::vector<MultipartWhen> whenOrs;  // OR 条件（空=始终应用）
+        BlockStateVariant::ModelEntry modelEntry;
+    };
+    std::vector<MultipartEntry> multipartEntries;
+
+    size_t pos = arrStart + 1;
+    while (pos < arrEnd) {
+        size_t objStart = json.find('{', pos);
+        if (objStart == std::string::npos || objStart >= arrEnd) break;
+
+        int depth = 0;
+        bool inStr = false;
+        size_t objEnd = objStart;
+        for (; objEnd < arrEnd; objEnd++) {
+            char c = json[objEnd];
+            if (inStr) { if (c == '\\') { objEnd++; continue; } if (c == '"') inStr = false; continue; }
+            if (c == '"') { inStr = true; continue; }
+            if (c == '{') depth++;
+            if (c == '}') { depth--; if (depth == 0) break; }
+        }
+        if (depth != 0 || objEnd >= arrEnd) break;
+
+        std::string entryJson = json.substr(objStart, objEnd - objStart + 1);
+
+        MultipartEntry entry;
+
+        // 解析 "apply"（必需）
+        size_t applyPos = entryJson.find("\"apply\"");
+        if (applyPos == std::string::npos) { pos = objEnd + 1; continue; }
+        size_t applyBrace = entryJson.find('{', applyPos);
+        if (applyBrace == std::string::npos) { pos = objEnd + 1; continue; }
+        depth = 0; inStr = false;
+        size_t applyEnd = applyBrace;
+        for (; applyEnd < entryJson.size(); applyEnd++) {
+            char c = entryJson[applyEnd];
+            if (inStr) { if (c == '\\') { applyEnd++; continue; } if (c == '"') inStr = false; continue; }
+            if (c == '"') { inStr = true; continue; }
+            if (c == '{') depth++;
+            if (c == '}') { depth--; if (depth == 0) break; }
+        }
+        if (depth != 0) { pos = objEnd + 1; continue; }
+        std::string applyContent = entryJson.substr(applyBrace, applyEnd - applyBrace + 1);
+
+        std::string mname = extractStringValue(applyContent, "model");
+        if (mname.empty()) { pos = objEnd + 1; continue; }
+        size_t mcPos2 = mname.find(':');
+        if (mcPos2 != std::string::npos) mname = mname.substr(mcPos2 + 1);
+        if (mname.find("block/") == 0) mname = mname.substr(6);
+
+        entry.modelEntry.modelName = mname;
+        entry.modelEntry.rotX = extractIntValue(applyContent, "x", 0);
+        entry.modelEntry.rotY = extractIntValue(applyContent, "y", 0);
+        entry.modelEntry.uvlock = extractBool(applyContent, "uvlock", false);
+
+        // 解析 "when"（可选）
+        size_t whenPos = entryJson.find("\"when\"");
+        if (whenPos != std::string::npos && whenPos < applyPos) {
+            // when 可能是对象 {key:val,...} 或数组 [{...},{...}]
+            size_t whenVal = entryJson.find_first_of("{[", whenPos + 6);
+            if (whenVal != std::string::npos) {
+                if (entryJson[whenVal] == '[') {
+                    // OR 条件数组
+                    size_t arrEnd2 = whenVal;
+                    depth = 0; inStr = false;
+                    for (; arrEnd2 < entryJson.size(); arrEnd2++) {
+                        char c = entryJson[arrEnd2];
+                        if (inStr) { if (c == '\\') { arrEnd2++; continue; } if (c == '"') inStr = false; continue; }
+                        if (c == '"') { inStr = true; continue; }
+                        if (c == '[') depth++;
+                        if (c == ']') { depth--; if (depth == 0) break; }
+                    }
+                    if (depth == 0) {
+                        // 解析数组中的每个对象
+                        size_t ap = whenVal + 1;
+                        while (ap < arrEnd2) {
+                            size_t ob = entryJson.find('{', ap);
+                            if (ob == std::string::npos || ob >= arrEnd2) break;
+                            size_t oe = entryJson.find('}', ob);
+                            if (oe == std::string::npos || oe >= arrEnd2) break;
+                            std::string whenObj = entryJson.substr(ob, oe - ob + 1);
+                            MultipartWhen mw;
+                            // 提取所有 key:value 对
+                            size_t kp = 0;
+                            while ((kp = whenObj.find('"', kp)) != std::string::npos) {
+                                size_t ke = whenObj.find('"', kp + 1);
+                                if (ke == std::string::npos) break;
+                                std::string key = whenObj.substr(kp + 1, ke - kp - 1);
+                                size_t col2 = whenObj.find(':', ke);
+                                if (col2 == std::string::npos) break;
+                                size_t vs = col2 + 1;
+                                while (vs < whenObj.size() && (whenObj[vs] == ' ' || whenObj[vs] == '\t')) vs++;
+                                if (vs >= whenObj.size()) break;
+                                std::string val;
+                                if (whenObj[vs] == '"') {
+                                    vs++;
+                                    size_t ve = whenObj.find('"', vs);
+                                    if (ve == std::string::npos) break;
+                                    val = whenObj.substr(vs, ve - vs);
+                                } else {
+                                    size_t ve = whenObj.find_first_of(",}", vs);
+                                    if (ve == std::string::npos) ve = whenObj.size();
+                                    val = whenObj.substr(vs, ve - vs);
+                                    while (!val.empty() && (val.back() == ' ' || val.back() == '\t')) val.pop_back();
+                                }
+                                if (!key.empty() && !val.empty()) mw.andProps.emplace_back(key, val);
+                                kp = (whenObj[vs == col2 + 1 ? vs : 0] == '"') ? whenObj.find('"', vs + val.size()) : whenObj.find_first_of(",}", vs);
+                                if (kp == std::string::npos) break;
+                            }
+                            if (!mw.andProps.empty()) entry.whenOrs.push_back(std::move(mw));
+                            ap = oe + 1;
+                        }
+                    }
+                } else {
+                    // 单个条件对象
+                    size_t oe = entryJson.find('}', whenVal);
+                    if (oe != std::string::npos) {
+                        std::string whenObj = entryJson.substr(whenVal, oe - whenVal + 1);
+                        MultipartWhen mw;
+                        size_t kp = 0;
+                        while ((kp = whenObj.find('"', kp)) != std::string::npos) {
+                            size_t ke = whenObj.find('"', kp + 1);
+                            if (ke == std::string::npos) break;
+                            std::string key = whenObj.substr(kp + 1, ke - kp - 1);
+                            size_t col2 = whenObj.find(':', ke);
+                            if (col2 == std::string::npos) break;
+                            size_t vs = col2 + 1;
+                            while (vs < whenObj.size() && (whenObj[vs] == ' ' || whenObj[vs] == '\t')) vs++;
+                            if (vs >= whenObj.size()) break;
+                            std::string val;
+                            if (whenObj[vs] == '"') {
+                                vs++; size_t ve = whenObj.find('"', vs);
+                                if (ve == std::string::npos) break;
+                                val = whenObj.substr(vs, ve - vs);
+                            } else {
+                                size_t ve = whenObj.find_first_of(",}", vs);
+                                if (ve == std::string::npos) ve = whenObj.size();
+                                val = whenObj.substr(vs, ve - vs);
+                                while (!val.empty() && (val.back() == ' ' || val.back() == '\t')) val.pop_back();
+                            }
+                            if (!key.empty()) mw.andProps.emplace_back(key, val);
+                            kp = whenObj.find('"', ke + 1);
+                            if (kp == std::string::npos) break;
+                        }
+                        if (!mw.andProps.empty()) entry.whenOrs.push_back(std::move(mw));
+                    }
+                }
+            }
+        }
+
+        multipartEntries.push_back(std::move(entry));
+        pos = objEnd + 1;
+    }
+
+    if (multipartEntries.empty()) return;
+
+    // ===== 2. 从 when 条件中收集所有属性和值 =====
+    std::map<std::string, std::unordered_set<std::string>> propValueSet;
+    bool hasUnconditional = false;
+    for (const auto& entry : multipartEntries) {
+        if (entry.whenOrs.empty()) { hasUnconditional = true; continue; }
+        for (const auto& when : entry.whenOrs) {
+            for (const auto& [prop, val] : when.andProps) {
+                propValueSet[prop].insert(val);
+            }
+        }
+    }
+
+    // ===== 3. 构建属性值列表 =====
+    // 所有属性都视为布尔（multipart 方块的实际属性总是布尔）
+    // 如果条件中只出现 "true"，补上 "false"
+    std::unordered_map<std::string, std::vector<std::string>> propValueList;
+    for (const auto& [prop, collected] : propValueSet) {
+        if (collected.size() == 1 && collected.find("true") != collected.end()) {
+            propValueList[prop] = {"true", "false"};
+        } else if (collected.size() == 2 &&
+                   collected.find("true") != collected.end() &&
+                   collected.find("false") != collected.end()) {
+            propValueList[prop] = {"true", "false"};
+        } else {
+            // 非布尔属性：字母序
+            std::vector<std::string> sorted(collected.begin(), collected.end());
+            std::sort(sorted.begin(), sorted.end());
+            propValueList[prop] = std::move(sorted);
+        }
+    }
+
+    // ===== 4. 计算总状态数，检测 waterlogged =====
+    const auto& registry = BlockRegistry::getInstance();
+    const auto* blockInfo = registry.getBlockInfoByName(blockName);
+    int totalStates = 1;
+    for (const auto& [prop, values] : propValueList) {
+        totalStates *= (int)values.size();
+    }
+
+    bool hasAutoWaterlogged = false;
+    bool hasAutoPowered = false;
+    if (blockInfo && propValueList.find("waterlogged") == propValueList.end()) {
+        int actualStates = blockInfo->maxStateId - blockInfo->minStateId + 1;
+        if (actualStates > totalStates && actualStates % totalStates == 0) {
+            int factor2 = actualStates / totalStates;
+            if (factor2 == 2 || factor2 == 4) {
+                hasAutoWaterlogged = true;
+                propValueList["waterlogged"] = {"false", "true"};
+                totalStates *= 2;
+                if (factor2 == 4) {
+                    hasAutoPowered = true;
+                    propValueList["powered"] = {"false", "true"};
+                    totalStates *= 2;
+                }
+            }
+        }
+    }
+
+    if (totalStates <= 0) return;
+
+    // ===== 5. 构建属性值索引映射（用于快速解码 offset）=====
+    std::vector<std::string> propNames;
+    std::vector<std::vector<std::string>> propValues;
+    for (auto& [prop, values] : propValueList) {
+        propNames.push_back(prop);
+        propValues.push_back(values);
+    }
+
+    // ===== 6. 遍历所有 offset，匹配 multipart entries =====
+    std::vector<BlockStateVariant> variants(totalStates);
+    for (int off = 0; off < totalStates; off++) {
+        // 解码 offset 对应的属性值
+        std::unordered_map<std::string, std::string> propMap;
+        int remaining = off;
+        for (size_t i = 0; i < propNames.size(); i++) {
+            int stride = 1;
+            for (size_t j = i + 1; j < propNames.size(); j++) {
+                stride *= (int)propValues[j].size();
+            }
+            int idx = remaining / stride;
+            if (idx >= (int)propValues[i].size()) idx = 0;
+            propMap[propNames[i]] = propValues[i][idx];
+            remaining %= stride;
+        }
+
+        // 检查每个 multipart entry 是否匹配
+        for (const auto& entry : multipartEntries) {
+            bool matches = false;
+            if (entry.whenOrs.empty()) {
+                // 无条件：始终匹配，且只匹配一次
+                variants[off].models.push_back(entry.modelEntry);
+                continue;
+            }
+            // OR 语义：任一 when 块匹配即可
+            for (const auto& when : entry.whenOrs) {
+                bool andMatch = true;
+                for (const auto& [prop, reqVal] : when.andProps) {
+                    auto pmIt = propMap.find(prop);
+                    if (pmIt == propMap.end() || pmIt->second != reqVal) {
+                        andMatch = false;
+                        break;
+                    }
+                }
+                if (andMatch) {
+                    matches = true;
+                    break;
+                }
+            }
+            if (matches) {
+                variants[off].models.push_back(entry.modelEntry);
+            }
+        }
+    }
+
+    // ===== 7. 如有自动补全的布尔属性，扩展变体 =====
+    if (hasAutoWaterlogged || hasAutoPowered) {
+        // waterlogged 排在最后（刚添加），所以需要分段复制
+        int wpCount = (hasAutoWaterlogged ? 2 : 1) * (hasAutoPowered ? 2 : 1);
+        int baseCount = totalStates / wpCount;
+        std::vector<BlockStateVariant> expanded(totalStates);
+        for (int off = 0; off < baseCount; off++) {
+            for (int w = 0; w < wpCount; w++) {
+                expanded[off + w * baseCount] = variants[off];
+            }
+        }
+        variants.swap(expanded);
+    }
+
+    blockstateVariantCache[blockName] = std::move(variants);
+
+    LOGI("parseMultipart: '%s' -> %d properties, %d states, %zu multipart entries",
+         blockName.c_str(), (int)propNames.size(), (int)variants.size(), multipartEntries.size());
 }
 
 const BlockStateVariant* TextureAtlas::getBlockStateVariant(
@@ -1302,9 +1644,9 @@ std::vector<CollisionBox> TextureAtlas::getBlockCollisionBoxes(
 {
     // 1. 获取 blockstate 变体（模型名 + 旋转）
     const auto* variant = getBlockStateVariant(blockName, blockState, minStateId);
-    const std::string* modelName = variant ? &variant->modelName : &blockName;
-    int bsRotX = variant ? variant->rotX : 0;
-    int bsRotY = variant ? variant->rotY : 0;
+    const std::string* modelName = variant ? &variant->modelName() : &blockName;
+    int bsRotX = variant ? variant->rotX() : 0;
+    int bsRotY = variant ? variant->rotY() : 0;
 
     // 2. 获取模型 elements
     auto modelIt = blockModelCache.find(*modelName);

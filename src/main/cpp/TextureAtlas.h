@@ -68,10 +68,21 @@ struct ResolvedBlockModel {
 // Blockstate 变体：blockstate JSON 中单个变体的解析结果
 // ============================================================
 struct BlockStateVariant {
-    std::string modelName;   // 使用的模型名（如 "oak_log_horizontal"）
-    int rotX = 0;            // 绕 X 轴旋转角度（度）
-    int rotY = 0;            // 绕 Y 轴旋转角度（度）
-    bool uvlock = false;
+    struct ModelEntry {
+        std::string modelName;
+        int rotX = 0;
+        int rotY = 0;
+        bool uvlock = false;
+    };
+    std::vector<ModelEntry> models;  // 多个模型（multipart 方块如玻璃板）
+
+    // 便捷访问：单模型变体时返回第一个模型
+    const std::string& modelName() const {
+        static const std::string s_empty;
+        return models.empty() ? s_empty : models[0].modelName;
+    }
+    int rotX() const { return models.empty() ? 0 : models[0].rotX; }
+    int rotY() const { return models.empty() ? 0 : models[0].rotY; }
 };
 
 // ============================================================
@@ -226,8 +237,11 @@ private:
     // blockName → 按 state offset 索引的变体数组
     std::unordered_map<std::string, std::vector<BlockStateVariant>> blockstateVariantCache;
 
-    // 解析单个 blockstate JSON
+    // 解析单个 blockstate JSON（variants 或 multipart）
     void parseBlockState(const std::string& blockName, const std::string& json);
+
+    // 解析 multipart 格式 blockstate（玻璃板、栅栏等）
+    void parseMultipart(const std::string& blockName, const std::string& json);
 
     // 从变体键解析属性值对（如 "facing=east,half=bottom" → [{facing,east},{half,bottom}]）
     static std::vector<std::pair<std::string, std::string>> parseVariantKey(const std::string& key);
