@@ -83,21 +83,15 @@ TextureData TextureLoader::loadFromZip(const std::string& filename) {
 
     int fileIndex = -1;
 
-    // 如果 filename 已带路径前缀（如 "colormap/grass.png"），直接按原路径查找
-    if (filename.find('/') != std::string::npos) {
-        fileIndex = mz_zip_reader_locate_file(zip, filename.c_str(), nullptr, 0);
-    }
-
-    // 没找到则尝试 blocks/<filename>
-    if (fileIndex < 0) {
-        std::string searchPath = "blocks/" + filename;
-        fileIndex = mz_zip_reader_locate_file(zip, searchPath.c_str(), nullptr, 0);
-    }
-
-    // 还没找到则尝试 colormap/<filename>
-    if (fileIndex < 0) {
-        std::string searchPath = "colormap/" + filename;
-        fileIndex = mz_zip_reader_locate_file(zip, searchPath.c_str(), nullptr, 0);
+    // 新结构：所有贴图在 textures/ 下
+    // 已带路径如 "colormap/grass.png" → "textures/colormap/grass.png"
+    // 无路径如 "stone.png"         → "textures/blocks/stone.png"
+    {
+        std::string prefix = "textures/";
+        if (filename.find('/') == std::string::npos) {
+            prefix += "blocks/";
+        }
+        fileIndex = mz_zip_reader_locate_file(zip, (prefix + filename).c_str(), nullptr, 0);
     }
 
     if (fileIndex < 0) {
