@@ -618,6 +618,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     // Blockstate 变体查找（获取朝向对应的模型和旋转）
                     const BlockStateVariant* variant = atlas.getBlockStateVariant(
                         blockMeta.name, blockState, blockMeta.minStateId);
+
                     if (variant && !variant->models.empty()) {
                         bool renderedAny = false;
                         for (const auto& modelEntry : variant->models) {
@@ -640,9 +641,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                         }
                         if (renderedAny) continue;
                     }
-                    // 无变体：使用 blockMeta.name 回退
-                    const std::string* modelName = &blockMeta.name;
-                    const auto* blockModel = getModel(*modelName);
+                    const auto* blockModel = getModel(blockMeta.name);
                     if (blockModel && !blockModel->elements.empty()) {
                         generateFromModel(
                             baseVertices, baseIndices,

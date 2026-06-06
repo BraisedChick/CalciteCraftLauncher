@@ -32,6 +32,13 @@ bool BlockRegistry::loadFromJson(const std::string& json) {
         BlockInfo info;
         info.id = extractInt(blockJson, "\"id\"");
         info.name = extractString(blockJson, "\"name\"");
+        // 去掉 "minecraft:" 前缀，确保与 blockstate 文件名和模型名一致
+        {
+            size_t mcPos = info.name.find(':');
+            if (mcPos != std::string::npos) {
+                info.name = info.name.substr(mcPos + 1);
+            }
+        }
         info.displayName = extractString(blockJson, "\"displayName\"");
         info.minStateId = extractInt(blockJson, "\"minStateId\"");
         info.maxStateId = extractInt(blockJson, "\"maxStateId\"");

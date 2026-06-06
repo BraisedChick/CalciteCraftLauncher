@@ -768,9 +768,9 @@ void ClientEngine::handlePlayPacket(int packetId,
                     int sectionLocalIndex = (int)(entryVal & 0xFFF);
                     int blockState = (int)(entryVal >> 12);
 
-                    int localX = sectionLocalIndex & 0xF;
-                    int localZ = (sectionLocalIndex >> 4) & 0xF;
-                    int localY = (sectionLocalIndex >> 8) & 0xF;
+                    int localX = (sectionLocalIndex >> 8) & 0xF;   // bits 8-11
+                    int localZ = (sectionLocalIndex >> 4) & 0xF;   // bits 4-7
+                    int localY = sectionLocalIndex & 0xF;           // bits 0-3
 
                     int blockY = sectionY * 16 + localY;
                     chunk->setBlockState(localX, blockY, localZ, blockState);
@@ -954,9 +954,7 @@ void ClientEngine::handlePlayPacket(int packetId,
             }
 
             default: {
-                if (packetId >= 0x30 && packetId <= 0x3F) {
-                    LOGI("Unhandled play packet: 0x%02X", packetId);
-                }
+                break;
             }
         }
     } catch (const std::exception& e) {
