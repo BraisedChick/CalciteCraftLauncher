@@ -24,6 +24,7 @@ struct BlockMetadata {
     int texSide = 0;
     int texBottom = 0;
     float height = 1.0f;
+    int32_t minStateId = 0;       // 该方块的最小的 blockState ID，用于 blockstate 解码
     bool isPlant = false;
     bool isGrassBlock = false;
     bool isLeaves = false;

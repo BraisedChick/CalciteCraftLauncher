@@ -65,6 +65,16 @@ struct ResolvedBlockModel {
 };
 
 // ============================================================
+// Blockstate 变体：blockstate JSON 中单个变体的解析结果
+// ============================================================
+struct BlockStateVariant {
+    std::string modelName;   // 使用的模型名（如 "oak_log_horizontal"）
+    int rotX = 0;            // 绕 X 轴旋转角度（度）
+    int rotY = 0;            // 绕 Y 轴旋转角度（度）
+    bool uvlock = false;
+};
+
+// ============================================================
 // TextureAtlas — 从 models/block/*.json 动态构建纹理映射和模型数据
 //
 // 工作流程：
@@ -106,6 +116,13 @@ public:
     // 获取方块模型元素数据（模型兼容渲染用）
     // 返回 nullptr 表示无模型数据（应回退到旧立方体渲染）
     const ResolvedBlockModel* getBlockModel(const std::string& blockName) const;
+
+    // 获取 blockstate 变体（根据 blockState ID 对应的朝向/属性选择模型和旋转）
+    // blockState: 完整的 blockState ID, minStateId: 该方块的最小 blockState ID
+    // 返回 nullptr 表示无双关变体（使用默认模型）
+    const BlockStateVariant* getBlockStateVariant(const std::string& blockName,
+                                                  int32_t blockState,
+                                                  int32_t minStateId) const;
 
     bool isInitialized() const { return initialized; }
 
@@ -191,6 +208,16 @@ private:
 
     // blockName → 解析后的模型数据
     std::unordered_map<std::string, ResolvedBlockModel> blockModelCache;
+
+    // ===== Blockstate 解析 =====
+    // blockName → 按 state offset 索引的变体数组
+    std::unordered_map<std::string, std::vector<BlockStateVariant>> blockstateVariantCache;
+
+    // 解析单个 blockstate JSON
+    void parseBlockState(const std::string& blockName, const std::string& json);
+
+    // 从变体键解析属性值对（如 "facing=east,half=bottom" → [{facing,east},{half,bottom}]）
+    static std::vector<std::pair<std::string, std::string>> parseVariantKey(const std::string& key);
 
     // 纹理路径 → 图层索引映射的引用（方便给解析函数传递）
     bool initialized = false;

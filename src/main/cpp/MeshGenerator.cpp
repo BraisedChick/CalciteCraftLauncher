@@ -119,7 +119,8 @@ static void generateFromModel(
     float grassSideLayer, float grassOverlayLayer,
     uint8_t tintR, uint8_t tintG, uint8_t tintB,
     int biomeId,
-    const std::unordered_map<int32_t, bool>* solidCache) {
+    const std::unordered_map<int32_t, bool>* solidCache,
+    int bsRotX, int bsRotY) {
 
     // 用于 face 面剔除检测（优先使用外部缓存，避免重复 getBlockMetadata）
     auto isNeighborSolid = [solidCache](int32_t state) -> bool {
@@ -221,6 +222,28 @@ static void generateFromModel(
 
                 if (elem.rotation.angle != 0.0f) {
                     rotateVertex(lx, ly, lz, elem.rotation);
+                }
+
+                // Blockstate 旋转（整个模型绕方块中心 8,8,8）
+                if (bsRotX != 0 || bsRotY != 0) {
+                    float cx = lx - 8.0f, cy = ly - 8.0f, cz = lz - 8.0f;
+                    if (bsRotX != 0) {
+                        float rad = bsRotX * (3.14159265f / 180.0f);
+                        float cosA = cosf(rad), sinA = sinf(rad);
+                        float ny = cy * cosA - cz * sinA;
+                        float nz = cy * sinA + cz * cosA;
+                        cy = ny; cz = nz;
+                    }
+                    if (bsRotY != 0) {
+                        float rad = bsRotY * (3.14159265f / 180.0f);
+                        float cosA = cosf(rad), sinA = sinf(rad);
+                        float nx = cx * cosA + cz * sinA;
+                        float nz = -cx * sinA + cz * cosA;
+                        cx = nx; cz = nz;
+                    }
+                    lx = cx + 8.0f;
+                    ly = cy + 8.0f;
+                    lz = cz + 8.0f;
                 }
 
                 faceVerts[v].pos[0] = blockX + lx / 16.0f;
@@ -519,7 +542,14 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                 bool isSnowCovered2 = (blockMeta.isGrassBlock && n[TOP] != 0 &&
                                       BlockRegistry::getInstance().getBlockMetadata(n[TOP]).isSnow);
                 if (!blockMeta.isWater) {
-                    const auto* blockModel = getModel(blockMeta.name);
+                    // Blockstate 变体查找（获取朝向对应的模型和旋转）
+                    const BlockStateVariant* variant = atlas.getBlockStateVariant(
+                        blockMeta.name, blockState, blockMeta.minStateId);
+                    const std::string* modelName = variant ? &variant->modelName : &blockMeta.name;
+                    int bsRotX = variant ? variant->rotX : 0;
+                    int bsRotY = variant ? variant->rotY : 0;
+
+                    const auto* blockModel = getModel(*modelName);
                     if (blockModel && !blockModel->elements.empty()) {
                         generateFromModel(
                             baseVertices, baseIndices,
@@ -531,42 +561,10 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                             grassSideLayer, grassOverlayLayer,
                             tintR, tintG, tintB,
                             biomeId,
-                            &solidCache);
+                            &solidCache,
+                            bsRotX, bsRotY);
                         continue;
                     }
-                }
-
-                // ===== 植物（旧回退） =====
-                if (blockMeta.isPlant) {
-                    uint8_t plantR = 255, plantG = 255, plantB = 255;
-                    BiomeColorManager::getInstance().getGrassColor(biomeId, plantR, plantG, plantB);
-
-                    float plantTexIndex = static_cast<float>(tex.top);
-                    uint32_t baseIdx = static_cast<uint32_t>(baseVertices.size());
-
-                    // 四边形 1 (沿 z 轴)
-                    baseVertices.push_back({{posX, posY, posZ + 0.5f}, {0.0f, 1.0f}, plantTexIndex, {plantR, plantG, plantB, 255}});
-                    baseVertices.push_back({{posX + 1.0f, posY, posZ + 0.5f}, {1.0f, 1.0f}, plantTexIndex, {plantR, plantG, plantB, 255}});
-                    baseVertices.push_back({{posX + 1.0f, posY + 1.0f, posZ + 0.5f}, {1.0f, 0.0f}, plantTexIndex, {plantR, plantG, plantB, 255}});
-                    baseVertices.push_back({{posX, posY + 1.0f, posZ + 0.5f}, {0.0f, 0.0f}, plantTexIndex, {plantR, plantG, plantB, 255}});
-                    baseIndices.push_back(baseIdx); baseIndices.push_back(baseIdx + 1); baseIndices.push_back(baseIdx + 2);
-                    baseIndices.push_back(baseIdx); baseIndices.push_back(baseIdx + 2); baseIndices.push_back(baseIdx + 3);
-                    baseIndices.push_back(baseIdx + 2); baseIndices.push_back(baseIdx + 1); baseIndices.push_back(baseIdx + 0);
-                    baseIndices.push_back(baseIdx + 3); baseIndices.push_back(baseIdx + 2); baseIndices.push_back(baseIdx + 0);
-
-                    baseIdx += 4;
-
-                    // 四边形 2 (沿 x 轴)
-                    baseVertices.push_back({{posX + 0.5f, posY, posZ}, {0.0f, 1.0f}, plantTexIndex, {plantR, plantG, plantB, 255}});
-                    baseVertices.push_back({{posX + 0.5f, posY, posZ + 1.0f}, {1.0f, 1.0f}, plantTexIndex, {plantR, plantG, plantB, 255}});
-                    baseVertices.push_back({{posX + 0.5f, posY + 1.0f, posZ + 1.0f}, {1.0f, 0.0f}, plantTexIndex, {plantR, plantG, plantB, 255}});
-                    baseVertices.push_back({{posX + 0.5f, posY + 1.0f, posZ}, {0.0f, 0.0f}, plantTexIndex, {plantR, plantG, plantB, 255}});
-                    baseIndices.push_back(baseIdx); baseIndices.push_back(baseIdx + 1); baseIndices.push_back(baseIdx + 2);
-                    baseIndices.push_back(baseIdx); baseIndices.push_back(baseIdx + 2); baseIndices.push_back(baseIdx + 3);
-                    baseIndices.push_back(baseIdx + 2); baseIndices.push_back(baseIdx + 1); baseIndices.push_back(baseIdx + 0);
-                    baseIndices.push_back(baseIdx + 3); baseIndices.push_back(baseIdx + 2); baseIndices.push_back(baseIdx + 0);
-
-                    continue;
                 }
 
                 // ===== 水 =====

@@ -207,6 +207,7 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         return meta;
     }
     meta.name = info->name;
+    meta.minStateId = info->minStateId;
 
     // ---- 方块类型判断 ----
     meta.isAir = (meta.name.find("air") != std::string::npos);
@@ -254,8 +255,32 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         meta.height = 1.0f;
     }
 
-    // ---- 完整方块判定（用于面剔除） ----
-    meta.isFullBlock = (blockState != 0 && !meta.isAir && !meta.isPlant && !meta.isLeaves && !meta.isWater && meta.height >= 1.0f);
+    // ---- 完整方块判定（基于模型几何，用于面剔除） ----
+    meta.isFullBlock = false;
+    if (blockState != 0 && !meta.isAir && !meta.isWater && !meta.isLeaves) {
+        auto& atlas = TextureAtlas::getInstance();
+        if (atlas.isInitialized()) {
+            const auto* model = atlas.getBlockModel(meta.name);
+            if (model && !model->elements.empty()) {
+                // 检查是否有元素完整覆盖 16x16x16 且 6 个面都有 cullface
+                for (const auto& elem : model->elements) {
+                    if (elem.from[0] <= 0.001f && elem.from[1] <= 0.001f && elem.from[2] <= 0.001f &&
+                        elem.to[0] >= 15.999f && elem.to[1] >= 15.999f && elem.to[2] >= 15.999f) {
+                        bool allCull = true;
+                        for (int i = 0; i < 6; i++) {
+                            if (!elem.hasFaces[i] || elem.faces[i].cullface < 0) { allCull = false; break; }
+                        }
+                        if (allCull) { meta.isFullBlock = true; break; }
+                    }
+                }
+            } else {
+                // 无模型数据 → 旧立方体回退 → 完整方块
+                meta.isFullBlock = true;
+            }
+        } else {
+            meta.isFullBlock = true;
+        }
+    }
 
     // ---- 纹理配置（从 TextureAtlas 动态解析） ----
     auto& atlas = TextureAtlas::getInstance();

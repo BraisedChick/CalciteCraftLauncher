@@ -2,6 +2,9 @@
 #include "TextureLoader.h"
 #include <android/log.h>
 #include <algorithm>
+#include <cmath>
+#include <utility>
+#include <unordered_set>
 
 #define LOG_TAG "TextureAtlas"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -815,6 +818,24 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
         LOGI("Resolved %d block models with geometry elements", elemCount);
     }
 
+    // 4.5 加载 blockstate JSON，解析变体映射
+    {
+        auto blockstateFiles = TextureLoader::readAllTextFromZip("blockstates/");
+        int bsCount = 0;
+        for (const auto& [entryPath, content] : blockstateFiles) {
+            std::string blockName = entryPath;
+            size_t slash = blockName.rfind('/');
+            if (slash != std::string::npos) blockName = blockName.substr(slash + 1);
+            size_t dot = blockName.rfind(".json");
+            if (dot != std::string::npos) blockName = blockName.substr(0, dot);
+            if (!blockName.empty()) {
+                parseBlockState(blockName, content);
+                bsCount++;
+            }
+        }
+        LOGI("Parsed %d blockstate files", bsCount);
+    }
+
     // 5. 强制加入特殊纹理（MeshGenerator 需要，但可能不被任何模型引用）
     ensureTexture("block/grass_block_side_overlay");
     ensureTexture("block/snow");
@@ -951,3 +972,233 @@ int TextureAtlas::getLayerByTexturePath(const std::string& texturePath) const {
 int TextureAtlas::getGrassSideOverlayLayer() const { return grassSideOverlayLayer; }
 int TextureAtlas::getGrassBlockSnowLayer() const    { return grassBlockSnowLayer; }
 int TextureAtlas::getGrassSideLayer() const         { return grassSideLayer; }
+
+// ============================================================
+// Blockstate 变体解析
+// ============================================================
+
+std::vector<std::pair<std::string, std::string>> TextureAtlas::parseVariantKey(const std::string& key) {
+    // key 如 "axis=x" 或 "facing=east,half=bottom,shape=straight" 或 ""（空）
+    std::vector<std::pair<std::string, std::string>> result;
+    if (key.empty()) return result;
+
+    size_t pos = 0;
+    while (pos < key.size()) {
+        size_t eq = key.find('=', pos);
+        if (eq == std::string::npos) break;
+        std::string propName = key.substr(pos, eq - pos);
+        size_t comma = key.find(',', eq + 1);
+        std::string propVal;
+        if (comma == std::string::npos) {
+            propVal = key.substr(eq + 1);
+            pos = key.size();
+        } else {
+            propVal = key.substr(eq + 1, comma - eq - 1);
+            pos = comma + 1;
+        }
+        result.emplace_back(propName, propVal);
+    }
+    // 按属性名字母序排序（Minecraft blockState 编码顺序）
+    std::sort(result.begin(), result.end(),
+        [](const auto& a, const auto& b) { return a.first < b.first; });
+    return result;
+}
+
+void TextureAtlas::parseBlockState(const std::string& blockName, const std::string& json) {
+    // 查找 "variants": {
+    size_t varPos = json.find("\"variants\"");
+    if (varPos == std::string::npos) return;
+
+    size_t bracePos = json.find('{', varPos);
+    if (bracePos == std::string::npos) return;
+
+    // 大括号匹配提取 variants 对象内容
+    int depth = 0;
+    bool inStr = false;
+    size_t braceEnd = bracePos;
+    for (; braceEnd < json.size(); braceEnd++) {
+        char c = json[braceEnd];
+        if (inStr) { if (c == '\\') { braceEnd++; continue; } if (c == '"') inStr = false; continue; }
+        if (c == '"') { inStr = true; continue; }
+        if (c == '{') depth++;
+        if (c == '}') { depth--; if (depth == 0) break; }
+    }
+    if (depth != 0 || braceEnd == json.size()) return;
+
+    std::string varContent = json.substr(bracePos + 1, braceEnd - bracePos - 1);
+
+    // 第一遍：解析所有变体，收集各属性的所有可能值
+    struct ParsedEntry {
+        std::vector<std::pair<std::string, std::string>> props;
+        BlockStateVariant bsv;
+    };
+    std::vector<ParsedEntry> entries;
+    std::unordered_map<std::string, std::unordered_set<std::string>> propValueSet;
+    bool hasSimpleVariant = false;
+
+    size_t pos = 0;
+    while (pos < varContent.size()) {
+        size_t keyStart = varContent.find('"', pos);
+        if (keyStart == std::string::npos) break;
+        size_t keyEnd = varContent.find('"', keyStart + 1);
+        if (keyEnd == std::string::npos) break;
+
+        std::string variantKey = varContent.substr(keyStart + 1, keyEnd - keyStart - 1);
+
+        size_t colonPos = varContent.find(':', keyEnd);
+        if (colonPos == std::string::npos) break;
+
+        size_t valStart = colonPos + 1;
+        while (valStart < varContent.size() &&
+               (varContent[valStart] == ' ' || varContent[valStart] == '\t' ||
+                varContent[valStart] == '\n' || varContent[valStart] == '\r'))
+            valStart++;
+
+        if (valStart >= varContent.size()) break;
+
+        bool isArray = (varContent[valStart] == '[');
+        size_t actualStart = varContent.find_first_of('{', valStart);
+        if (actualStart == std::string::npos) { pos = valStart + 1; continue; }
+
+        depth = 0;
+        inStr = false;
+        size_t valEnd = actualStart;
+        char closeChar = isArray ? ']' : '}';
+        for (; valEnd < varContent.size(); valEnd++) {
+            char c = varContent[valEnd];
+            if (inStr) { if (c == '\\') { valEnd++; continue; } if (c == '"') inStr = false; continue; }
+            if (c == '"') { inStr = true; continue; }
+            if (c == '{' || c == '[') depth++;
+            if (c == closeChar) { depth--; if (depth == 0) break; }
+        }
+        if (depth != 0) { pos = valEnd + 1; continue; }
+
+        size_t entryContentStart, entryContentEnd;
+        if (isArray) {
+            size_t firstObj = varContent.find('{', actualStart);
+            if (firstObj == std::string::npos || firstObj > valEnd) { pos = valEnd + 1; continue; }
+            int objDepth = 0;
+            size_t objEnd = firstObj;
+            inStr = false;
+            for (; objEnd <= valEnd; objEnd++) {
+                char c = varContent[objEnd];
+                if (inStr) { if (c == '\\') { objEnd++; continue; } if (c == '"') inStr = false; continue; }
+                if (c == '"') { inStr = true; continue; }
+                if (c == '{') objDepth++;
+                if (c == '}') { objDepth--; if (objDepth == 0) break; }
+            }
+            if (objDepth != 0) { pos = valEnd + 1; continue; }
+            entryContentStart = firstObj;
+            entryContentEnd = objEnd;
+        } else {
+            entryContentStart = actualStart;
+            entryContentEnd = valEnd;
+        }
+
+        std::string entryContent = varContent.substr(entryContentStart, entryContentEnd - entryContentStart + 1);
+
+        BlockStateVariant bsv;
+        bsv.modelName = extractStringValue(entryContent, "model");
+        if (bsv.modelName.empty()) { pos = valEnd + 1; continue; }
+
+        {
+            size_t mcPos = bsv.modelName.find(':');
+            if (mcPos != std::string::npos) bsv.modelName = bsv.modelName.substr(mcPos + 1);
+            if (bsv.modelName.find("block/") == 0) bsv.modelName = bsv.modelName.substr(6);
+        }
+
+        bsv.rotX = extractIntValue(entryContent, "x", 0);
+        bsv.rotY = extractIntValue(entryContent, "y", 0);
+        bsv.uvlock = extractBool(entryContent, "uvlock", false);
+
+        auto props = parseVariantKey(variantKey);
+
+        if (props.empty()) {
+            hasSimpleVariant = true;
+            entries.insert(entries.begin(), {props, bsv});
+        } else {
+            for (const auto& [prop, value] : props) {
+                propValueSet[prop].insert(value);
+            }
+            entries.push_back({props, bsv});
+        }
+
+        pos = valEnd + 1;
+    }
+
+    if (entries.empty()) return;
+
+    // 无属性变体（如 grass 的 "" 键）
+    if (hasSimpleVariant && propValueSet.empty()) {
+        std::vector<BlockStateVariant> variants(1);
+        variants[0] = entries[0].bsv;
+        blockstateVariantCache[blockName] = std::move(variants);
+        return;
+    }
+
+    // 将属性值集合转为排序向量（字母序 = Minecraft 编码顺序）
+    std::unordered_map<std::string, std::vector<std::string>> propValueList;
+    for (const auto& [prop, values] : propValueSet) {
+        std::vector<std::string> sorted(values.begin(), values.end());
+        std::sort(sorted.begin(), sorted.end());
+        propValueList[prop] = std::move(sorted);
+    }
+
+    // 第二遍：用实际值列表计算 offset
+    int maxOffset = -1;
+    std::unordered_map<int, BlockStateVariant> offsetMap;
+
+    for (const auto& entry : entries) {
+        if (entry.props.empty()) {
+            offsetMap[0] = entry.bsv;
+            if (0 > maxOffset) maxOffset = 0;
+            continue;
+        }
+
+        int offset = 0;
+        int stride = 1;
+        for (int i = (int)entry.props.size() - 1; i >= 0; i--) {
+            const auto& [propName, propValue] = entry.props[i];
+            const auto& values = propValueList[propName];
+            int valueIndex = 0;
+            for (size_t vi = 0; vi < values.size(); vi++) {
+                if (values[vi] == propValue) {
+                    valueIndex = (int)vi;
+                    break;
+                }
+            }
+            offset += valueIndex * stride;
+            stride *= (int)values.size();
+        }
+        offsetMap[offset] = entry.bsv;
+        if (offset > maxOffset) maxOffset = offset;
+    }
+
+    if (offsetMap.empty()) return;
+
+    // 构建按 offset 索引的数组
+    int arraySize = maxOffset + 1;
+    if (hasSimpleVariant && arraySize < 1) arraySize = 1;
+    std::vector<BlockStateVariant> variants(arraySize);
+
+    for (auto& v : variants) {
+        v.modelName = blockName;
+    }
+
+    for (auto& [off, variant] : offsetMap) {
+        if (off >= 0 && off < arraySize) {
+            variants[off] = std::move(variant);
+        }
+    }
+
+    blockstateVariantCache[blockName] = std::move(variants);
+}
+
+const BlockStateVariant* TextureAtlas::getBlockStateVariant(
+    const std::string& blockName, int32_t blockState, int32_t minStateId) const {
+    int32_t offset = blockState - minStateId;
+    auto it = blockstateVariantCache.find(blockName);
+    if (it == blockstateVariantCache.end()) return nullptr;
+    if (offset < 0 || offset >= (int32_t)it->second.size()) return nullptr;
+    return &it->second[offset];
+}
