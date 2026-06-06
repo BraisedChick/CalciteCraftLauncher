@@ -1,5 +1,6 @@
 #include "TextureAtlas.h"
 #include "TextureLoader.h"
+#include "BlockRegistry.h"
 #include <android/log.h>
 #include <algorithm>
 #include <cmath>
@@ -1179,6 +1180,35 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
         }
     }
 
+    // ===== 检测并补充缺失的 waterlogged 属性 =====
+    // Minecraft 1.13+ 中许多方块有 waterlogged（boolean）属性，但 blockstate JSON
+    // 的 variant keys 中可能不包含它（因为默认值为 false），导致偏移量计算缺了 2 倍因子。
+    if (propValueList.find("waterlogged") == propValueList.end() && !hasSimpleVariant) {
+        const auto& registry = BlockRegistry::getInstance();
+        const auto* blockInfo = registry.getBlockInfoByName(blockName);
+        if (blockInfo) {
+            int expectedStates = 1;
+            for (const auto& [prop, values] : propValueList) {
+                expectedStates *= (int)values.size();
+            }
+            int actualStates = blockInfo->maxStateId - blockInfo->minStateId + 1;
+            if (actualStates > expectedStates && actualStates % expectedStates == 0) {
+                int factor = actualStates / expectedStates;
+                if (factor == 2) {
+                    // 缺少 boolean 属性 → waterlogged
+                    propValueList["waterlogged"] = {"false", "true"};
+                    // 给所有 entries 添加 waterlogged=false（默认值）
+                    for (auto& entry : entries) {
+                        entry.props.emplace_back("waterlogged", "false");
+                        std::sort(entry.props.begin(), entry.props.end(),
+                            [](const auto& a, const auto& b) { return a.first < b.first; });
+                    }
+                }
+            }
+        }
+    }
+    // ===== END waterlogged 检测 =====
+
     // 第二遍：用实际值列表计算 offset
     int maxOffset = -1;
     std::unordered_map<int, BlockStateVariant> offsetMap;
@@ -1208,6 +1238,31 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
         offsetMap[offset] = entry.bsv;
         if (offset > maxOffset) maxOffset = offset;
     }
+
+    // ===== 补充 waterlogged=true 的变体条目 =====
+    // 如果 waterlogged 是由检测代码添加的（所有变体都是 waterlogged=false），
+    // 则为每个变体复制一份 waterlogged=true 的条目
+    if (propValueList.find("waterlogged") != propValueList.end()) {
+        bool waterTrueCollected = false;
+        auto wlSetIt = propValueSet.find("waterlogged");
+        if (wlSetIt != propValueSet.end() && wlSetIt->second.find("true") != wlSetIt->second.end()) {
+            waterTrueCollected = true;
+        }
+        if (!waterTrueCollected) {
+            // waterlogged 是最后一个属性（字母序），stride = 1
+            // waterlogged=false → offset X, waterlogged=true → offset X + 1
+            std::unordered_map<int, BlockStateVariant> waterMap;
+            for (const auto& [off, variant] : offsetMap) {
+                if (off >= 0) {
+                    waterMap[off] = variant;
+                    waterMap[off + 1] = variant;
+                }
+            }
+            offsetMap.swap(waterMap);
+            maxOffset = maxOffset * 2 + 1;
+        }
+    }
+    // ===== END waterlogged=true 补充 =====
 
     if (offsetMap.empty()) return;
 

@@ -65,6 +65,9 @@ public:
     // 根据 registry ID 获取物品名称（适用于物品栏中的 itemId）
     std::string getItemName(int32_t itemId) const;
 
+    // 根据方块名称获取 BlockInfo
+    const BlockInfo* getBlockInfoByName(const std::string& name) const;
+
 private:
     BlockRegistry() : loaded(false) {}
 

@@ -302,3 +302,10 @@ std::string BlockRegistry::getItemName(int32_t itemId) const {
     if (it != idToName.end()) return it->second;
     return "";
 }
+
+const BlockInfo* BlockRegistry::getBlockInfoByName(const std::string& name) const {
+    for (const auto& block : blocks) {
+        if (block.name == name) return &block;
+    }
+    return nullptr;
+}
