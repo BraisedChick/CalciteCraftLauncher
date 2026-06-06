@@ -1136,12 +1136,47 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
         return;
     }
 
-    // 将属性值集合转为排序向量（字母序 = Minecraft 编码顺序）
+    // 已知属性值顺序（匹配 Minecraft BlockStateDefinition 定义顺序）
+    static const std::unordered_map<std::string, std::vector<std::string>> knownPropOrder = {
+        {"axis",     {"x", "y", "z"}},
+        {"facing",   {"down", "up", "north", "south", "west", "east"}},
+        {"half",     {"top", "bottom"}},
+        {"type",     {"bottom", "top", "double"}},
+        {"shape",    {"straight", "inner_left", "inner_right", "outer_left", "outer_right"}},
+        {"face",     {"floor", "wall", "ceiling"}},
+        {"egde",     {"none", "up", "side"}},
+        {"attach",   {"floor", "ceiling", "single_wall", "double_wall"}},
+        {"part",     {"foot", "head"}},
+        {"vertical_direction", {"down", "up"}},
+        {"instrument", {"harp", "basedrum", "snare", "hat", "bass", "flute", "bell", "guitar", "chime", "xylophone", "iron_xylophone", "cow_bell", "didgeridoo", "bit", "banjo", "pling"}},
+        {"stage",    {"0", "1", "2", "3"}},
+    };
+
+    // 将属性值集合按已知顺序（或用字母序回退）排序
     std::unordered_map<std::string, std::vector<std::string>> propValueList;
-    for (const auto& [prop, values] : propValueSet) {
-        std::vector<std::string> sorted(values.begin(), values.end());
-        std::sort(sorted.begin(), sorted.end());
-        propValueList[prop] = std::move(sorted);
+    for (const auto& [prop, collectedValues] : propValueSet) {
+        auto knownIt = knownPropOrder.find(prop);
+        if (knownIt != knownPropOrder.end()) {
+            // 用已知顺序，只保留 blockstate 中存在的值
+            std::vector<std::string> ordered;
+            for (const auto& val : knownIt->second) {
+                if (collectedValues.find(val) != collectedValues.end()) {
+                    ordered.push_back(val);
+                }
+            }
+            // 已知列表中未覆盖的值（如 half=lower/upper）追到末尾
+            for (const auto& val : collectedValues) {
+                if (std::find(ordered.begin(), ordered.end(), val) == ordered.end()) {
+                    ordered.push_back(val);
+                }
+            }
+            propValueList[prop] = std::move(ordered);
+        } else {
+            // 未知属性：字母序回退
+            std::vector<std::string> sorted(collectedValues.begin(), collectedValues.end());
+            std::sort(sorted.begin(), sorted.end());
+            propValueList[prop] = std::move(sorted);
+        }
     }
 
     // 第二遍：用实际值列表计算 offset

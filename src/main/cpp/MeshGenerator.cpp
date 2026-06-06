@@ -224,18 +224,18 @@ static void generateFromModel(
                     rotateVertex(lx, ly, lz, elem.rotation);
                 }
 
-                // Blockstate 旋转（整个模型绕方块中心 8,8,8）
+                // Blockstate 旋转（整个模型绕方块中心 8,8,8，顺时针）
                 if (bsRotX != 0 || bsRotY != 0) {
                     float cx = lx - 8.0f, cy = ly - 8.0f, cz = lz - 8.0f;
                     if (bsRotX != 0) {
-                        float rad = bsRotX * (3.14159265f / 180.0f);
+                        float rad = -bsRotX * (3.14159265f / 180.0f);
                         float cosA = cosf(rad), sinA = sinf(rad);
                         float ny = cy * cosA - cz * sinA;
                         float nz = cy * sinA + cz * cosA;
                         cy = ny; cz = nz;
                     }
                     if (bsRotY != 0) {
-                        float rad = bsRotY * (3.14159265f / 180.0f);
+                        float rad = -bsRotY * (3.14159265f / 180.0f);
                         float cosA = cosf(rad), sinA = sinf(rad);
                         float nx = cx * cosA + cz * sinA;
                         float nz = -cx * sinA + cz * cosA;
