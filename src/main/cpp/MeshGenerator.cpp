@@ -273,15 +273,23 @@ static void generateFromModel(
 
             // 确定面的颜色（所有 4 个顶点相同，提出到循环外）
             uint8_t cr = 255, cg = 255, cb = 255;
+            // tintindex 匹配时优先用调用方预计算的颜色（grass_block/leaves），否则从 BiomeColorManager 采样
+            // 非 tintindex 面保持白色（如草方块侧面由 overlay 着色）
             if (face.tintindex == 0) {
-                BiomeColorManager::getInstance().getGrassColor(biomeId, cr, cg, cb);
+                if (tintR != 255 || tintG != 255 || tintB != 255) {
+                    cr = tintR; cg = tintG; cb = tintB;
+                } else {
+                    BiomeColorManager::getInstance().getGrassColor(biomeId, cr, cg, cb);
+                }
             } else if (face.tintindex == 1) {
-                BiomeColorManager::getInstance().getFoliageColor(biomeId, cr, cg, cb);
+                if (tintR != 255 || tintG != 255 || tintB != 255) {
+                    cr = tintR; cg = tintG; cb = tintB;
+                } else {
+                    BiomeColorManager::getInstance().getFoliageColor(biomeId, cr, cg, cb);
+                }
             } else if (needsOverlay) {
                 // overlay 面：base 面白色，颜色由 overlay 携带
                 cr = 255; cg = 255; cb = 255;
-            } else if (tintR != 255 || tintG != 255 || tintB != 255) {
-                cr = tintR; cg = tintG; cb = tintB;
             }
 
             // 批量生成 4 个顶点到局部数组，一次性 insert
@@ -580,7 +588,14 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                 if (blockMeta.isGrassBlock) {
                     BiomeColorManager::getInstance().getGrassColor(biomeId, tintR, tintG, tintB);
                 } else if (blockMeta.isLeaves) {
-                    BiomeColorManager::getInstance().getFoliageColor(biomeId, tintR, tintG, tintB);
+                    // 白桦树叶固定 #80A755，云杉树叶固定 #619961（Java 版硬编码，不受生物群系影响）
+                    if (blockMeta.name == "birch_leaves") {
+                        tintR = 0x80; tintG = 0xA7; tintB = 0x55;
+                    } else if (blockMeta.name == "spruce_leaves") {
+                        tintR = 0x61; tintG = 0x99; tintB = 0x61;
+                    } else {
+                        BiomeColorManager::getInstance().getFoliageColor(biomeId, tintR, tintG, tintB);
+                    }
                 }
 
                 BlockTextureConfig tex{blockMeta.texTop, blockMeta.texSide, blockMeta.texBottom};

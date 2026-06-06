@@ -302,12 +302,6 @@ void BiomeColorManager::getGrassColor(int32_t biomeId, uint8_t& r, uint8_t& g, u
         r = 170; g = 68; b = 170;
     }
 
-    // 调试日志：每 300 次调用输出一次 biomeId 映射
-    static int grassColorCounter = 0;
-    if (++grassColorCounter % 300 == 0) {
-        float adjustedDownfall = entry.temperature * entry.downfall;
-        LOGI("grassColor: biomeId=%d temp=%.2f rain=%.2f adjRain=%.2f color=(%d,%d,%d)",
-             biomeId, entry.temperature, entry.downfall, adjustedDownfall, r, g, b);
     }
 }
 
@@ -330,8 +324,6 @@ void BiomeColorManager::getFoliageColor(int32_t biomeId, uint8_t& r, uint8_t& g,
 
     // 从 colormap 采样
     if (!foliageColormap.empty()) {
-        // 与 grass 一样使用 adjustedDownfall 公式，
-        // 这样寒冷群系会采样到 colormap 右下角的深色区域
         float clampedTemp = std::max(0.0f, std::min(1.0f, entry.temperature));
         float adjustedDownfall = clampedTemp * std::max(0.0f, std::min(1.0f, entry.downfall));
         sampleColor(foliageColormap, clampedTemp, adjustedDownfall, r, g, b);
