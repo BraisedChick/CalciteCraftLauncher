@@ -456,7 +456,7 @@ std::vector<AABB> Collision::getBlockAABBs(int blockX, int blockY, int blockZ) c
     if (state == 0) return {};
 
     const auto& meta = BlockRegistry::getInstance().getBlockMetadata(state);
-    if (meta.isPlant || meta.isWater) return {};
+    if (meta.isPlant || meta.isWater || meta.isNoCollision) return {};
 
     auto& atlas = TextureAtlas::getInstance();
     if (!atlas.isInitialized()) {

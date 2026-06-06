@@ -228,6 +228,31 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
     // ---- 水 ----
     meta.isWater = (meta.name == "water");
 
+    // ---- 无碰撞方块（火把、按钮、压力板等）----
+    {
+        // 后缀匹配辅助 lambda
+        auto hasSuffix = [&](const std::string& suffix) {
+            if (suffix.size() > meta.name.size()) return false;
+            return meta.name.compare(meta.name.size() - suffix.size(), suffix.size(), suffix) == 0;
+        };
+        meta.isNoCollision = (
+            meta.name == "torch" || meta.name == "wall_torch" ||
+            meta.name == "soul_torch" || meta.name == "soul_wall_torch" ||
+            meta.name == "redstone_torch" || meta.name == "redstone_wall_torch" ||
+            meta.name == "fire" || meta.name == "soul_fire" ||
+            meta.name == "redstone_wire" || meta.name == "tripwire" ||
+            meta.name == "tripwire_hook" || meta.name == "lever" ||
+            meta.name == "repeater" || meta.name == "comparator" ||
+            meta.name == "nether_portal" || meta.name == "end_portal" ||
+            meta.name == "cobweb" ||
+            hasSuffix("_button") ||
+            hasSuffix("_pressure_plate") ||
+            hasSuffix("_rail") ||
+            hasSuffix("_sign") || hasSuffix("_wall_sign") ||
+            hasSuffix("_banner") || hasSuffix("_wall_banner")
+        );
+    }
+
     // ---- 高度 ----
     if (meta.isSnow) {
         int stateCount = info->maxStateId - info->minStateId + 1;
@@ -257,7 +282,7 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
 
     // ---- 完整方块判定（基于模型几何，用于面剔除） ----
     meta.isFullBlock = false;
-    if (blockState != 0 && !meta.isAir && !meta.isWater && !meta.isLeaves) {
+    if (blockState != 0 && !meta.isAir && !meta.isWater && !meta.isLeaves && !meta.isPlant) {
         auto& atlas = TextureAtlas::getInstance();
         if (atlas.isInitialized()) {
             const auto* model = atlas.getBlockModel(meta.name);

@@ -31,6 +31,7 @@ struct BlockMetadata {
     bool isSnow = false;
     bool isWater = false;
     bool isAir = false;
+    bool isNoCollision = false;  // 火把、按钮等无碰撞方块
     bool isFullBlock = true;
 };
 
