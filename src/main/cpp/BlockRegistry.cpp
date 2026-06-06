@@ -210,7 +210,7 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
     meta.minStateId = info->minStateId;
 
     // ---- 方块类型判断 ----
-    meta.isAir = (meta.name.find("air") != std::string::npos);
+    meta.isAir = (meta.name == "air" || meta.name == "cave_air" || meta.name == "void_air");
     meta.isGrassBlock = (meta.name == "grass_block");
     meta.isLeaves = (meta.name.find("leaves") != std::string::npos);
     meta.isSnow = (meta.name == "snow");
