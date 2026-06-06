@@ -75,6 +75,13 @@ struct BlockStateVariant {
 };
 
 // ============================================================
+// 碰撞箱：从模型元素解析出的 AABB（block-local 0-1 坐标空间）
+// ============================================================
+struct CollisionBox {
+    float minX, minY, minZ, maxX, maxY, maxZ;
+};
+
+// ============================================================
 // TextureAtlas — 从 models/block/*.json 动态构建纹理映射和模型数据
 //
 // 工作流程：
@@ -123,6 +130,12 @@ public:
     const BlockStateVariant* getBlockStateVariant(const std::string& blockName,
                                                   int32_t blockState,
                                                   int32_t minStateId) const;
+
+    // 获取方块碰撞箱列表（block-local 0-1 坐标空间，已应用 element 和 blockstate 旋转）
+    // 返回空 vector 表示应使用全方块碰撞箱
+    std::vector<CollisionBox> getBlockCollisionBoxes(const std::string& blockName,
+                                                      int32_t blockState,
+                                                      int32_t minStateId) const;
 
     bool isInitialized() const { return initialized; }
 

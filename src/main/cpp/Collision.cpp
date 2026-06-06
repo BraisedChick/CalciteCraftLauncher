@@ -1,6 +1,7 @@
 #include "Collision.h"
 #include "ChunkManager.h"
 #include "BlockRegistry.h"
+#include "TextureAtlas.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <android/log.h>
 #include <cmath>
@@ -226,20 +227,17 @@ void Collision::tick() {
         for (int by = minBY; by <= maxBY; by++) {
             for (int bz = minBZ; bz <= maxBZ; bz++) {
                 for (int bx = minBX; bx <= maxBX; bx++) {
-                    if (!isBlockSolid(bx, by, bz)) continue;
-                    float bh = getBlockHeight(bx, by, bz);
-                    if (bh <= 0.0f) continue;
+                    auto blockBoxes = getBlockAABBs(bx, by, bz);
+                    for (const auto& blockBox : blockBoxes) {
+                        if (!box.intersects(blockBox)) continue;
 
-                    AABB blockBox((float)bx, (float)by, (float)bz,
-                                  (float)(bx + 1), (float)by + bh, (float)(bz + 1));
-                    if (!box.intersects(blockBox)) continue;
-
-                    if (velocity.y > 0.0f && playerBox.maxY <= blockBox.minY) {
-                        float newDy = blockBox.minY - playerBox.maxY;
-                        if (newDy < velocity.y) velocity.y = newDy;
-                    } else if (velocity.y < 0.0f && playerBox.minY >= blockBox.maxY) {
-                        float newDy = blockBox.maxY - playerBox.minY;
-                        if (newDy > velocity.y) velocity.y = newDy;
+                        if (velocity.y > 0.0f && playerBox.maxY <= blockBox.minY) {
+                            float newDy = blockBox.minY - playerBox.maxY;
+                            if (newDy < velocity.y) velocity.y = newDy;
+                        } else if (velocity.y < 0.0f && playerBox.minY >= blockBox.maxY) {
+                            float newDy = blockBox.maxY - playerBox.minY;
+                            if (newDy > velocity.y) velocity.y = newDy;
+                        }
                     }
                 }
             }
@@ -273,20 +271,17 @@ void Collision::tick() {
         for (int by = minBY; by <= maxBY; by++) {
             for (int bz = minBZ; bz <= maxBZ; bz++) {
                 for (int bx = minBX; bx <= maxBX; bx++) {
-                    if (!isBlockSolid(bx, by, bz)) continue;
-                    float bh = getBlockHeight(bx, by, bz);
-                    if (bh <= 0.0f) continue;
+                    auto blockBoxes = getBlockAABBs(bx, by, bz);
+                    for (const auto& blockBox : blockBoxes) {
+                        if (!box.intersects(blockBox)) continue;
 
-                    AABB blockBox((float)bx, (float)by, (float)bz,
-                                  (float)(bx + 1), (float)by + bh, (float)(bz + 1));
-                    if (!box.intersects(blockBox)) continue;
-
-                    if (velocity.x > 0.0f && playerBox.maxX <= blockBox.minX + 1e-5f) {
-                        float newDx = blockBox.minX - playerBox.maxX - 0.001f;
-                        if (newDx < velocity.x) velocity.x = newDx;
-                    } else if (velocity.x < 0.0f && playerBox.minX >= blockBox.maxX - 1e-5f) {
-                        float newDx = blockBox.maxX - playerBox.minX + 0.001f;
-                        if (newDx > velocity.x) velocity.x = newDx;
+                        if (velocity.x > 0.0f && playerBox.maxX <= blockBox.minX + 1e-5f) {
+                            float newDx = blockBox.minX - playerBox.maxX - 0.001f;
+                            if (newDx < velocity.x) velocity.x = newDx;
+                        } else if (velocity.x < 0.0f && playerBox.minX >= blockBox.maxX - 1e-5f) {
+                            float newDx = blockBox.maxX - playerBox.minX + 0.001f;
+                            if (newDx > velocity.x) velocity.x = newDx;
+                        }
                     }
                 }
             }
@@ -306,12 +301,11 @@ void Collision::tick() {
             for (int by = sminBY; by <= smaxBY && stepClear; by++) {
                 for (int bz = sminBZ; bz <= smaxBZ && stepClear; bz++) {
                     for (int bx = sminBX; bx <= smaxBX && stepClear; bx++) {
-                        if (!isBlockSolid(bx, by, bz)) continue;
-                        float bh = getBlockHeight(bx, by, bz);
-                        if (bh <= 0.0f) continue;
-                        AABB blockBox((float)bx, (float)by, (float)bz,
-                                      (float)(bx + 1), (float)by + bh, (float)(bz + 1));
-                        if (stepBox.intersects(blockBox)) stepClear = false;
+                        auto blockBoxes = getBlockAABBs(bx, by, bz);
+                        for (const auto& blockBox : blockBoxes) {
+                            if (stepBox.intersects(blockBox)) { stepClear = false; break; }
+                        }
+                        if (!stepClear) break;
                     }
                 }
             }
@@ -321,11 +315,12 @@ void Collision::tick() {
                 for (int by = (int)floorf(origY); by <= (int)floorf(origY + STEP_HEIGHT); by++) {
                     for (int bz = sminBZ; bz <= smaxBZ; bz++) {
                         for (int bx = sminBX; bx <= smaxBX; bx++) {
-                            if (!isBlockSolid(bx, by, bz)) continue;
-                            float bh = getBlockHeight(bx, by, bz);
-                            float top = (float)by + bh;
-                            if (top > newGround && top <= origY + STEP_HEIGHT + 1e-4f) {
-                                newGround = top;
+                            auto blockBoxes = getBlockAABBs(bx, by, bz);
+                            for (const auto& ab : blockBoxes) {
+                                float top = ab.maxY;
+                                if (top > newGround && top <= origY + STEP_HEIGHT + 1e-4f) {
+                                    newGround = top;
+                                }
                             }
                         }
                     }
@@ -358,20 +353,17 @@ void Collision::tick() {
         for (int by = minBY; by <= maxBY; by++) {
             for (int bz = minBZ; bz <= maxBZ; bz++) {
                 for (int bx = minBX; bx <= maxBX; bx++) {
-                    if (!isBlockSolid(bx, by, bz)) continue;
-                    float bh = getBlockHeight(bx, by, bz);
-                    if (bh <= 0.0f) continue;
+                    auto blockBoxes = getBlockAABBs(bx, by, bz);
+                    for (const auto& blockBox : blockBoxes) {
+                        if (!box.intersects(blockBox)) continue;
 
-                    AABB blockBox((float)bx, (float)by, (float)bz,
-                                  (float)(bx + 1), (float)by + bh, (float)(bz + 1));
-                    if (!box.intersects(blockBox)) continue;
-
-                    if (velocity.z > 0.0f && playerBox.maxZ <= blockBox.minZ + 1e-5f) {
-                        float newDz = blockBox.minZ - playerBox.maxZ - 0.001f;
-                        if (newDz < velocity.z) velocity.z = newDz;
-                    } else if (velocity.z < 0.0f && playerBox.minZ >= blockBox.maxZ - 1e-5f) {
-                        float newDz = blockBox.maxZ - playerBox.minZ + 0.001f;
-                        if (newDz > velocity.z) velocity.z = newDz;
+                        if (velocity.z > 0.0f && playerBox.maxZ <= blockBox.minZ + 1e-5f) {
+                            float newDz = blockBox.minZ - playerBox.maxZ - 0.001f;
+                            if (newDz < velocity.z) velocity.z = newDz;
+                        } else if (velocity.z < 0.0f && playerBox.minZ >= blockBox.maxZ - 1e-5f) {
+                            float newDz = blockBox.maxZ - playerBox.minZ + 0.001f;
+                            if (newDz > velocity.z) velocity.z = newDz;
+                        }
                     }
                 }
             }
@@ -391,12 +383,11 @@ void Collision::tick() {
             for (int by = sminBY; by <= smaxBY && stepClear; by++) {
                 for (int bz = sminBZ; bz <= smaxBZ && stepClear; bz++) {
                     for (int bx = sminBX; bx <= smaxBX && stepClear; bx++) {
-                        if (!isBlockSolid(bx, by, bz)) continue;
-                        float bh = getBlockHeight(bx, by, bz);
-                        if (bh <= 0.0f) continue;
-                        AABB blockBox((float)bx, (float)by, (float)bz,
-                                      (float)(bx + 1), (float)by + bh, (float)(bz + 1));
-                        if (stepBox.intersects(blockBox)) stepClear = false;
+                        auto blockBoxes = getBlockAABBs(bx, by, bz);
+                        for (const auto& blockBox : blockBoxes) {
+                            if (stepBox.intersects(blockBox)) { stepClear = false; break; }
+                        }
+                        if (!stepClear) break;
                     }
                 }
             }
@@ -406,11 +397,12 @@ void Collision::tick() {
                 for (int by = (int)floorf(origY); by <= (int)floorf(origY + STEP_HEIGHT); by++) {
                     for (int bz = sminBZ; bz <= smaxBZ; bz++) {
                         for (int bx = sminBX; bx <= smaxBX; bx++) {
-                            if (!isBlockSolid(bx, by, bz)) continue;
-                            float bh = getBlockHeight(bx, by, bz);
-                            float top = (float)by + bh;
-                            if (top > newGround && top <= origY + STEP_HEIGHT + 1e-4f) {
-                                newGround = top;
+                            auto blockBoxes = getBlockAABBs(bx, by, bz);
+                            for (const auto& ab : blockBoxes) {
+                                float top = ab.maxY;
+                                if (top > newGround && top <= origY + STEP_HEIGHT + 1e-4f) {
+                                    newGround = top;
+                                }
                             }
                         }
                     }
@@ -453,29 +445,44 @@ AABB Collision::getPlayerAABB() const {
                 position.x + hw, position.y + PLAYER_HEIGHT, position.z + hw);
 }
 
-bool Collision::isBlockSolid(int blockX, int blockY, int blockZ) const {
-    if (!chunkManager) return false;
+std::vector<AABB> Collision::getBlockAABBs(int blockX, int blockY, int blockZ) const {
+    if (!chunkManager) return {AABB((float)blockX, (float)blockY, (float)blockZ,
+                                    (float)(blockX + 1), (float)(blockY + 1), (float)(blockZ + 1))};
     auto chunk = chunkManager->getChunk(blockX >> 4, blockZ >> 4);
-    if (!chunk || !chunk->isLoaded) return false;
+    if (!chunk || !chunk->isLoaded) return {AABB((float)blockX, (float)blockY, (float)blockZ,
+                                                  (float)(blockX + 1), (float)(blockY + 1), (float)(blockZ + 1))};
 
     int32_t state = chunk->getBlockState(blockX & 15, blockY, blockZ & 15);
-    if (state == 0) return false;
+    if (state == 0) return {};
 
     const auto& meta = BlockRegistry::getInstance().getBlockMetadata(state);
-    return !meta.isPlant && !meta.isWater;
-}
+    if (meta.isPlant || meta.isWater) return {};
 
-float Collision::getBlockHeight(int blockX, int blockY, int blockZ) const {
-    if (!chunkManager) return 1.0f;
-    auto chunk = chunkManager->getChunk(blockX >> 4, blockZ >> 4);
-    if (!chunk || !chunk->isLoaded) return 1.0f;
+    auto& atlas = TextureAtlas::getInstance();
+    if (!atlas.isInitialized()) {
+        // TextureAtlas 未初始化：使用高度值回退
+        float h = meta.height;
+        if (h <= 0.0f) return {};
+        return {AABB((float)blockX, (float)blockY, (float)blockZ,
+                     (float)(blockX + 1), (float)blockY + h, (float)(blockZ + 1))};
+    }
 
-    int32_t state = chunk->getBlockState(blockX & 15, blockY, blockZ & 15);
-    if (state == 0) return 0.0f;
+    auto boxes = atlas.getBlockCollisionBoxes(meta.name, state, meta.minStateId);
+    if (boxes.empty()) {
+        // 无模型数据 → 全方块碰撞
+        return {AABB((float)blockX, (float)blockY, (float)blockZ,
+                     (float)(blockX + 1), (float)(blockY + 1), (float)(blockZ + 1))};
+    }
 
-    const auto& meta = BlockRegistry::getInstance().getBlockMetadata(state);
-    if (meta.isPlant || meta.isWater) return 0.0f;
-    return meta.height;
+    // 将 block-local 0-1 坐标偏移到世界坐标
+    std::vector<AABB> result;
+    result.reserve(boxes.size());
+    for (const auto& cb : boxes) {
+        result.push_back(AABB(
+            blockX + cb.minX, blockY + cb.minY, blockZ + cb.minZ,
+            blockX + cb.maxX, blockY + cb.maxY, blockZ + cb.maxZ));
+    }
+    return result;
 }
 
 // ===== 访问器 =====

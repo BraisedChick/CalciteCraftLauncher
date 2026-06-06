@@ -1292,3 +1292,137 @@ const BlockStateVariant* TextureAtlas::getBlockStateVariant(
     if (offset < 0 || offset >= (int32_t)it->second.size()) return nullptr;
     return &it->second[offset];
 }
+
+// ============================================================
+// 从模型元素解析碰撞箱
+// ============================================================
+
+std::vector<CollisionBox> TextureAtlas::getBlockCollisionBoxes(
+    const std::string& blockName, int32_t blockState, int32_t minStateId) const
+{
+    // 1. 获取 blockstate 变体（模型名 + 旋转）
+    const auto* variant = getBlockStateVariant(blockName, blockState, minStateId);
+    const std::string* modelName = variant ? &variant->modelName : &blockName;
+    int bsRotX = variant ? variant->rotX : 0;
+    int bsRotY = variant ? variant->rotY : 0;
+
+    // 2. 获取模型 elements
+    auto modelIt = blockModelCache.find(*modelName);
+    if (modelIt == blockModelCache.end() || modelIt->second.elements.empty()) {
+        return {};  // 无模型数据 → 调用方使用全方块碰撞
+    }
+
+    // 3. 将每个 element 转为碰撞箱（在 0-16 像素空间操作，最后 /16 归一化到 0-1）
+    const auto& elements = modelIt->second.elements;
+    std::vector<CollisionBox> boxes;
+    boxes.reserve(elements.size());
+
+    for (const auto& elem : elements) {
+        // 获取 8 个顶点
+        float corners[8][3];
+        int idx = 0;
+        for (int ci = 0; ci < 2; ci++) {
+            float x = (ci == 0) ? elem.from[0] : elem.to[0];
+            for (int cj = 0; cj < 2; cj++) {
+                float y = (cj == 0) ? elem.from[1] : elem.to[1];
+                for (int ck = 0; ck < 2; ck++) {
+                    float z = (ck == 0) ? elem.from[2] : elem.to[2];
+                    corners[idx][0] = x;
+                    corners[idx][1] = y;
+                    corners[idx][2] = z;
+                    idx++;
+                }
+            }
+        }
+
+        // 应用 element 自身旋转（绕 origin，与渲染一致）
+        if (elem.rotation.angle != 0.0f) {
+            float ox = elem.rotation.origin[0];
+            float oy = elem.rotation.origin[1];
+            float oz = elem.rotation.origin[2];
+            float rad = elem.rotation.angle * (3.14159265f / 180.0f);
+            float cosA = cosf(rad), sinA = sinf(rad);
+
+            for (int c = 0; c < 8; c++) {
+                float dx = corners[c][0] - ox;
+                float dy = corners[c][1] - oy;
+                float dz = corners[c][2] - oz;
+                float nx, ny, nz;
+
+                switch (elem.rotation.axis) {
+                    case 0: // X
+                        ny = dy * cosA - dz * sinA;
+                        nz = dy * sinA + dz * cosA;
+                        nx = dx;
+                        break;
+                    case 1: // Y
+                        nx = dx * cosA + dz * sinA;
+                        nz = -dx * sinA + dz * cosA;
+                        ny = dy;
+                        break;
+                    case 2: // Z
+                        nx = dx * cosA - dy * sinA;
+                        ny = dx * sinA + dy * cosA;
+                        nz = dz;
+                        break;
+                    default:
+                        nx = dx; ny = dy; nz = dz;
+                }
+
+                corners[c][0] = ox + nx;
+                corners[c][1] = oy + ny;
+                corners[c][2] = oz + nz;
+            }
+        }
+
+        // 应用 blockstate 旋转（绕方块中心 8,8,8）
+        if (bsRotX != 0 || bsRotY != 0) {
+            for (int c = 0; c < 8; c++) {
+                float px = corners[c][0] - 8.0f;
+                float py = corners[c][1] - 8.0f;
+                float pz = corners[c][2] - 8.0f;
+
+                if (bsRotX != 0) {
+                    float rad = -bsRotX * (3.14159265f / 180.0f);
+                    float cosA = cosf(rad), sinA = sinf(rad);
+                    float ny = py * cosA - pz * sinA;
+                    float nz = py * sinA + pz * cosA;
+                    py = ny; pz = nz;
+                }
+                if (bsRotY != 0) {
+                    float rad = -bsRotY * (3.14159265f / 180.0f);
+                    float cosA = cosf(rad), sinA = sinf(rad);
+                    float nx = px * cosA + pz * sinA;
+                    float nz = -px * sinA + pz * cosA;
+                    px = nx; pz = nz;
+                }
+
+                corners[c][0] = px + 8.0f;
+                corners[c][1] = py + 8.0f;
+                corners[c][2] = pz + 8.0f;
+            }
+        }
+
+        // 求旋转后的轴对齐边界并归一化到 0-1
+        float minX = INFINITY, minY = INFINITY, minZ = INFINITY;
+        float maxX = -INFINITY, maxY = -INFINITY, maxZ = -INFINITY;
+        for (int c = 0; c < 8; c++) {
+            float x = corners[c][0] / 16.0f;
+            float y = corners[c][1] / 16.0f;
+            float z = corners[c][2] / 16.0f;
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (z < minZ) minZ = z;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+            if (z > maxZ) maxZ = z;
+        }
+
+        // 跳过无体积或负体积元素
+        if (maxX <= minX || maxY <= minY || maxZ <= minZ) continue;
+
+        boxes.push_back({minX, minY, minZ, maxX, maxY, maxZ});
+    }
+
+    return boxes;
+}

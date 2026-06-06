@@ -2,6 +2,7 @@
 #include <glm/glm.hpp>
 #include <mutex>
 #include <atomic>
+#include <vector>
 
 class ChunkManager;
 
@@ -85,6 +86,5 @@ private:
 
     void tick();
     AABB getPlayerAABB() const;
-    bool isBlockSolid(int blockX, int blockY, int blockZ) const;
-    float getBlockHeight(int blockX, int blockY, int blockZ) const;
+    std::vector<AABB> getBlockAABBs(int blockX, int blockY, int blockZ) const;
 };
