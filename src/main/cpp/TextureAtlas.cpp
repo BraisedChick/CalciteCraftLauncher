@@ -1184,7 +1184,7 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
     };
 
     // 将属性值集合按已知顺序（或用字母序回退）排序
-    std::unordered_map<std::string, std::vector<std::string>> propValueList;
+    std::map<std::string, std::vector<std::string>> propValueList;
     for (const auto& [prop, collectedValues] : propValueSet) {
         auto knownIt = knownPropOrder.find(prop);
         if (knownIt != knownPropOrder.end()) {
@@ -1532,7 +1532,7 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const std::strin
     // ===== 3. 构建属性值列表 =====
     // 所有属性都视为布尔（multipart 方块的实际属性总是布尔）
     // 如果条件中只出现 "true"，补上 "false"
-    std::unordered_map<std::string, std::vector<std::string>> propValueList;
+    std::map<std::string, std::vector<std::string>> propValueList;
     for (const auto& [prop, collected] : propValueSet) {
         if (collected.size() == 1 && collected.find("true") != collected.end()) {
             propValueList[prop] = {"true", "false"};
@@ -1564,11 +1564,11 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const std::strin
             int factor2 = actualStates / totalStates;
             if (factor2 == 2 || factor2 == 4) {
                 hasAutoWaterlogged = true;
-                propValueList["waterlogged"] = {"false", "true"};
+                propValueList["waterlogged"] = {"true", "false"};
                 totalStates *= 2;
                 if (factor2 == 4) {
                     hasAutoPowered = true;
-                    propValueList["powered"] = {"false", "true"};
+                    propValueList["powered"] = {"true", "false"};
                     totalStates *= 2;
                 }
             }
@@ -1629,20 +1629,6 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const std::strin
                 variants[off].models.push_back(entry.modelEntry);
             }
         }
-    }
-
-    // ===== 7. 如有自动补全的布尔属性，扩展变体 =====
-    if (hasAutoWaterlogged || hasAutoPowered) {
-        // waterlogged 排在最后（刚添加），所以需要分段复制
-        int wpCount = (hasAutoWaterlogged ? 2 : 1) * (hasAutoPowered ? 2 : 1);
-        int baseCount = totalStates / wpCount;
-        std::vector<BlockStateVariant> expanded(totalStates);
-        for (int off = 0; off < baseCount; off++) {
-            for (int w = 0; w < wpCount; w++) {
-                expanded[off + w * baseCount] = variants[off];
-            }
-        }
-        variants.swap(expanded);
     }
 
     blockstateVariantCache[blockName] = std::move(variants);
