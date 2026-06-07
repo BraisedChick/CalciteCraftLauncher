@@ -404,11 +404,18 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateMes
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
 
+    // 线程局部的 scratch vectors，跨 section 复用避免反复分配
+    std::vector<Vertex> baseVertices, overlayVertices, waterVertices;
+    std::vector<uint32_t> baseIndices, overlayIndices, waterIndices;
+
     for (size_t sectionIdx = 0; sectionIdx < chunk.sections.size(); ++sectionIdx) {
         const auto& section = chunk.sections[sectionIdx];
         if (!section || section->isEmpty) continue;
         int sectionY = section->y;
-        auto meshOut = generateSectionMesh(*section, chunk.pos.x, sectionY, chunk.pos.z, nullptr);
+        auto meshOut = generateSectionMesh(*section, chunk.pos.x, sectionY, chunk.pos.z, nullptr,
+                                           baseVertices, baseIndices,
+                                           overlayVertices, overlayIndices,
+                                           waterVertices, waterIndices);
         uint32_t vertexOffset = static_cast<uint32_t>(vertices.size());
         for (uint32_t idx : meshOut.indices) {
             indices.push_back(vertexOffset + idx);
@@ -420,13 +427,20 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> MeshGenerator::generateMes
 
 MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkSection& section,
                                                                     int chunkX, int sectionY, int chunkZ,
-                                                                    const ChunkManager* chunkManager) {
-    std::vector<Vertex> baseVertices;
-    std::vector<uint32_t> baseIndices;
-    std::vector<Vertex> overlayVertices;
-    std::vector<uint32_t> overlayIndices;
-    std::vector<Vertex> waterVertices;
-    std::vector<uint32_t> waterIndices;
+                                                                    const ChunkManager* chunkManager,
+                                                                    std::vector<Vertex>& baseVertices,
+                                                                    std::vector<uint32_t>& baseIndices,
+                                                                    std::vector<Vertex>& overlayVertices,
+                                                                    std::vector<uint32_t>& overlayIndices,
+                                                                    std::vector<Vertex>& waterVertices,
+                                                                    std::vector<uint32_t>& waterIndices) {
+    // 复用外部 scratch vectors（clear 保留 capacity，避免重新分配）
+    baseVertices.clear();
+    baseIndices.clear();
+    overlayVertices.clear();
+    overlayIndices.clear();
+    waterVertices.clear();
+    waterIndices.clear();
     baseVertices.reserve(50000);
     baseIndices.reserve(75000);
     overlayVertices.reserve(8000);

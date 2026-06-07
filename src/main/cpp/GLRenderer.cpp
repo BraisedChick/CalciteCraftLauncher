@@ -638,6 +638,10 @@ void GLRenderer::enqueueWork(ChunkWorkItem item) {
 void GLRenderer::workerLoop() {
     LOGI("Mesh worker thread started");
 
+    // 线程局部的 scratch vectors，跨 section/chunk 复用避免反复分配
+    std::vector<Vertex> wl_baseVertices, wl_overlayVertices, wl_waterVertices;
+    std::vector<uint32_t> wl_baseIndices, wl_overlayIndices, wl_waterIndices;
+
     while (workerRunning) {
         ChunkWorkItem item;
         {
@@ -673,7 +677,10 @@ void GLRenderer::workerLoop() {
             if (!section || section->isEmpty) continue;
 
             auto meshOut = MeshGenerator::generateSectionMesh(
-                *section, item.chunkX, section->y, item.chunkZ, chunkManager);
+                *section, item.chunkX, section->y, item.chunkZ, chunkManager,
+                wl_baseVertices, wl_baseIndices,
+                wl_overlayVertices, wl_overlayIndices,
+                wl_waterVertices, wl_waterIndices);
 
             uint32_t vertexOffset = static_cast<uint32_t>(vertices.size());
             size_t regularCount = meshOut.indices.size()

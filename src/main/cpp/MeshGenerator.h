@@ -25,10 +25,19 @@ public:
     };
 
     static std::pair<std::vector<Vertex>, std::vector<uint32_t>> generateMeshWithIndices(const Chunk& chunk);
+    // 生成 section 网格，接受外部传入的 scratch vectors（避免每次重新分配）
+    // baseVertices/Indices, overlayVertices/Indices, waterVertices/Indices
+    // 在 worker loop 中复用，clear() 后传入
     static SectionMeshOutput generateSectionMesh(
         const ChunkSection& section,
         int chunkX, int sectionY, int chunkZ,
-        const ChunkManager* chunkManager);
+        const ChunkManager* chunkManager,
+        std::vector<Vertex>& baseVertices,
+        std::vector<uint32_t>& baseIndices,
+        std::vector<Vertex>& overlayVertices,
+        std::vector<uint32_t>& overlayIndices,
+        std::vector<Vertex>& waterVertices,
+        std::vector<uint32_t>& waterIndices);
 
 private:
     static void addFace(std::vector<Vertex>& vertices, float x, float y, float z,
