@@ -1,6 +1,7 @@
 package com.calcite;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
@@ -16,6 +17,7 @@ import android.view.inputmethod.InputMethodManager;
 
 public class MainActivity extends Activity {
     private RendererSurfaceView rendererSurfaceView;
+    private boolean libraryLoaded = false;
 
     // 按键码常量（与 C++ 中的定义对应）
     private static final int KEY_W = 0;
@@ -25,14 +27,15 @@ public class MainActivity extends Activity {
     private static final int KEY_UP = 4;
     private static final int KEY_DOWN = 5;
 
-    private static void loadLibraryForProtocol(int protocolVersion) {
+    private void loadLibraryForProtocol(int protocolVersion) {
         String libName = "mc_" + protocolVersion;
         try {
             System.loadLibrary(libName);
             android.util.Log.i("MainActivity", "Loaded library: " + libName);
+            libraryLoaded = true;
         } catch (UnsatisfiedLinkError e) {
-            android.util.Log.w("MainActivity", "Library " + libName + " not found, falling back to mc_758");
-            System.loadLibrary("mc_758");
+            android.util.Log.e("MainActivity", "Missing native library: " + libName);
+            libraryLoaded = false;
         }
     }
 
@@ -95,6 +98,18 @@ public class MainActivity extends Activity {
         }
 
         setContentView(R.layout.activity_main);
+
+        // 检查协议库是否加载成功
+        if (!libraryLoaded) {
+            String libName = "mc_" + protocolVersion;
+            new AlertDialog.Builder(this)
+                .setTitle("协议版本不可用")
+                .setMessage("未找到协议版本 " + protocolVersion + " 对应的库 (" + libName + ")\n请在启动器中选择其他协议版本")
+                .setCancelable(false)
+                .setPositiveButton("退出", (d, w) -> finish())
+                .show();
+            return;
+        }
 
         // 保存用户名到 C++
         if (username != null && !username.isEmpty()) {

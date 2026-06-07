@@ -497,6 +497,12 @@ public class LauncherActivity extends Activity {
 
     // ===== 启动游戏 =====
 
+    private boolean isProtocolSupported(int protocolVersion) {
+        File libDir = new File(getApplicationInfo().nativeLibraryDir);
+        File libFile = new File(libDir, "libmc_" + protocolVersion + ".so");
+        return libFile.exists();
+    }
+
     private void launchGame() {
         Account selected = accountAdapter != null ? accountAdapter.getSelectedAccount() : null;
         if (selected == null) {
@@ -506,6 +512,17 @@ public class LauncherActivity extends Activity {
 
         String versionName = VERSIONS[versionIndex];
         int protocolVersion = PROTOCOL_VERSIONS[versionIndex];
+
+        if (!isProtocolSupported(protocolVersion)) {
+            new AlertDialog.Builder(this)
+                .setTitle("协议版本不可用")
+                .setMessage("协议版本 " + protocolVersion + "（" + versionName + "）的库尚未编译\n"
+                    + "请在构建配置的 SUPPORTED_VERSIONS 中添加该版本号后重新编译")
+                .setCancelable(false)
+                .setPositiveButton("确定", null)
+                .show();
+            return;
+        }
 
         Toast.makeText(this,
             String.format("启动游戏\n用户名: %s\n版本: %s (协议 %d)\n渲染器: %s",
