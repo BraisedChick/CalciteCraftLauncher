@@ -189,20 +189,20 @@ int32_t BlockRegistry::extractInt(const std::string& json, const std::string& ke
     }
 }
 
-const BlockMetadata& BlockRegistry::getBlockMetadata(int32_t blockState) const {
-    // 读锁：多个 worker 线程可同时读缓存
-    {
-        std::shared_lock<std::shared_mutex> lock(metadataMutex);
-        auto it = metadataCache.find(blockState);
-        if (it != metadataCache.end()) return it->second;
+void BlockRegistry::precomputeAll() {
+    LOGI("Precomputing metadata for %zu block states...", stateToBlock.size());
+    metadataCache.reserve(stateToBlock.size());
+    for (const auto& [stateId, _] : stateToBlock) {
+        metadataCache[stateId] = computeMetadata(stateId);
     }
+    LOGI("Precomputed metadata for %zu block states", metadataCache.size());
+}
 
-    BlockMetadata meta = computeMetadata(blockState);
-
-    // 写锁：仅第一次插入时需要独占
-    std::lock_guard<std::shared_mutex> lock(metadataMutex);
-    auto result = metadataCache.emplace(blockState, std::move(meta));
-    return result.first->second;
+const BlockMetadata& BlockRegistry::getBlockMetadata(int32_t blockState) const {
+    auto it = metadataCache.find(blockState);
+    if (it != metadataCache.end()) return it->second;
+    static BlockMetadata emptyMeta{};
+    return emptyMeta;
 }
 
 BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {

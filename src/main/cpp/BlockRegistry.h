@@ -5,7 +5,6 @@
 #include <unordered_map>
 #include <vector>
 #include <cstdint>
-#include <shared_mutex>
 
 // 方块信息结构
 struct BlockInfo {
@@ -57,6 +56,9 @@ public:
     // 获取预计算的全部元数据（懒缓存，每个 blockState 仅计算一次）
     const BlockMetadata& getBlockMetadata(int32_t blockState) const;
 
+    // 预计算全部方块元数据（在 TextureAtlas 初始化后调用一次，之后 getBlockMetadata 无锁访问）
+    void precomputeAll();
+
     // 获取已加载的方块数量
     size_t getBlockCount() const { return blocks.size(); }
 
@@ -83,9 +85,8 @@ private:
 
     bool loaded;
 
-    // 元数据缓存（mutable 允许在 const 方法中修改）
-    mutable std::unordered_map<int32_t, BlockMetadata> metadataCache;
-    mutable std::shared_mutex metadataMutex;  // 读写锁：多 worker 同时读，写独占
+    // 元数据缓存（precomputeAll 一次性填充，之后只读）
+    std::unordered_map<int32_t, BlockMetadata> metadataCache;
 
     // 计算单个 blockState 的元数据
     BlockMetadata computeMetadata(int32_t blockState) const;

@@ -7,6 +7,7 @@
 #include "TextureLoader.h"
 #include "MeshGenerator.h"
 #include "TextureAtlas.h"
+#include "BlockRegistry.h"
 #include "BiomeColorManager.h"
 #include "MinecraftVersion.h"
 #include "imgui.h"
@@ -98,6 +99,9 @@ bool GLRenderer::initialize(ANativeWindow* window) {
     LOGI("Initializing TextureAtlas...");
     TextureAtlas::getInstance().initialize();
     LOGI("TextureAtlas initialized: %d layers", TextureAtlas::getInstance().getLayerCount());
+
+    // 预计算全部方块元数据（之后 getBlockMetadata 无锁访问）
+    BlockRegistry::getInstance().precomputeAll();
 
     // 初始化 BiomeColorManager
     LOGI("Initializing BiomeColorManager...");

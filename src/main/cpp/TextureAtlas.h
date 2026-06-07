@@ -62,6 +62,7 @@ struct ModelElementData {
 struct ResolvedBlockModel {
     std::vector<ModelElementData> elements;
     bool ambientocclusion = true;
+    bool isSimpleCube = false;  // 简单完整立方体：1 element, from[0,0,0]-to[16,16,16], 无旋转, 6面全部cullface
 };
 
 // ============================================================

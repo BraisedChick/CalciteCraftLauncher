@@ -12,6 +12,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <chrono>
 
 #define LOG_TAG "MeshGenerator"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -190,16 +191,11 @@ static void generateFromModel(
     float grassSideLayer, float grassOverlayLayer,
     uint8_t tintR, uint8_t tintG, uint8_t tintB,
     int biomeId,
-    const std::unordered_map<int32_t, bool>* solidCache,
     int bsRotX, int bsRotY) {
 
-    // 用于 face 面剔除检测（优先使用外部缓存，避免重复 getBlockMetadata）
-    auto isNeighborSolid = [solidCache](int32_t state) -> bool {
+    // 面剔除检测：直接读取预计算的 isFullBlock（无锁）
+    auto isNeighborSolid = [](int32_t state) -> bool {
         if (state == 0) return false;
-        if (solidCache) {
-            auto it = solidCache->find(state);
-            if (it != solidCache->end()) return it->second;
-        }
         return BlockRegistry::getInstance().getBlockMetadata(state).isFullBlock;
     };
 
@@ -539,15 +535,9 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         return 0;
     };
 
-    static thread_local std::unordered_map<int32_t, bool> solidCache;
-
-    auto isSolid = [&](int32_t state) -> bool {
-        if (state == 0) return false;
-        auto it = solidCache.find(state);
-        if (it != solidCache.end()) return it->second;
-        bool solid = BlockRegistry::getInstance().getBlockMetadata(state).isFullBlock;
-        solidCache[state] = solid;
-        return solid;
+    // 直接读取预计算的 isFullBlock（getBlockMetadata 已是无锁 unordered_map::find）
+    auto isSolid = [](int32_t state) -> bool {
+        return state != 0 && BlockRegistry::getInstance().getBlockMetadata(state).isFullBlock;
     };
 
     // 模型缓存：按方块名缓存 getBlockModel 结果，避免重复 string map 查找
@@ -560,7 +550,9 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         return m;
     };
 
-// 在函数末尾（return 之前）打印统计
+// 阶段计时
+    auto tStart = std::chrono::steady_clock::now();
+    int countModel = 0, countWater = 0, countCubic = 0;
 
     // 遍历所有方块
     for (int localY = 0; localY < SECTION_HEIGHT; localY++) {
@@ -630,6 +622,50 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                 bool isSnowCovered2 = (blockMeta.isGrassBlock && n[TOP] != 0 &&
                                       BlockRegistry::getInstance().getBlockMetadata(n[TOP]).isSnow);
                 if (!blockMeta.isWater) {
+                    // ---- 快速路径：完整简单立方体，跳过模型解析直接用 addCubicFace ----
+                    if (blockMeta.isFullBlock) {
+                        const auto* cubeModel = getModel(blockMeta.name);
+                        if (cubeModel && cubeModel->isSimpleCube) {
+                            bool renderTop = (n[TOP] == 0 || !isSolid(n[TOP]));
+                            bool renderBottom = (blockMeta.height >= 1.0f) && (n[BOTTOM] == 0 || !isSolid(n[BOTTOM]));
+                            bool isSnowCov = (blockMeta.isGrassBlock && n[TOP] != 0 &&
+                                              BlockRegistry::getInstance().getBlockMetadata(n[TOP]).isSnow);
+                            bool isGrassSide = blockMeta.isGrassBlock && !isSnowCov;
+
+                            if (renderTop) {
+                                float topTex = isSnowCov ? grassSnowLayer : static_cast<float>(tex.top);
+                                addCubicFace(baseVertices, baseIndices, TOP,
+                                             posX, posY, posZ, 1.0f, topTex, tintR, tintG, tintB, 255);
+                            }
+                            if (renderBottom) {
+                                addCubicFace(baseVertices, baseIndices, BOTTOM,
+                                             posX, posY, posZ, 1.0f, static_cast<float>(tex.bottom), tintR, tintG, tintB, 255);
+                            }
+                            for (int sf : {FRONT, BACK, RIGHT, LEFT}) {
+                                if (n[sf] != 0 && isSolid(n[sf])) continue;
+                                float sideTex;
+                                uint8_t sr = 255, sg = 255, sb = 255;
+                                if (isGrassSide) {
+                                    sideTex = grassSideLayer;
+                                    addCubicFace(baseVertices, baseIndices, sf,
+                                                 posX, posY, posZ, 1.0f, sideTex, sr, sg, sb, 255);
+                                    addCubicFace(overlayVertices, overlayIndices, sf,
+                                                 posX, posY, posZ, 1.0f, grassOverlayLayer, tintR, tintG, tintB, 255);
+                                } else if (isSnowCov) {
+                                    sideTex = grassSnowLayer;
+                                    addCubicFace(baseVertices, baseIndices, sf,
+                                                 posX, posY, posZ, 1.0f, sideTex, sr, sg, sb, 255);
+                                } else {
+                                    sideTex = static_cast<float>(tex.side);
+                                    addCubicFace(baseVertices, baseIndices, sf,
+                                                 posX, posY, posZ, 1.0f, sideTex, tintR, tintG, tintB, 255);
+                                }
+                            }
+                            countCubic++;
+                            continue;
+                        }
+                    }
+
                     // Blockstate 变体查找（获取朝向对应的模型和旋转）
                     const BlockStateVariant* variant = atlas.getBlockStateVariant(
                         blockMeta.name, blockState, blockMeta.minStateId);
@@ -649,8 +685,8 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                                     grassSideLayer, grassOverlayLayer,
                                     tintR, tintG, tintB,
                                     biomeId,
-                                    &solidCache,
                                     modelEntry.rotX, modelEntry.rotY);
+                                countModel++;
                                 renderedAny = true;
                             }
                         }
@@ -668,14 +704,15 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                             grassSideLayer, grassOverlayLayer,
                             tintR, tintG, tintB,
                             biomeId,
-                            &solidCache,
                             0, 0);
+                        countModel++;
                         continue;
                     }
                 }
 
                 // ===== 水 =====
                 if (blockMeta.isWater) {
+                    countWater++;
                     float waterTexIndex = static_cast<float>(tex.top);
                     uint8_t waterR = 255, waterG = 255, waterB = 255;
                     BiomeColorManager::getInstance().getWaterColor(biomeId, waterR, waterG, waterB);
@@ -701,6 +738,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                 }
 
                 // ===== 普通不透明方块 =====
+                countCubic++;
                 bool renderTop = (n[TOP] == 0) || !isSolid(n[TOP]);
                 bool isSnowCovered = (blockMeta.isGrassBlock && n[TOP] != 0 &&
                                       BlockRegistry::getInstance().getBlockMetadata(n[TOP]).isSnow);
@@ -780,6 +818,13 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         }
         allVertices.insert(allVertices.end(), waterVertices.begin(), waterVertices.end());
         waterIndexCount = static_cast<uint32_t>(waterIndices.size());
+    }
+
+    auto tEnd = std::chrono::steady_clock::now();
+    long long totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(tEnd - tStart).count();
+    if (totalMs > 5) {
+        LOGI("MESH: chunk(%d,%d) sectionY=%d total=%lldms modelBlock=%d waterBlock=%d cubicBlock=%d",
+             chunkX, chunkZ, sectionY, totalMs, countModel, countWater, countCubic);
     }
 
     return {std::move(allVertices), std::move(allIndices), overlayIndexCount, waterIndexCount};
