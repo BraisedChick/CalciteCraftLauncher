@@ -757,10 +757,12 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
 
         blockTextureMap[blockName] = mt;
 
-        // 确保纹理路径已添加
-        ensureTexture(mt.top);
-        ensureTexture(mt.side);
-        ensureTexture(mt.bottom);
+        // 确保所有模型纹理路径已注册（包括 #edge 等非 top/side/bottom 路径）
+        for (const auto& [varName, texPath] : resolved) {
+            if (!texPath.empty()) {
+                ensureTexture(texPath);
+            }
+        }
 
         // 解析模型 elements（用于模型兼容渲染）
         // 策略：如果自身 JSON 有 elements 则用自身的，否则在 parent 链中查找

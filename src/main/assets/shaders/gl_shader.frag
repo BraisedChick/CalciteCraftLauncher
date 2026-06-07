@@ -28,8 +28,8 @@ void main() {
             // 从纹理数组采样
             outColor = texture(textureSampler, vec3(fragTexCoord, layer));
 
-            // 应用顶点颜色进行群系染色（alpha 恒为 1.0，水的透明度由 blend 常数控制）
-            outColor *= vec4(fragColor.rgb, 1.0);
+            // 应用顶点颜色进行群系染色（保留纹理 alpha 用于透明混合）
+            outColor.rgb *= fragColor.rgb;
 
             // 丢弃透明像素（支持 grass.png 等带透明通道的纹理）
             if (outColor.a < 0.1) {

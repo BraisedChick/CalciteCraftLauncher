@@ -1113,6 +1113,10 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     float worldMinY = (float)dim.minY;
     float worldMaxY = (float)dim.maxY;
 
+    // 启用透明混合（玻璃等透明方块需要）
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
     // 加锁保护 chunkRenderCache，防止网络线程的 markChunkForUpdate 并发修改
     std::lock_guard<std::mutex> renderLock(cacheMutex);
     for (auto& [chunkKey, renderData] : chunkRenderCache) {
