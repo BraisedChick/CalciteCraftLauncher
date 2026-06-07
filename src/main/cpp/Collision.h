@@ -46,6 +46,9 @@ public:
     void setChunkManager(ChunkManager* mgr);
     bool hasChunkManager() const;
 
+    // 重置移动输入（打开 UI 时调用，防止玩家继续移动）
+    void resetMovement();
+
 private:
     Collision();
 

@@ -129,6 +129,12 @@ static void renderLoop() {
             }
         }
 
+        // 背包/菜单/死亡界面打开时，重置移动输入但不中断物理（玩家仍受重力下落）
+        if (g_engine && GameUI::getInstance().getState() == UIState::IN_GAME
+            && GameUI::getInstance().isInGameUIActive()) {
+            Collision::getInstance().resetMovement();
+        }
+
         // 更新玩家物理（传入视角方向计算移动）
         float camPitch = CameraController::getInstance().getPitch();
         float camYaw = CameraController::getInstance().getYaw();

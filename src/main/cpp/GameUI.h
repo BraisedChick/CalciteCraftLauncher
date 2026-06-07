@@ -80,6 +80,14 @@ public:
     bool isDeathScreenActive() const { return deathScreenActive; }
     void setDeathReason(const std::string& reason) { deathReason = reason; }
 
+    // 背包界面
+    bool isInventoryOpen() const { return inventoryOpen; }
+
+    // 是否有任意游戏内界面打开（阻挡移动输入）
+    bool isInGameUIActive() const {
+        return gameMenuOpen || optionsOpen || deathScreenActive || inventoryOpen;
+    }
+
 private:
     GameUI() = default;
     ~GameUI() = default;

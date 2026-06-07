@@ -1339,6 +1339,7 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
     if (currentState == UIState::IN_GAME && inventoryOpen) {
         if (isInEButtonArea(x, y) && action == 0) {
             inventoryOpen = false;
+            Collision::getInstance().resetMovement();
             return;
         }
         queueTouchEvent(x, y, action);
@@ -1371,6 +1372,7 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
         } else if (!isRoleTaken(TouchPoint::E_BUTTON) && isInEButtonArea(x, y)) {
             pt->role = TouchPoint::E_BUTTON;
             inventoryOpen = !inventoryOpen;
+            Collision::getInstance().resetMovement();
         } else if (currentState == UIState::IN_GAME) {
             int hbSlot = hotbarSlotAt(x, y);
             if (hbSlot >= 0) {

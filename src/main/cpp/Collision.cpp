@@ -53,6 +53,16 @@ void Collision::setJoystickInput(float dx, float dy) {
     joystickDY.store(dy);
 }
 
+void Collision::resetMovement() {
+    std::lock_guard<std::mutex> lock(mutex);
+    keyW = keyS = keyA = keyD = false;
+    keyUp = keyDown = false;
+    keySprint = false;
+    jumpPressed = false;
+    joystickDX.store(0.0f);
+    joystickDY.store(0.0f);
+}
+
 // ===== 物理更新 =====
 
 void Collision::update(float deltaTime, float camPitch, float camYaw, glm::vec3* outPosition, bool* outOnGround) {
