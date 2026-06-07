@@ -230,10 +230,12 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
     // 启动区块异步加载线程和数据包处理线程
     chunkWorkerRunning = true;
     chunkWorker = std::thread(&ClientEngine::chunkWorkerFunc, this);
-    packetProcessorRunning = true;
-    packetProcessor = std::thread(&ClientEngine::packetProcessorFunc, this);
+    urgentProcessorRunning = true;
+    urgentProcessor = std::thread(&ClientEngine::urgentProcessorFunc, this);
+    normalProcessorRunning = true;
+    normalProcessor = std::thread(&ClientEngine::normalProcessorFunc, this);
 
-    // ========== PLAY 状态主循环（网络线程仅做 I/O 入队） ==========
+    // ========== PLAY 状态主循环（网络线程仅做 I/O + 按优先级入队） ==========
     while (true) {
         auto resp = net->receivePacket();
         if (resp.empty()) {
@@ -241,25 +243,38 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
             break;
         }
 
-        // 网络线程只做最轻量的 VarInt 解析（读取 1-3 字节），随后入队
+        // 网络线程只做最轻量的 VarInt 解析（读取 1-3 字节），随后按优先级入队
         size_t pos = 0;
         ProtocolCraft::ReadIterator iter = resp.cbegin();
         size_t remaining = resp.size();
         int pid = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(iter, remaining);
         pos = resp.size() - remaining;
 
-        {
-            std::lock_guard<std::mutex> lock(packetQueueMutex);
-            packetQueue.push({pid, std::move(resp), pos});
+        // 紧急包（延迟敏感）：位置、方块更新、生命、保活、游戏事件
+        if (pid == 0x38 || pid == 0x0C || pid == 0x3F || pid == 0x52 ||
+            pid == 0x21 || pid == 0x1E || pid == 0x3D) {
+            std::lock_guard<std::mutex> lock(urgentQueueMutex);
+            urgentQueue.push({pid, std::move(resp), pos});
+            urgentCV.notify_one();
+        } else {
+            std::lock_guard<std::mutex> lock(normalQueueMutex);
+            normalQueue.push({pid, std::move(resp), pos});
+            normalCV.notify_one();
         }
-        packetCV.notify_one();
     }
 
-    // 停止数据包处理线程
-    packetProcessorRunning = false;
-    packetCV.notify_all();
-    if (packetProcessor.joinable()) {
-        packetProcessor.join();
+    // 停止紧急数据包处理线程
+    urgentProcessorRunning = false;
+    urgentCV.notify_all();
+    if (urgentProcessor.joinable()) {
+        urgentProcessor.join();
+    }
+
+    // 停止普通数据包处理线程
+    normalProcessorRunning = false;
+    normalCV.notify_all();
+    if (normalProcessor.joinable()) {
+        normalProcessor.join();
     }
 
     // 停止区块加载线程
@@ -289,12 +304,10 @@ void ClientEngine::sendPlayerMovement(double x, double y, double z, float yaw, f
     std::lock_guard<std::mutex> lock(netMutex);
     if (!net || !net->isConnected()) return;
 
-    static int moveCnt = 0;
-    if (++moveCnt <= 20) {
-        LOGI("MOVEMENT: sendPlayerMovement called: pos=(%.3f, %.3f, %.3f) yaw=%.2f pitch=%.2f onGround=%d lastSent=(%.3f,%.3f,%.3f init=%d)",
-             x, y, z, glm::degrees(yaw), glm::degrees(pitch), onGround,
-             lastSent.x, lastSent.y, lastSent.z, lastSent.initialized);
-    }
+    // 限速 20 次/秒（50ms 间隔），匹配原版游戏刻速率
+    auto now = std::chrono::steady_clock::now();
+    auto msSinceLastSend = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastMoveSendTime).count();
+    if (msSinceLastSend < 50) return;
 
     bool posChanged = !lastSent.initialized ||
                       fabs(x - lastSent.x) > 0.001 ||
@@ -303,18 +316,13 @@ void ClientEngine::sendPlayerMovement(double x, double y, double z, float yaw, f
     bool rotChanged = !lastSent.initialized ||
                       fabs(yaw - lastSent.yaw) > 0.001f ||
                       fabs(pitch - lastSent.pitch) > 0.001f;
-    bool groundChanged = !lastSent.initialized ||
-                         onGround != lastSent.onGround;
 
-    moveTickCounter++;
-
-    if (posChanged || rotChanged || (groundChanged && moveTickCounter % 4 == 0)) {
-        // 位置、旋转或地面状态变化时发送完整移动包
+    if (posChanged || rotChanged) {
+        // 位置或旋转变化时发送完整移动包
         ProtocolCraft::ServerboundMovePlayerPacketPosRot movePacket;
         movePacket.SetX(x);
         movePacket.SetY(y);
         movePacket.SetZ(z);
-        // 转换弧度 → 角度，yaw 归一化到 [-180, 180]
         float yawDeg = glm::degrees(yaw);
         if (yawDeg > 180.0f) yawDeg -= 360.0f;
         movePacket.SetYRot(yawDeg);
@@ -325,9 +333,6 @@ void ClientEngine::sendPlayerMovement(double x, double y, double z, float yaw, f
         movePacket.Write(writeData);
         net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
 
-        LOGI("MOVEMENT: SENT pos=(%.3f, %.3f, %.3f) yaw=%.2f pitch=%.2f onGround=%d",
-             x, y, z, glm::degrees(yaw), glm::degrees(pitch), onGround);
-
         lastSent.x = x;
         lastSent.y = y;
         lastSent.z = z;
@@ -335,17 +340,20 @@ void ClientEngine::sendPlayerMovement(double x, double y, double z, float yaw, f
         lastSent.pitch = pitch;
         lastSent.onGround = onGround;
         lastSent.initialized = true;
+        lastMoveSendTime = now;
         return;
     }
 
-    // 没有任何变化，每 20 tick 发送一次 StatusOnly 保持地面状态同步
-    if (moveTickCounter % 20 == 0) {
+    // 位置未变，每 500ms 发送一次 StatusOnly 同步地面状态
+    if (msSinceLastSend >= 500) {
         ProtocolCraft::ServerboundMovePlayerPacketStatusOnly statusPacket;
         statusPacket.SetOnGround(onGround);
 
         ProtocolCraft::WriteContainer writeData;
         statusPacket.Write(writeData);
         net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+        lastSent.onGround = onGround;
+        lastMoveSendTime = now;
     }
 }
 
@@ -463,33 +471,60 @@ void ClientEngine::chunkWorkerFunc() {
     LOGI("Chunk worker thread stopped");
 }
 
-void ClientEngine::packetProcessorFunc() {
-    LOGI("Packet processor thread started");
-    while (packetProcessorRunning) {
+void ClientEngine::urgentProcessorFunc() {
+    LOGI("Urgent packet processor thread started");
+    while (urgentProcessorRunning) {
         PacketTask task;
         {
-            std::unique_lock<std::mutex> lock(packetQueueMutex);
-            packetCV.wait(lock, [this]() {
-                return !packetQueue.empty() || !packetProcessorRunning;
+            std::unique_lock<std::mutex> lock(urgentQueueMutex);
+            urgentCV.wait(lock, [this]() {
+                return !urgentQueue.empty() || !urgentProcessorRunning;
             });
-            if (!packetProcessorRunning && packetQueue.empty()) break;
-            task = std::move(packetQueue.front());
-            packetQueue.pop();
+            if (!urgentProcessorRunning && urgentQueue.empty()) break;
+            task = std::move(urgentQueue.front());
+            urgentQueue.pop();
         }
         handlePlayPacket(task.packetId, task.data, task.startPos);
     }
-    // 退出前处理队列中残留的数据包
     while (true) {
         PacketTask task;
         {
-            std::lock_guard<std::mutex> lock(packetQueueMutex);
-            if (packetQueue.empty()) break;
-            task = std::move(packetQueue.front());
-            packetQueue.pop();
+            std::lock_guard<std::mutex> lock(urgentQueueMutex);
+            if (urgentQueue.empty()) break;
+            task = std::move(urgentQueue.front());
+            urgentQueue.pop();
         }
         handlePlayPacket(task.packetId, task.data, task.startPos);
     }
-    LOGI("Packet processor thread stopped");
+    LOGI("Urgent packet processor thread stopped");
+}
+
+void ClientEngine::normalProcessorFunc() {
+    LOGI("Normal packet processor thread started");
+    while (normalProcessorRunning) {
+        PacketTask task;
+        {
+            std::unique_lock<std::mutex> lock(normalQueueMutex);
+            normalCV.wait(lock, [this]() {
+                return !normalQueue.empty() || !normalProcessorRunning;
+            });
+            if (!normalProcessorRunning && normalQueue.empty()) break;
+            task = std::move(normalQueue.front());
+            normalQueue.pop();
+        }
+        handlePlayPacket(task.packetId, task.data, task.startPos);
+    }
+    while (true) {
+        PacketTask task;
+        {
+            std::lock_guard<std::mutex> lock(normalQueueMutex);
+            if (normalQueue.empty()) break;
+            task = std::move(normalQueue.front());
+            normalQueue.pop();
+        }
+        handlePlayPacket(task.packetId, task.data, task.startPos);
+    }
+    LOGI("Normal packet processor thread stopped");
 }
 
 void ClientEngine::handlePlayPacket(int packetId,

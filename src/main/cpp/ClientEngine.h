@@ -67,17 +67,24 @@ public:
     void loadLanguage(const std::string& json);
 
 private:
-    // 数据包处理队列：网络线程入队（原始数据），处理线程出队（解析分发）
+    // 紧急数据包队列（延迟敏感：位置、方块更新、生命等）
     struct PacketTask {
         int packetId;
         std::vector<uint8_t> data;
         size_t startPos;
     };
-    std::queue<PacketTask> packetQueue;
-    std::mutex packetQueueMutex;
-    std::condition_variable packetCV;
-    std::thread packetProcessor;
-    std::atomic<bool> packetProcessorRunning{false};
+    std::queue<PacketTask> urgentQueue;
+    std::mutex urgentQueueMutex;
+    std::condition_variable urgentCV;
+    std::thread urgentProcessor;
+    std::atomic<bool> urgentProcessorRunning{false};
+
+    // 普通数据包队列（登录、物品、聊天等）
+    std::queue<PacketTask> normalQueue;
+    std::mutex normalQueueMutex;
+    std::condition_variable normalCV;
+    std::thread normalProcessor;
+    std::atomic<bool> normalProcessorRunning{false};
 
     struct ChunkLoadTask {
         std::vector<uint8_t> rawData;  // 完整原始包数据（从 VarInt chunk packet ID 之后开始）
@@ -90,7 +97,8 @@ private:
 
     void handlePlayPacket(int packetId,
                          const std::vector<uint8_t>& data, size_t startPos);
-    void packetProcessorFunc();
+    void urgentProcessorFunc();
+    void normalProcessorFunc();
     void parseChunkDataPacket(const std::vector<uint8_t>& data, size_t startPos);
     size_t calculateNBTSize(const std::vector<uint8_t>& data, size_t startPos);
     void chunkWorkerFunc();
@@ -122,7 +130,7 @@ private:
         bool initialized = false;
     };
     MovementState lastSent;
-    int moveTickCounter = 0;
+    std::chrono::steady_clock::time_point lastMoveSendTime;
     std::atomic<bool> movementEnabled{false};
 
     // 玩家生命/饥饿值
