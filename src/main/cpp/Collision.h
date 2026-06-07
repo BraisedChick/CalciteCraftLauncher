@@ -60,8 +60,8 @@ private:
     std::atomic<float> joystickDX{0.0f};
     std::atomic<float> joystickDY{0.0f};
 
-    glm::vec3 position{-176.0f, 65.0f, -56.0f};
-    glm::vec3 prevPosition{-176.0f, 65.0f, -56.0f};
+    glm::vec3 position{0.0f, 60.0f, 0.0f};
+    glm::vec3 prevPosition{0.0f, 60.0f, 0.0f};
     glm::vec3 velocity{0.0f};
     bool onGround = false;
     float accumulatedTime = 0.0f;

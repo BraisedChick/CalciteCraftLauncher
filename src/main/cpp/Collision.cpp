@@ -69,6 +69,8 @@ void Collision::update(float deltaTime, float camPitch, float camYaw, glm::vec3*
         auto chunk = chunkManager->getChunk(cx, cz);
         if (!chunk || !chunk->isLoaded) {
             accumulatedTime = 0.0f;
+            if (outPosition) *outPosition = position;
+            if (outOnGround) *outOnGround = onGround;
             return;
         }
     }

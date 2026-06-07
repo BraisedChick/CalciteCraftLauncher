@@ -224,14 +224,16 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
         LOGI("Sent Client Information (ViewDistance=10)");
     }
 
-    // 进入 PLAY 状态，允许发送移动包
-    movementEnabled = true;
+    // 进入 PLAY 状态（注意：不在这里启用移动发送，必须等收到第一个 0x38 确保坐标正确）
+    // 移动包的启用放在 handlePlayPacket 的 0x38 分支中
 
-    // 启动区块异步加载线程
+    // 启动区块异步加载线程和数据包处理线程
     chunkWorkerRunning = true;
     chunkWorker = std::thread(&ClientEngine::chunkWorkerFunc, this);
+    packetProcessorRunning = true;
+    packetProcessor = std::thread(&ClientEngine::packetProcessorFunc, this);
 
-    // ========== PLAY 状态主循环 ==========
+    // ========== PLAY 状态主循环（网络线程仅做 I/O 入队） ==========
     while (true) {
         auto resp = net->receivePacket();
         if (resp.empty()) {
@@ -239,14 +241,25 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
             break;
         }
 
-        // 使用 VarInt 读取 Packet ID
+        // 网络线程只做最轻量的 VarInt 解析（读取 1-3 字节），随后入队
         size_t pos = 0;
         ProtocolCraft::ReadIterator iter = resp.cbegin();
         size_t remaining = resp.size();
         int pid = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(iter, remaining);
-        pos = resp.size() - remaining;  // 更新已读取的位置
+        pos = resp.size() - remaining;
 
-        handlePlayPacket(pid, resp, pos);
+        {
+            std::lock_guard<std::mutex> lock(packetQueueMutex);
+            packetQueue.push({pid, std::move(resp), pos});
+        }
+        packetCV.notify_one();
+    }
+
+    // 停止数据包处理线程
+    packetProcessorRunning = false;
+    packetCV.notify_all();
+    if (packetProcessor.joinable()) {
+        packetProcessor.join();
     }
 
     // 停止区块加载线程
@@ -276,6 +289,13 @@ void ClientEngine::sendPlayerMovement(double x, double y, double z, float yaw, f
     std::lock_guard<std::mutex> lock(netMutex);
     if (!net || !net->isConnected()) return;
 
+    static int moveCnt = 0;
+    if (++moveCnt <= 20) {
+        LOGI("MOVEMENT: sendPlayerMovement called: pos=(%.3f, %.3f, %.3f) yaw=%.2f pitch=%.2f onGround=%d lastSent=(%.3f,%.3f,%.3f init=%d)",
+             x, y, z, glm::degrees(yaw), glm::degrees(pitch), onGround,
+             lastSent.x, lastSent.y, lastSent.z, lastSent.initialized);
+    }
+
     bool posChanged = !lastSent.initialized ||
                       fabs(x - lastSent.x) > 0.001 ||
                       fabs(y - lastSent.y) > 0.001 ||
@@ -304,6 +324,9 @@ void ClientEngine::sendPlayerMovement(double x, double y, double z, float yaw, f
         ProtocolCraft::WriteContainer writeData;
         movePacket.Write(writeData);
         net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+
+        LOGI("MOVEMENT: SENT pos=(%.3f, %.3f, %.3f) yaw=%.2f pitch=%.2f onGround=%d",
+             x, y, z, glm::degrees(yaw), glm::degrees(pitch), onGround);
 
         lastSent.x = x;
         lastSent.y = y;
@@ -438,6 +461,35 @@ void ClientEngine::chunkWorkerFunc() {
         }
     }
     LOGI("Chunk worker thread stopped");
+}
+
+void ClientEngine::packetProcessorFunc() {
+    LOGI("Packet processor thread started");
+    while (packetProcessorRunning) {
+        PacketTask task;
+        {
+            std::unique_lock<std::mutex> lock(packetQueueMutex);
+            packetCV.wait(lock, [this]() {
+                return !packetQueue.empty() || !packetProcessorRunning;
+            });
+            if (!packetProcessorRunning && packetQueue.empty()) break;
+            task = std::move(packetQueue.front());
+            packetQueue.pop();
+        }
+        handlePlayPacket(task.packetId, task.data, task.startPos);
+    }
+    // 退出前处理队列中残留的数据包
+    while (true) {
+        PacketTask task;
+        {
+            std::lock_guard<std::mutex> lock(packetQueueMutex);
+            if (packetQueue.empty()) break;
+            task = std::move(packetQueue.front());
+            packetQueue.pop();
+        }
+        handlePlayPacket(task.packetId, task.data, task.startPos);
+    }
+    LOGI("Packet processor thread stopped");
 }
 
 void ClientEngine::handlePlayPacket(int packetId,
@@ -646,9 +698,10 @@ void ClientEngine::handlePlayPacket(int packetId,
                          dist);
                 }
 
-                // 直接同步摄像机位置（每次收到都更新，支持传送、重生等）
+                // 直接同步摄像机位置和碰撞系统位置（每次收到都更新，支持传送、重生等）
                 CameraController::getInstance().setPosition(playerX, playerY, playerZ);
                 CameraController::getInstance().setRotation(pitch, yaw);
+                Collision::getInstance().setPosition(playerX, playerY, playerZ);
 
                 // 同步 lastSent 缓存，防止渲染线程发送旧位置再次触发回弹
                 lastSent.x = playerX;
@@ -685,6 +738,9 @@ void ClientEngine::handlePlayPacket(int packetId,
 
                 LOGI("Sending MovePlayerPacket after teleport");
                 sendPacket(std::vector<uint8_t>(moveData.begin(), moveData.end()));
+
+                // 首次收到坐标后，才允许渲染线程发送移动包
+                movementEnabled = true;
                 break;
             }
 

@@ -67,8 +67,20 @@ public:
     void loadLanguage(const std::string& json);
 
 private:
+    // 数据包处理队列：网络线程入队（原始数据），处理线程出队（解析分发）
+    struct PacketTask {
+        int packetId;
+        std::vector<uint8_t> data;
+        size_t startPos;
+    };
+    std::queue<PacketTask> packetQueue;
+    std::mutex packetQueueMutex;
+    std::condition_variable packetCV;
+    std::thread packetProcessor;
+    std::atomic<bool> packetProcessorRunning{false};
+
     struct ChunkLoadTask {
-        std::vector<uint8_t> rawData;  // 完整原始包数据（从 VarInt packet ID 之后开始）
+        std::vector<uint8_t> rawData;  // 完整原始包数据（从 VarInt chunk packet ID 之后开始）
     };
     std::queue<ChunkLoadTask> chunkQueue;
     std::mutex chunkQueueMutex;
@@ -78,6 +90,7 @@ private:
 
     void handlePlayPacket(int packetId,
                          const std::vector<uint8_t>& data, size_t startPos);
+    void packetProcessorFunc();
     void parseChunkDataPacket(const std::vector<uint8_t>& data, size_t startPos);
     size_t calculateNBTSize(const std::vector<uint8_t>& data, size_t startPos);
     void chunkWorkerFunc();

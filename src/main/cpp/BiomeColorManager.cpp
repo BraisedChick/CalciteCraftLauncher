@@ -302,8 +302,8 @@ void BiomeColorManager::getGrassColor(int32_t biomeId, uint8_t& r, uint8_t& g, u
         r = 170; g = 68; b = 170;
     }
 
-    }
 }
+
 
 void BiomeColorManager::getFoliageColor(int32_t biomeId, uint8_t& r, uint8_t& g, uint8_t& b) const {
     biomeId = resolveBiomeId(biomeId);
