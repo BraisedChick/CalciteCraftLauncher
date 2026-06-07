@@ -692,7 +692,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                         for (const auto& modelEntry : variant->models) {
                             const auto* blockModel = getModel(modelEntry.modelName);
                             if (blockModel && !blockModel->elements.empty()) {
-                                generateFromModel(
+                                    generateFromModel(
                                     baseVertices, baseIndices,
                                     overlayVertices, overlayIndices,
                                     *blockModel,

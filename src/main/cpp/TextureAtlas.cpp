@@ -1240,21 +1240,8 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
                 // factor 必须是 2 的幂（缺失 n 个 boolean 属性时 factor = 2^n）
                 if (factor == 2 || factor == 4) {
                     autoAddedProps.insert("waterlogged");
-                    propValueList["waterlogged"] = {"false", "true"};
-                    for (auto& entry : entries) {
-                        entry.props.emplace_back("waterlogged", "false");
-                    }
                     if (factor == 4) {
                         autoAddedProps.insert("powered");
-                        propValueList["powered"] = {"false", "true"};
-                        for (auto& entry : entries) {
-                            entry.props.emplace_back("powered", "false");
-                        }
-                    }
-                    // 重新按属性名排序
-                    for (auto& entry : entries) {
-                        std::sort(entry.props.begin(), entry.props.end(),
-                            [](const auto& a, const auto& b) { return a.first < b.first; });
                     }
                 }
             }
@@ -1305,14 +1292,15 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
         }
         if (expandBits > 0) {
             int expandFactor = 1 << expandBits;
+            int preAutoCount = maxOffset + 1;
             std::unordered_map<int, BlockStateVariant> expandedMap;
             for (const auto& [off, variant] : offsetMap) {
                 for (int b = 0; b < expandFactor; b++) {
-                    expandedMap[off + b] = variant;
+                    expandedMap[off + b * preAutoCount] = variant;
                 }
             }
             offsetMap.swap(expandedMap);
-            maxOffset = maxOffset + (expandFactor - 1);
+            maxOffset = maxOffset * expandFactor + (expandFactor - 1);
         }
     }
     // ===== END 布尔属性补充 =====
@@ -1333,6 +1321,17 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
         if (off >= 0 && off < arraySize) {
             variants[off] = std::move(variant);
         }
+    }
+
+    // slab 调试日志
+    if (blockName.find("slab") != std::string::npos) {
+        std::string dbg;
+        for (size_t vi = 0; vi < variants.size() && vi < 12; vi++) {
+            std::string mn = variants[vi].models.empty() ? "(empty)" : variants[vi].models[0].modelName;
+            dbg += "[" + std::to_string(vi) + ":" + mn + "]";
+        }
+        LOGI("SLAB: %s → arraySize=%d, maxOffset=%d, entries=%s",
+             blockName.c_str(), arraySize, maxOffset, dbg.c_str());
     }
 
     blockstateVariantCache[blockName] = std::move(variants);
