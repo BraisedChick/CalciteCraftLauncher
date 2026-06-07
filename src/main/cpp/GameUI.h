@@ -118,7 +118,7 @@ private:
     struct TouchPoint {
         int id = -1;
         bool active = false;
-        enum Role { NONE, JOYSTICK, CAMERA, UP_BUTTON, DOWN_BUTTON, SPRINT_BUTTON, F3_BUTTON, E_BUTTON };
+        enum Role { NONE, JOYSTICK, CAMERA, UP_BUTTON, DOWN_BUTTON, SPRINT_BUTTON, ATTACK_BUTTON, PLACE_BUTTON, F3_BUTTON, E_BUTTON };
         Role role = NONE;
         float cameraLastX = 0, cameraLastY = 0;
     };
@@ -132,10 +132,13 @@ private:
 
     void handleJoystickTouch(int pointerId, float x, float y, int action);
     void handleCameraTouch(int pointerId, float x, float y, int action);
+    void performBlockPlacement();
     bool isInJoystickArea(float x, float y) const;
     bool isInUpButtonArea(float x, float y) const;
     bool isInDownButtonArea(float x, float y) const;
     bool isInSprintButtonArea(float x, float y) const;
+    bool isInAttackButtonArea(float x, float y) const;
+    bool isInPlaceButtonArea(float x, float y) const;
     bool isInF3ButtonArea(float x, float y) const;
     // E 按钮区域（打开背包）
     bool isInEButtonArea(float x, float y) const;
@@ -183,6 +186,8 @@ private:
         bool upPressed = false;
         bool downPressed = false;
         bool sprintPressed = false;
+        bool attackPressed = false;
+        bool placePressed = false;
     } buttons;
 
     bool showDebugInfo = false;

@@ -28,6 +28,7 @@
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundMovePlayerPacketStatusOnly.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundClientInformationPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundSetCarriedItemPacket.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundUseItemOnPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundClientCommandPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundLoginPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundBlockUpdatePacket.hpp"
@@ -368,6 +369,31 @@ void ClientEngine::sendHeldItemChange(int slot) {
     ProtocolCraft::WriteContainer writeData;
     heldPacket.Write(writeData);
     net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+}
+
+void ClientEngine::sendBlockPlacement(int blockX, int blockY, int blockZ, int face, int hand) {
+    std::lock_guard<std::mutex> lock(netMutex);
+    if (!net || !net->isConnected()) return;
+
+    ProtocolCraft::ServerboundUseItemOnPacket placePacket;
+
+    ProtocolCraft::NetworkPosition pos;
+    pos.SetX(blockX);
+    pos.SetY(blockY);
+    pos.SetZ(blockZ);
+    placePacket.SetLocation(pos);
+
+    placePacket.SetHand(hand);
+    placePacket.SetDirection(face);
+    placePacket.SetCursorPositionX(0.5f);
+    placePacket.SetCursorPositionY(0.5f);
+    placePacket.SetCursorPositionZ(0.5f);
+    placePacket.SetInside(false);
+
+    ProtocolCraft::WriteContainer writeData;
+    placePacket.Write(writeData);
+    net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+    LOGI("Sent block placement: (%d, %d, %d) face=%d hand=%d", blockX, blockY, blockZ, face, hand);
 }
 
 void ClientEngine::sendRespawn() {

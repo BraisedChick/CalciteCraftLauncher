@@ -3,6 +3,7 @@
 #include <fstream>
 #include <sstream>
 #include <cstdio>
+#include <cmath>
 #include <chrono>
 
 // ImGui 配置：OpenGL ES3 + 自定义加载器（使用 Android NDK 的 GLES3 头文件）
@@ -17,6 +18,8 @@
 #include "ClientEngine.h"
 #include "ResourcepackManager.h"
 #include "BlockRegistry.h"
+#include "Raycast.h"
+#include "ChunkManager.h"
 
 #define LOG_TAG "GameUI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -600,6 +603,28 @@ void GameUI::renderInGameUI() {
     draw->AddLine(ImVec2(btnX - 8, btnSprintY - 6), ImVec2(btnX + 8, btnSprintY + 2), IM_COL32(255, 255, 255, 180), 3.0f);
     draw->AddLine(ImVec2(btnX - 8, btnSprintY), ImVec2(btnX + 8, btnSprintY + 6), IM_COL32(255, 255, 255, 180), 3.0f);
     draw->AddLine(ImVec2(btnX - 8, btnSprintY + 6), ImVec2(btnX + 8, btnSprintY + 10), IM_COL32(255, 255, 255, 180), 3.0f);
+
+    // ===== 攻击按钮（上升按钮上方） =====
+    float btnAttackY = h * 0.5f - BTN_VERTICAL_SPACING * 2;
+    {
+        ImU32 atkCol = buttons.attackPressed ? IM_COL32(255, 100, 100, 200) : IM_COL32(255, 255, 255, 60);
+        draw->AddCircleFilled(ImVec2(btnX, btnAttackY), BTN_RADIUS, atkCol);
+        draw->AddCircle(ImVec2(btnX, btnAttackY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
+        // 剑形图标：简化为斜十字
+        draw->AddLine(ImVec2(btnX - 8, btnAttackY - 8), ImVec2(btnX + 8, btnAttackY + 8), IM_COL32(255, 255, 255, 180), 2.5f);
+        draw->AddLine(ImVec2(btnX + 8, btnAttackY - 8), ImVec2(btnX - 8, btnAttackY + 8), IM_COL32(255, 255, 255, 180), 2.5f);
+    }
+
+    // ===== 放置按钮（疾跑按钮下方） =====
+    float btnPlaceY = h * 0.5f + BTN_VERTICAL_SPACING * 2;
+    {
+        ImU32 plcCol = buttons.placePressed ? IM_COL32(100, 255, 100, 200) : IM_COL32(255, 255, 255, 60);
+        draw->AddCircleFilled(ImVec2(btnX, btnPlaceY), BTN_RADIUS, plcCol);
+        draw->AddCircle(ImVec2(btnX, btnPlaceY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
+        // 方块图标：矩形边框
+        draw->AddRect(ImVec2(btnX - 10, btnPlaceY - 10), ImVec2(btnX + 10, btnPlaceY + 10),
+                      IM_COL32(255, 255, 255, 180), 0, 0, 2.5f);
+    }
 
     // ===== F3 按钮（屏幕最上方靠左四分之一处） =====
     {
@@ -1242,6 +1267,24 @@ bool GameUI::isInSprintButtonArea(float x, float y) const {
     return (dx * dx + dy * dy) <= (BTN_RADIUS * BTN_RADIUS * 1.5f);
 }
 
+bool GameUI::isInAttackButtonArea(float x, float y) const {
+    ImGuiIO& io = ImGui::GetIO();
+    float bx = io.DisplaySize.x - BTN_RIGHT_MARGIN;
+    float by = io.DisplaySize.y * 0.5f - BTN_VERTICAL_SPACING * 2;
+    float dx = x - bx;
+    float dy = y - by;
+    return (dx * dx + dy * dy) <= (BTN_RADIUS * BTN_RADIUS * 1.5f);
+}
+
+bool GameUI::isInPlaceButtonArea(float x, float y) const {
+    ImGuiIO& io = ImGui::GetIO();
+    float bx = io.DisplaySize.x - BTN_RIGHT_MARGIN;
+    float by = io.DisplaySize.y * 0.5f + BTN_VERTICAL_SPACING * 2;
+    float dx = x - bx;
+    float dy = y - by;
+    return (dx * dx + dy * dy) <= (BTN_RADIUS * BTN_RADIUS * 1.5f);
+}
+
 bool GameUI::isInF3ButtonArea(float x, float y) const {
     ImGuiIO& io = ImGui::GetIO();
     const float F3_W = 52.0f;
@@ -1366,6 +1409,15 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
             pt->role = TouchPoint::SPRINT_BUTTON;
             Collision::getInstance().setKeyState(GAMEKEY_SPRINT, true);
             buttons.sprintPressed = !buttons.sprintPressed;  // 切换视觉状态
+        } else if (!isRoleTaken(TouchPoint::ATTACK_BUTTON) && isInAttackButtonArea(x, y)) {
+            pt->role = TouchPoint::ATTACK_BUTTON;
+            buttons.attackPressed = true;
+            // 攻击暂时只保留视觉效果，挖掘功能后续添加
+        } else if (!isRoleTaken(TouchPoint::PLACE_BUTTON) && isInPlaceButtonArea(x, y)) {
+            pt->role = TouchPoint::PLACE_BUTTON;
+            buttons.placePressed = true;
+            // 执行方块放置
+            performBlockPlacement();
         } else if (!isRoleTaken(TouchPoint::F3_BUTTON) && isInF3ButtonArea(x, y)) {
             pt->role = TouchPoint::F3_BUTTON;
             toggleDebugInfo();
@@ -1423,6 +1475,12 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
                 break;
             case TouchPoint::SPRINT_BUTTON:
                 break;
+            case TouchPoint::ATTACK_BUTTON:
+                buttons.attackPressed = false;
+                break;
+            case TouchPoint::PLACE_BUTTON:
+                buttons.placePressed = false;
+                break;
             default:
                 break;
         }
@@ -1473,6 +1531,54 @@ void GameUI::handleJoystickTouch(int pointerId, float x, float y, int action) {
             Collision::getInstance().setJoystickInput(0, 0);
             break;
     }
+}
+
+void GameUI::performBlockPlacement() {
+    // 从玩家视角发射射线检测目标方块
+    auto& cam = CameraController::getInstance();
+    glm::vec3 playerPos = cam.getPosition();
+    float pitch = cam.getPitch();
+    float yaw = cam.getYaw();
+
+    // 视线方向（与 Collision.cpp 中方向计算公式一致）
+    glm::vec3 dir;
+    dir.x = -std::sin(yaw) * std::cos(pitch);
+    dir.y = -std::sin(pitch);
+    dir.z = std::cos(yaw) * std::cos(pitch);
+
+    // 眼睛位置（玩家高度 + 1.62 眼高）
+    glm::vec3 eyePos = playerPos + glm::vec3(0.0f, 1.62f, 0.0f);
+
+    // 执行射线检测（最大距离 5 格，生存模式标准触及距离）
+    auto* engine = ClientEngine::getInstance();
+    if (!engine) return;
+    auto* cm = engine->getChunkManager();
+    if (!cm) return;
+    auto result = rayCast(eyePos, dir, 5.0f, *cm);
+
+    if (!result.hit) return;
+
+    // 放置位置 = 目标方块 + 面法线方向
+    // 面法线方向映射（与 FaceDir 常量对应）
+    static const glm::ivec3 faceNormals[] = {
+        {0, -1, 0},  // FACE_DOWN
+        {0, 1, 0},   // FACE_UP
+        {0, 0, -1},  // FACE_NORTH
+        {0, 0, 1},   // FACE_SOUTH
+        {-1, 0, 0},  // FACE_WEST
+        {1, 0, 0}    // FACE_EAST
+    };
+
+    int placeX = result.blockX + faceNormals[result.hitFace].x;
+    int placeY = result.blockY + faceNormals[result.hitFace].y;
+    int placeZ = result.blockZ + faceNormals[result.hitFace].z;
+
+    LOGI("Block placement: hit (%d,%d,%d) face=%d → place at (%d,%d,%d)",
+         result.blockX, result.blockY, result.blockZ, result.hitFace,
+         placeX, placeY, placeZ);
+
+    // 发送 UseItemOn 包（Location = 被点击的方块，Direction = 击中的面）
+    engine->sendBlockPlacement(result.blockX, result.blockY, result.blockZ, result.hitFace, 0);
 }
 
 void GameUI::handleCameraTouch(int pointerId, float x, float y, int action) {

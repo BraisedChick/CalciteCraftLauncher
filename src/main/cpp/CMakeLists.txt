@@ -45,6 +45,7 @@ set(SOURCES
     GameUI.cpp
     ResourcepackManager.cpp
     PlayerInventory.cpp
+    Raycast.cpp
     miniz.c
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_draw.cpp

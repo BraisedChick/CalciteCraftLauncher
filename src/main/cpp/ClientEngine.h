@@ -47,6 +47,10 @@ public:
     // 发送手持物品槽位切换（0-8）
     void sendHeldItemChange(int slot);
 
+    // 发送方块放置（UseItemOn 包）
+    // blockX/Y/Z 是被点击的目标方块坐标，face 是击中面（0-5，对应 FaceDir）
+    void sendBlockPlacement(int blockX, int blockY, int blockZ, int face, int hand = 0);
+
     // 发送重生请求
     void sendRespawn();
 
