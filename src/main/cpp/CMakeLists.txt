@@ -10,21 +10,46 @@ find_library(gles-lib GLESv3)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
 
-# 添加 GLM 头文件路径（header-only 库）
-# GLM 结构：CMAKE_CURRENT_SOURCE_DIR/glm/glm/glm.hpp
-# 所以需要包含 CMAKE_CURRENT_SOURCE_DIR/glm
+# GLM（header-only）
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/glm)
 message(STATUS "Using local GLM from: ${CMAKE_CURRENT_SOURCE_DIR}/glm")
 
-# 添加 ProtocolCraft 子目录
-set(PROTOCOLCRAFT_STATIC ON CACHE BOOL "Build protocolCraft as static library" FORCE)
-set(PROTOCOL_VERSION 758 CACHE STRING "Minecraft protocol version (758 = 1.18.2)" FORCE)
+# ============================================================
+# 协议版本列表：在此添加新版本号即可自动生成对应的 libmc_<版本>.so
+# ============================================================
+set(SUPPORTED_VERSIONS 758)
 
-# 设置 Botcraft 输出目录，防止协议库输出到根目录 /lib/
-set(BOTCRAFT_OUTPUT_DIR ${CMAKE_BINARY_DIR})
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft ${CMAKE_BINARY_DIR}/protocolCraft)
+# ============================================================
+# protocolCraft 源文件（从 protocolCraft/CMakeLists.txt 同步）
+# ============================================================
+set(PROTOCOLCRAFT_SRC
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/BasePacket.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/BinaryReadWrite.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/NetworkType.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/PacketFactory.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/Types/Chat/Chat.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/Types/CommandNode/BrigadierProperty.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/Types/Components/DataComponents.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/Types/Components/Subtypes/ConsumeEffects/ConsumeEffect.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/Types/Components/Subtypes/ItemAttributeModifiers/Display.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/Types/Debug/DebugSubscription.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/Types/NBT/NBT.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/Types/NBT/Tag.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/Types/Particles/Particle.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/Types/Recipes/Recipe.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/Types/Recipes/RecipeDisplay.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/Types/Recipes/SlotDisplay.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/Types/Vibrations/PositionSource.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/Types/Waypoints/TrackedWaypoint.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/Utilities/GZip.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/Utilities/Json.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/src/Utilities/Plugins/PluginLoader.cpp
+)
 
-set(SOURCES
+# ============================================================
+# 应用源文件
+# ============================================================
+set(APP_SOURCES
     ClientEngine.cpp
     Compression.cpp
     NetworkManager.cpp
@@ -54,20 +79,30 @@ set(SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends/imgui_impl_opengl3.cpp
 )
 
-add_library(minecraftclient SHARED ${SOURCES})
+# ============================================================
+# 为每个协议版本生成独立的 .so
+# ============================================================
+foreach(PVER ${SUPPORTED_VERSIONS})
+    add_library(mc_${PVER} SHARED ${APP_SOURCES} ${PROTOCOLCRAFT_SRC})
 
-target_link_libraries(minecraftclient
-    ${log-lib}
-    ${android-lib}
-    ${z-lib}
-    ${egl-lib}
-    ${gles-lib}
-    vulkan
-    protocolCraft  # 链接 ProtocolCraft 库
-)
+    target_compile_definitions(mc_${PVER} PRIVATE PROTOCOL_VERSION=${PVER})
 
-target_include_directories(minecraftclient PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/imgui
-    ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends
-)
+    target_include_directories(mc_${PVER} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/imgui
+        ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends
+    )
+
+    target_link_libraries(mc_${PVER}
+        ${log-lib}
+        ${android-lib}
+        ${z-lib}
+        ${egl-lib}
+        ${gles-lib}
+        vulkan
+    )
+
+    set_target_properties(mc_${PVER} PROPERTIES OUTPUT_NAME "mc_${PVER}")
+
+    message(STATUS "Configured protocol version ${PVER} -> libmc_${PVER}.so")
+endforeach()

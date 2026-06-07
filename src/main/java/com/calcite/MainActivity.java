@@ -15,10 +15,6 @@ import android.view.WindowInsetsController;
 import android.view.inputmethod.InputMethodManager;
 
 public class MainActivity extends Activity {
-    static {
-        System.loadLibrary("minecraftclient");
-    }
-
     private RendererSurfaceView rendererSurfaceView;
 
     // 按键码常量（与 C++ 中的定义对应）
@@ -29,12 +25,29 @@ public class MainActivity extends Activity {
     private static final int KEY_UP = 4;
     private static final int KEY_DOWN = 5;
 
+    private static void loadLibraryForProtocol(int protocolVersion) {
+        String libName = "mc_" + protocolVersion;
+        try {
+            System.loadLibrary(libName);
+            android.util.Log.i("MainActivity", "Loaded library: " + libName);
+        } catch (UnsatisfiedLinkError e) {
+            android.util.Log.w("MainActivity", "Library " + libName + " not found, falling back to mc_758");
+            System.loadLibrary("mc_758");
+        }
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // 先读取 intent，加载对应协议版本的 .so（必须在任何 native 方法调用之前）
+        Intent intent = getIntent();
+        int protocolVersion = intent.getIntExtra("protocol_version", 758);
+        String username = intent.getStringExtra("username");
+        loadLibraryForProtocol(protocolVersion);
+
         android.util.Log.i("MainActivity", "========================================");
-        android.util.Log.i("MainActivity", "onCreate started");
+        android.util.Log.i("MainActivity", "onCreate started, protocol=" + protocolVersion);
         android.util.Log.i("MainActivity", "========================================");
 
         // 强制横屏
@@ -82,11 +95,6 @@ public class MainActivity extends Activity {
         }
 
         setContentView(R.layout.activity_main);
-
-        // 获取启动器传递的参数
-        Intent intent = getIntent();
-        String username = intent.getStringExtra("username");
-        int protocolVersion = intent.getIntExtra("protocol_version", 758);
 
         // 保存用户名到 C++
         if (username != null && !username.isEmpty()) {
