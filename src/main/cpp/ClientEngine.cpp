@@ -807,9 +807,6 @@ void ClientEngine::handlePlayPacket(int packetId,
                 int localX = blockX & 15;
                 int localZ = blockZ & 15;
 
-                LOGI("BlockUpdate: chunk(%d,%d) pos=(%d,%d,%d) state=%d",
-                     chunkX, chunkZ, blockX, blockY, blockZ, blockState);
-
                 if (chunkManager) {
                     auto chunk = chunkManager->getChunk(chunkX, chunkZ);
                     if (chunk) {
@@ -842,9 +839,6 @@ void ClientEngine::handlePlayPacket(int packetId,
                 if (chunkZ >= 2097152) chunkZ -= 4194304;
                 int sectionY = (int)(rawPos & 0xFFFFF);
                 if (sectionY >= 524288) sectionY -= 1048576;
-
-                LOGI("SectionBlocksUpdate: chunk(%d,%d) sectionY=%d entries=%zu",
-                     chunkX, chunkZ, sectionY, sectionPacket.GetPosState().size());
 
                 if (!chunkManager) break;
                 auto chunk = chunkManager->getChunk(chunkX, chunkZ);
