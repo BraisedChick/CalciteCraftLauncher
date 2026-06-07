@@ -325,6 +325,15 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         }
     }
 
+    // ---- 不透明判定（用于面剔除：透明方块的相邻面不应被剔除）----
+    if (meta.name.find("glass") != std::string::npos ||
+        meta.name == "ice" ||
+        meta.name.find("leaves") != std::string::npos ||
+        meta.name == "slime_block" ||
+        meta.name == "honey_block") {
+        meta.isOpaque = false;
+    }
+
     // ---- 纹理配置（从 TextureAtlas 动态解析） ----
     auto& atlas = TextureAtlas::getInstance();
     if (atlas.isInitialized()) {

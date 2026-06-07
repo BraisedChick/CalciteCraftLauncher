@@ -193,10 +193,11 @@ static void generateFromModel(
     int biomeId,
     int bsRotX, int bsRotY) {
 
-    // 面剔除检测：直接读取预计算的 isFullBlock（无锁）
+    // 面剔除检测：直接读取预计算的 isFullBlock + isOpaque（无锁）
     auto isNeighborSolid = [](int32_t state) -> bool {
         if (state == 0) return false;
-        return BlockRegistry::getInstance().getBlockMetadata(state).isFullBlock;
+        const auto& meta = BlockRegistry::getInstance().getBlockMetadata(state);
+        return meta.isFullBlock && meta.isOpaque;
     };
 
     for (const auto& elem : model.elements) {
@@ -549,9 +550,11 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         return 0;
     };
 
-    // 直接读取预计算的 isFullBlock（getBlockMetadata 已是无锁 unordered_map::find）
+    // 面剔除检测：几何完整且不透明的方块才会遮挡相邻面
     auto isSolid = [](int32_t state) -> bool {
-        return state != 0 && BlockRegistry::getInstance().getBlockMetadata(state).isFullBlock;
+        if (state == 0) return false;
+        const auto& meta = BlockRegistry::getInstance().getBlockMetadata(state);
+        return meta.isFullBlock && meta.isOpaque;
     };
 
     // 模型缓存：按方块名缓存 getBlockModel 结果，避免重复 string map 查找

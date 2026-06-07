@@ -31,7 +31,8 @@ struct BlockMetadata {
     bool isWater = false;
     bool isAir = false;
     bool isNoCollision = false;  // 火把、按钮等无碰撞方块
-    bool isFullBlock = true;
+    bool isFullBlock = true;     // 几何上是否为完整 16x16x16 立方体（用于快速路径和面剔除）
+    bool isOpaque = true;        // 是否不透明（false=玻璃等透明方块，相邻面不应被剔除）
 };
 
 class BlockRegistry {
