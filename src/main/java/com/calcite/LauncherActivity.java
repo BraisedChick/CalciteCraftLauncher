@@ -498,9 +498,12 @@ public class LauncherActivity extends Activity {
     // ===== 启动游戏 =====
 
     private boolean isProtocolSupported(int protocolVersion) {
-        File libDir = new File(getApplicationInfo().nativeLibraryDir);
-        File libFile = new File(libDir, "libmc_" + protocolVersion + ".so");
-        return libFile.exists();
+        try {
+            System.loadLibrary("mc_" + protocolVersion);
+            return true;
+        } catch (UnsatisfiedLinkError e) {
+            return false;
+        }
     }
 
     private void launchGame() {
