@@ -1,5 +1,6 @@
 #include "ClientEngine.h"
 #include "NetworkManager.h"
+#include "AESEncrypter.h"
 #include "Compression.h"
 #include "ChunkManager.h"
 #include "GLRenderer.h"
@@ -50,14 +51,33 @@
 #include <map>
 #include <cmath>
 #include <chrono>
+#include <sstream>
 
 ClientEngine* ClientEngine::instance = nullptr;
+
+// 前向声明：在 native-lib.cpp 中定义，用于通过 JNI 调用 Java 层处理完整加密请求
+// Java 层负责：生成共享密钥 + SHA1 哈希 + Session Join + RSA 加密
+extern bool callJavaHandleEncryptionRequest(
+    const std::string& serverID,
+    const std::vector<unsigned char>& publicKey,
+    const std::vector<unsigned char>& verifyToken,
+    std::vector<unsigned char>& sharedSecret,
+    std::vector<unsigned char>& encryptedSecret,
+    std::vector<unsigned char>& encryptedVerifyToken);
 
 ClientEngine::ClientEngine() : chunkManager(nullptr) {
     instance = this;
 }
 
 ClientEngine::~ClientEngine() = default;
+
+void ClientEngine::setAuthInfo(const std::string& accessToken, const std::string& uuid, const std::string& tokenType) {
+    g_accessToken = accessToken;
+    g_playerUuid = uuid;
+    g_tokenType = tokenType;
+    g_isPremium = !accessToken.empty();
+    LOGI("Auth info set: premium=%d, uuid=%s", g_isPremium, g_playerUuid.c_str());
+}
 
 bool ClientEngine::start(const std::string& host, int port, const std::string& username) {
     LOGI("========== Starting client ==========");
@@ -148,7 +168,7 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
 
         if (pid == 0x02) {
             // Login Success (Game Profile)
-            LOGI("Login success!");
+                        LOGI("Login success!");
 
             ProtocolCraft::ClientboundGameProfilePacket successPacket;
             std::vector<unsigned char> packetData(resp.begin() + pos, resp.end());
@@ -163,6 +183,107 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
             }
 
             break;
+        } else if (pid == 0x01) {
+            // ========== Encryption Request (Hello) — 在线模式服务器 ==========
+            LOGI("Received Encryption Request (online mode server)");
+
+            if (!g_isPremium) {
+                LOGE("Server is in online mode, but no premium auth available");
+                net->disconnect();
+                return false;
+            }
+
+            std::vector<unsigned char> packetData(resp.begin() + pos, resp.end());
+            auto dataIter = packetData.cbegin();
+            size_t dataLen = packetData.size();
+
+            // 解析 Hello 包：serverID (String), publicKey (ByteArray), verifyToken (ByteArray)
+            try {
+                // 读取 server ID
+                int serverIdLen = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(dataIter, dataLen);
+                std::string serverID(serverIdLen, '\0');
+                for (int i = 0; i < serverIdLen; ++i) {
+                    serverID[i] = ProtocolCraft::ReadData<char>(dataIter, dataLen);
+                }
+
+                // 读取 public key
+                int pubKeyLen = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(dataIter, dataLen);
+                std::vector<unsigned char> publicKey(pubKeyLen);
+                for (int i = 0; i < pubKeyLen; ++i) {
+                    publicKey[i] = static_cast<unsigned char>(ProtocolCraft::ReadData<char>(dataIter, dataLen));
+                }
+
+                // 读取 verify token
+                int verifyTokenLen = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(dataIter, dataLen);
+                std::vector<unsigned char> verifyToken(verifyTokenLen);
+                for (int i = 0; i < verifyTokenLen; ++i) {
+                    verifyToken[i] = static_cast<unsigned char>(ProtocolCraft::ReadData<char>(dataIter, dataLen));
+                }
+
+                LOGI("Encryption Request: serverID_len=%d, pubKey_len=%d, verifyToken_len=%d",
+                     serverIdLen, pubKeyLen, verifyTokenLen);
+
+                // 调用 Java 层处理完整加密请求：
+                // Java 负责：生成共享密钥 + SHA1 哈希 + Session Join + RSA 加密
+                std::vector<unsigned char> rawSharedSecret;
+                std::vector<unsigned char> encryptedSharedSecret;
+                std::vector<unsigned char> encryptedVerifyToken;
+
+                bool encResult = callJavaHandleEncryptionRequest(
+                    serverID, publicKey, verifyToken,
+                    rawSharedSecret, encryptedSharedSecret, encryptedVerifyToken);
+
+                if (!encResult || rawSharedSecret.empty()) {
+                    LOGE("Failed to handle encryption request via Java");
+                    net->disconnect();
+                    return false;
+                }
+                LOGI("Java encryption handling successful, sharedSecret_len=%zu, encSecret_len=%zu, encVerifyToken_len=%zu",
+                     rawSharedSecret.size(), encryptedSharedSecret.size(), encryptedVerifyToken.size());
+
+                // 用共享密钥初始化 AES-128-CFB8 流加密
+                aesEncrypter = std::make_unique<AESEncrypter>();
+                aesEncrypter->Init(rawSharedSecret);
+
+                if (!aesEncrypter->isInitialized()) {
+                    LOGE("Failed to initialize AESEncrypter");
+                    net->disconnect();
+                    return false;
+                }
+
+                // 发送 Key 包 (Encryption Key Response, packet ID 0x01)
+                // 格式：VarInt(0x01) + ByteArray(encrypted_shared_secret) + ByteArray(encrypted_verify_token)
+                ProtocolCraft::WriteContainer keyPacket;
+                ProtocolCraft::WriteData<int, ProtocolCraft::VarInt>(0x01, keyPacket);  // packet ID
+                ProtocolCraft::WriteData<int, ProtocolCraft::VarInt>(
+                    static_cast<int>(encryptedSharedSecret.size()), keyPacket);
+                for (auto b : encryptedSharedSecret) {
+                    ProtocolCraft::WriteData<char>(static_cast<char>(b), keyPacket);
+                }
+                ProtocolCraft::WriteData<int, ProtocolCraft::VarInt>(
+                    static_cast<int>(encryptedVerifyToken.size()), keyPacket);
+                for (auto b : encryptedVerifyToken) {
+                    ProtocolCraft::WriteData<char>(static_cast<char>(b), keyPacket);
+                }
+
+                if (!sendPacket(std::vector<uint8_t>(keyPacket.begin(), keyPacket.end()))) {
+                    LOGE("Failed to send encryption key response");
+                    net->disconnect();
+                    return false;
+                }
+                LOGI("Encryption key response sent");
+
+                // 启用 AES 流加密
+                net->setEncrypter(aesEncrypter.get());
+                LOGI("AES-128-CFB8 stream encryption enabled on NetworkManager");
+
+                continue;  // 继续等待 Login Success
+
+            } catch (const std::exception& e) {
+                LOGE("Failed to parse encryption request: %s", e.what());
+                net->disconnect();
+                return false;
+            }
         } else if (pid == 0x03) {
             // Set Compression
             ProtocolCraft::ClientboundLoginCompressionPacket compressionPacket;
@@ -200,30 +321,19 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
         }
     }
 
-    // 启用发送压缩
+    // 启用发送压缩（参照 Botcraft：收到 Set Compression 后立即启用收发压缩）
+    // Botcraft 用单一 compression 变量控制，我们在登录循环结束后统一启用
     if (Compression::isReceiveEnabled()) {
         Compression::setEnabled(true);
-        LOGI("Compression fully enabled");
+        LOGI("Compression fully enabled (threshold=%d)", Compression::getThreshold());
+    } else {
+        LOGI("Compression not enabled by server (offline mode)");
     }
 
-    // ========== 发送客户端信息（视野距离等）==========
-    // 必须在进入 PLAY 状态后立即发送，让服务器知道客户端的视野距离
-    {
-        ProtocolCraft::ServerboundClientInformationPacket infoPacket;
-        infoPacket.SetLanguage("en_US");
-        infoPacket.SetViewDistance(10);    // 请求 10 个区块的视野距离
-        infoPacket.SetChatVisibility(0);   // 0=全部显示
-        infoPacket.SetChatColors(true);
-        infoPacket.SetModelCustomisation(0x7F);  // 全部启用
-        infoPacket.SetMainHand(1);         // 1=右手
-        infoPacket.SetTextFilteringEnabled(false);
-        infoPacket.SetAllowListing(true);
-
-        ProtocolCraft::WriteContainer writeData;
-        infoPacket.Write(writeData);
-        sendPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
-        LOGI("Sent Client Information (ViewDistance=10)");
-    }
+    // 注意：不在这里发送 ClientInformation！
+    // 某些服务器在 Login Success 之后需要时间切换到 PLAY 状态
+    // 必须等收到服务器的第一个 PLAY 状态包之后再发送
+    bool clientInfoSent = false;
 
     // 进入 PLAY 状态（注意：不在这里启用移动发送，必须等收到第一个 0x38 确保坐标正确）
     // 移动包的启用放在 handlePlayPacket 的 0x38 分支中
@@ -250,6 +360,34 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
         size_t remaining = resp.size();
         int pid = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(iter, remaining);
         pos = resp.size() - remaining;
+
+        // 收到第一个 PLAY 状态包后，发送 ClientInformation
+        // 这确保服务器已经完全切换到 PLAY 状态
+        if (!clientInfoSent) {
+            clientInfoSent = true;
+            
+            ProtocolCraft::ServerboundClientInformationPacket infoPacket;
+            infoPacket.SetLanguage("en_US");
+            infoPacket.SetViewDistance(10);    // 请求 10 个区块的视野距离
+            infoPacket.SetChatVisibility(0);   // 0=全部显示
+            infoPacket.SetChatColors(true);
+            infoPacket.SetModelCustomisation(0x7F);  // 全部启用
+            infoPacket.SetMainHand(1);         // 1=右手
+            infoPacket.SetTextFilteringEnabled(false);
+            infoPacket.SetAllowListing(true);
+
+            ProtocolCraft::WriteContainer writeData;
+            infoPacket.Write(writeData);
+            
+            // 注意：这里需要锁住 netMutex 来发送
+            {
+                std::lock_guard<std::mutex> lock(netMutex);
+                if (net) {
+                    net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+                    LOGI("Sent Client Information (ViewDistance=10)");
+                }
+            }
+        }
 
         // 紧急包（延迟敏感）：位置、方块更新、生命、保活、游戏事件
         if (pid == 0x38 || pid == 0x0C || pid == 0x3F || pid == 0x52 ||

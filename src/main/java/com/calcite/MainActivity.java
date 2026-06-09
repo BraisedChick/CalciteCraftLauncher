@@ -13,6 +13,8 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
 import android.view.inputmethod.InputMethodManager;
 
 public class MainActivity extends Activity {
@@ -47,6 +49,10 @@ public class MainActivity extends Activity {
         Intent intent = getIntent();
         int protocolVersion = intent.getIntExtra("protocol_version", 758);
         String username = intent.getStringExtra("username");
+        String loginType = intent.getStringExtra("login_type");
+        String accessToken = intent.getStringExtra("access_token");
+        String uuid = intent.getStringExtra("uuid");
+        String tokenType = intent.getStringExtra("token_type");
         loadLibraryForProtocol(protocolVersion);
 
         android.util.Log.i("MainActivity", "========================================");
@@ -116,6 +122,12 @@ public class MainActivity extends Activity {
             setUsername(username);
         } else {
             setUsername("Player");
+        }
+
+        // 保存正版认证信息到 C++
+        if ("premium".equals(loginType) && accessToken != null && !accessToken.isEmpty()) {
+            setAuthInfo(accessToken, uuid != null ? uuid : "", tokenType != null ? tokenType : "Bearer");
+            android.util.Log.i("MainActivity", "Premium auth info set for: " + username);
         }
 
         // 保存协议版本
@@ -275,6 +287,7 @@ public class MainActivity extends Activity {
     private native void setRendererType(boolean useVulkan);
     private native void setProtocolVersion(int version);
     private native void setUsername(String username);
+    private native void setAuthInfo(String accessToken, String uuid, String tokenType);
     private native void onTouchEventImGui(int pointerId, float x, float y, int action);
     private native boolean isUIDisplayed();
     private native boolean onBackPressedNative();
@@ -296,6 +309,46 @@ public class MainActivity extends Activity {
                 }
             }
         });
+    }
+
+        /**
+     * C++ 层调用：处理服务器的加密请求（正版验证在线模式服务器）
+     * 一次性完成：生成共享密钥 + SHA1 哈希 + Session Join + RSA 加密
+     *
+     * 返回打包的字节数组：
+     * [4字节 sharedSecret_len][sharedSecret][4字节 encryptedSecret_len][encryptedSecret][4字节 encryptedVerifyToken_len][encryptedVerifyToken]
+     * 失败返回 null
+     */
+    public byte[] handleEncryptionRequest(String serverID, byte[] publicKey, byte[] verifyToken,
+                                           String accessToken, String playerUuid) {
+        try {
+            com.calcite.auth.MinecraftEncryption.EncryptionResponse response =
+                com.calcite.auth.MinecraftEncryption.handleEncryptionRequest(
+                    serverID, publicKey, verifyToken, accessToken, playerUuid);
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            DataOutputStream dos = new DataOutputStream(baos);
+
+            dos.writeInt(response.sharedSecret.length);
+            dos.write(response.sharedSecret);
+            dos.writeInt(response.encryptedSecret.length);
+            dos.write(response.encryptedSecret);
+            dos.writeInt(response.encryptedVerifyToken.length);
+            dos.write(response.encryptedVerifyToken);
+
+            android.util.Log.i("MainActivity", "Encryption request handled successfully");
+            return baos.toByteArray();
+        } catch (Exception e) {
+            android.util.Log.e("MainActivity", "Encryption request failed: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * C++ 层调用：加入服务器会话（兼容旧调用，新流程使用 handleEncryptionRequest）
+     */
+    public boolean joinServer(String accessToken, String uuid, String serverHash) {
+        return com.calcite.auth.MicrosoftAuthService.joinServer(accessToken, uuid, serverHash);
     }
 
     private void saveProtocolVersion(int version) {

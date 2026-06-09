@@ -2,6 +2,9 @@ package com.calcite;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
@@ -14,16 +17,21 @@ import android.database.Cursor;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.ArrayAdapter;
+import android.widget.Button;
 import android.widget.EditText;
 import androidx.core.content.FileProvider;
 import android.widget.ListView;
+import android.widget.ProgressBar;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.Spinner;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import com.calcite.account.Account;
 import com.calcite.account.AccountListAdapter;
+import com.calcite.auth.AuthResult;
+import com.calcite.auth.MicrosoftAuthService;
 import com.calcite.ui.MioButton;
 import com.calcite.ui.MioTextView;
 
@@ -210,9 +218,7 @@ public class LauncherActivity extends Activity {
 
     private void fillAccountPage() {
         pageAccount.findViewById(R.id.btnCreateOffline).setOnClickListener(v -> showCreateOfflineDialog());
-        pageAccount.findViewById(R.id.btnCreatePremium).setOnClickListener(v -> {
-            Toast.makeText(this, "正版登录功能暂未实现", Toast.LENGTH_SHORT).show();
-        });
+        pageAccount.findViewById(R.id.btnCreatePremium).setOnClickListener(v -> showMicrosoftLoginDialog());
 
         ListView listView = pageAccount.findViewById(R.id.accountList);
         accountAdapter = new AccountListAdapter(this, accounts);
@@ -280,6 +286,169 @@ public class LauncherActivity extends Activity {
         view.findViewById(R.id.btnCancelOffline).setOnClickListener(v -> dialog.dismiss());
     }
 
+    // ===== Microsoft 正版登录 =====
+
+    private MicrosoftAuthService authService;
+    private Thread authThread;
+    private volatile boolean authCancelled = false;
+
+    private void showMicrosoftLoginDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        View view = getLayoutInflater().inflate(R.layout.dialog_microsoft_login, null);
+        builder.setView(view);
+        builder.setCancelable(false);
+
+        AlertDialog dialog = builder.create();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        }
+        dialog.show();
+
+        TextView tvStatus = view.findViewById(R.id.tvAuthStatus);
+        View layoutDeviceCode = view.findViewById(R.id.layoutDeviceCode);
+        TextView tvVerificationUrl = view.findViewById(R.id.tvVerificationUrl);
+        TextView tvUserCode = view.findViewById(R.id.tvUserCode);
+        Button btnCopyCode = view.findViewById(R.id.btnCopyCode);
+        ProgressBar progressAuth = view.findViewById(R.id.progressAuth);
+        Button btnCancelAuth = view.findViewById(R.id.btnCancelAuth);
+
+        authCancelled = false;
+        if (authService == null) {
+            authService = new MicrosoftAuthService();
+        }
+
+        btnCancelAuth.setOnClickListener(v -> {
+            authCancelled = true;
+            dialog.dismiss();
+        });
+
+        // 复制代码并打开浏览器
+        btnCopyCode.setOnClickListener(v -> {
+            String code = tvUserCode.getText().toString();
+            String url = tvVerificationUrl.getText().toString();
+            // 复制到剪贴板
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            clipboard.setPrimaryClip(ClipData.newPlainText("Microsoft Login Code", code));
+            // 打开浏览器
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+            } catch (Exception e) {
+                Toast.makeText(this, "无法打开浏览器，请手动访问: " + url, Toast.LENGTH_LONG).show();
+            }
+            Toast.makeText(this, "代码已复制到剪贴板", Toast.LENGTH_SHORT).show();
+        });
+
+        // 在后台线程执行认证
+        authThread = new Thread(() -> {
+            authService.authenticate(new MicrosoftAuthService.AuthCallback() {
+                @Override
+                public void onDeviceCodeReceived(String userCode, String verificationURI) {
+                    runOnUiThread(() -> {
+                        if (authCancelled) return;
+                        tvUserCode.setText(userCode);
+                        tvVerificationUrl.setText(verificationURI);
+                        layoutDeviceCode.setVisibility(View.VISIBLE);
+                        tvStatus.setText("请在浏览器中输入代码完成登录");
+                    });
+                }
+
+                @Override
+                public void onProgress(String message) {
+                    runOnUiThread(() -> {
+                        if (authCancelled) return;
+                        tvStatus.setText(message);
+                    });
+                }
+
+                @Override
+                public void onSuccess(AuthResult result) {
+                    runOnUiThread(() -> {
+                        if (authCancelled) return;
+                        // 创建正版账号
+                        Account account = Account.fromAuthResult(result);
+                        accounts.add(account);
+                        saveAccounts();
+                        accountAdapter.notifyDataSetChanged();
+                        accountAdapter.setSelectedPosition(accounts.size() - 1);
+                        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                            .edit()
+                            .putString(KEY_SELECTED_ACCOUNT, account.getUuid())
+                            .apply();
+                        username = account.getName();
+                        loginType = "premium";
+                        savePreferences();
+                        updatePanelDisplay();
+                        Toast.makeText(LauncherActivity.this,
+                            "正版登录成功: " + result.getPlayerName(),
+                            Toast.LENGTH_SHORT).show();
+                        dialog.dismiss();
+                    });
+                }
+
+                @Override
+                public void onError(String message) {
+                    runOnUiThread(() -> {
+                        if (authCancelled) return;
+                        tvStatus.setText("登录失败");
+                        layoutDeviceCode.setVisibility(View.GONE);
+                        progressAuth.setVisibility(View.GONE);
+                        Toast.makeText(LauncherActivity.this, message, Toast.LENGTH_LONG).show();
+                        // 延迟关闭对话框
+                        tvStatus.postDelayed(() -> dialog.dismiss(), 1500);
+                    });
+                }
+            });
+        });
+        authThread.setDaemon(true);
+        authThread.start();
+    }
+
+    /**
+     * 刷新正版账号令牌（在启动游戏前调用）
+     */
+    private void refreshPremiumAccount(Account account, Runnable onSuccess, Runnable onError) {
+        if (!account.isPremium() || account.getRefreshToken() == null) {
+            onError.run();
+            return;
+        }
+
+        if (!account.isTokenExpired()) {
+            onSuccess.run();
+            return;
+        }
+
+        if (authService == null) {
+            authService = new MicrosoftAuthService();
+        }
+
+        new Thread(() -> {
+            authService.refresh(account.getRefreshToken(), new MicrosoftAuthService.AuthCallback() {
+                @Override
+                public void onDeviceCodeReceived(String userCode, String verificationURI) {}
+                @Override
+                public void onProgress(String message) {}
+
+                @Override
+                public void onSuccess(AuthResult result) {
+                    runOnUiThread(() -> {
+                        account.updateAuthResult(result);
+                        saveAccounts();
+                        onSuccess.run();
+                    });
+                }
+
+                @Override
+                public void onError(String message) {
+                    runOnUiThread(() -> {
+                        Toast.makeText(LauncherActivity.this,
+                            "刷新令牌失败: " + message, Toast.LENGTH_LONG).show();
+                        onError.run();
+                    });
+                }
+            });
+        }).start();
+    }
+
     private void loadAccounts() {
         accounts.clear();
         String json = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(KEY_ACCOUNTS, "");
@@ -288,11 +457,19 @@ public class LauncherActivity extends Activity {
                 JSONArray array = new JSONArray(json);
                 for (int i = 0; i < array.length(); i++) {
                     JSONObject obj = array.getJSONObject(i);
-                    accounts.add(new Account(
+                    Account acc = new Account(
                         obj.getString("name"),
                         obj.getString("type"),
                         obj.getString("uuid")
-                    ));
+                    );
+                    // 恢复正版账号字段
+                    if (acc.isPremium()) {
+                        acc.setAccessToken(obj.optString("accessToken", ""));
+                        acc.setRefreshToken(obj.optString("refreshToken", ""));
+                        acc.setTokenType(obj.optString("tokenType", "Bearer"));
+                        acc.setNotAfter(obj.optLong("notAfter", 0));
+                    }
+                    accounts.add(acc);
                 }
             } catch (Exception e) {
                 e.printStackTrace();
@@ -316,6 +493,13 @@ public class LauncherActivity extends Activity {
                 obj.put("name", acc.getName());
                 obj.put("type", acc.getType());
                 obj.put("uuid", acc.getUuid());
+                // 保存正版账号字段
+                if (acc.isPremium()) {
+                    obj.put("accessToken", acc.getAccessToken() != null ? acc.getAccessToken() : "");
+                    obj.put("refreshToken", acc.getRefreshToken() != null ? acc.getRefreshToken() : "");
+                    obj.put("tokenType", acc.getTokenType() != null ? acc.getTokenType() : "Bearer");
+                    obj.put("notAfter", acc.getNotAfter());
+                }
                 array.put(obj);
             }
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -527,6 +711,17 @@ public class LauncherActivity extends Activity {
             return;
         }
 
+        // 正版账号：检查令牌是否需要刷新
+        if (selected.isPremium()) {
+            refreshPremiumAccount(selected, () -> startGameActivity(selected, versionName, protocolVersion),
+                () -> Toast.makeText(this, "无法刷新正版令牌，请重新登录", Toast.LENGTH_LONG).show());
+            return;
+        }
+
+        startGameActivity(selected, versionName, protocolVersion);
+    }
+
+    private void startGameActivity(Account selected, String versionName, int protocolVersion) {
         Toast.makeText(this,
             String.format("启动游戏\n用户名: %s\n版本: %s (协议 %d)\n渲染器: %s",
                 selected.getName(), versionName, protocolVersion,
@@ -537,6 +732,13 @@ public class LauncherActivity extends Activity {
         intent.putExtra("username", selected.getName());
         intent.putExtra("protocol_version", protocolVersion);
         intent.putExtra("use_vulkan", useVulkan);
+        // 传递正版认证信息
+        intent.putExtra("login_type", selected.getType());
+        if (selected.isPremium()) {
+            intent.putExtra("access_token", selected.getAccessToken() != null ? selected.getAccessToken() : "");
+            intent.putExtra("uuid", selected.getUuid());
+            intent.putExtra("token_type", selected.getTokenType() != null ? selected.getTokenType() : "Bearer");
+        }
         intent.setFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
         startActivity(intent);
     }

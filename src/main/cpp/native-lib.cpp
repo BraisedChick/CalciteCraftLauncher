@@ -33,6 +33,12 @@ static std::atomic<bool> g_rendering(false);
 static std::thread g_renderThread;
 static std::string g_username = "Player";
 
+// 正版认证信息
+static std::string g_accessToken;
+static std::string g_playerUuid;
+static std::string g_tokenType;
+static bool g_isPremium = false;
+
 // Java 虚拟机和对象引用，用于回调
 static JavaVM* g_jvm = nullptr;
 static jobject g_mainActivityObj = nullptr;
@@ -65,7 +71,12 @@ Java_com_calcite_MainActivity_connectToServer(
             g_engine = nullptr;
         }
 
-        g_engine = new ClientEngine();
+                g_engine = new ClientEngine();
+
+        // 传递正版认证信息给引擎
+        if (g_isPremium) {
+            g_engine->setAuthInfo(g_accessToken, g_playerUuid, g_tokenType);
+        }
 
         // 加载语言文件
         {
@@ -341,7 +352,12 @@ Java_com_calcite_MainActivity_initRenderer(
         GameUI::getInstance().setConnectCallback([](const std::string& ip, int port) {
             JNI_LOGI("UI Connect: %s:%d user=%s", ip.c_str(), port, g_username.c_str());
             std::thread([ip, port]() {
-                g_engine = new ClientEngine();
+                            g_engine = new ClientEngine();
+
+                // 传递正版认证信息给引擎
+                if (g_isPremium) {
+                    g_engine->setAuthInfo(g_accessToken, g_playerUuid, g_tokenType);
+                }
 
                 // 加载语言文件
                 {
@@ -599,6 +615,165 @@ Java_com_calcite_MainActivity_setUsername(
     g_username = name;
     JNI_LOGI("Username set: %s", g_username.c_str());
     env->ReleaseStringUTFChars(username, name);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_calcite_MainActivity_setAuthInfo(
+        JNIEnv* env,
+        jobject thiz,
+        jstring accessToken,
+        jstring uuid,
+        jstring tokenType) {
+
+    const char* token = env->GetStringUTFChars(accessToken, nullptr);
+    const char* id = env->GetStringUTFChars(uuid, nullptr);
+    const char* type = env->GetStringUTFChars(tokenType, nullptr);
+
+    g_accessToken = token;
+    g_playerUuid = id;
+    g_tokenType = type;
+    g_isPremium = !g_accessToken.empty();
+
+    JNI_LOGI("Auth info set: premium=%d, uuid=%s", g_isPremium, g_playerUuid.c_str());
+
+    env->ReleaseStringUTFChars(accessToken, token);
+    env->ReleaseStringUTFChars(uuid, id);
+    env->ReleaseStringUTFChars(tokenType, type);
+}
+
+/**
+ * 通过 JNI 调用 Java 层处理完整的加密请求
+ * Java 层负责：生成共享密钥 + SHA1 哈希 + Session Join + RSA 加密
+ * 一次性完成所有加密准备工作，C++ 只需要拿到结果
+ *
+ * @param serverID         服务器 ID
+ * @param publicKey        服务器公钥（DER 编码）
+ * @param verifyToken      服务器验证令牌
+ * @param sharedSecret     [输出] 原始共享密钥（16字节，用于初始化 AES CFB8）
+ * @param encryptedSecret  [输出] RSA 加密后的共享密钥（发送给服务器）
+ * @param encryptedVerifyToken [输出] RSA 加密后的验证令牌（发送给服务器）
+ * @return 是否成功
+ */
+bool callJavaHandleEncryptionRequest(
+    const std::string& serverID,
+    const std::vector<unsigned char>& publicKey,
+    const std::vector<unsigned char>& verifyToken,
+    std::vector<unsigned char>& sharedSecret,
+    std::vector<unsigned char>& encryptedSecret,
+    std::vector<unsigned char>& encryptedVerifyToken) {
+
+    if (!g_jvm || !g_mainActivityObj) {
+        JNI_LOGE("Cannot handle encryption request: JVM or Activity not available");
+        return false;
+    }
+
+    JNIEnv* env;
+    bool attached = false;
+    int getEnvResult = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+    if (getEnvResult == JNI_EDETACHED) {
+        if (g_jvm->AttachCurrentThread(&env, nullptr) != JNI_OK) return false;
+        attached = true;
+    } else if (getEnvResult != JNI_OK) {
+        return false;
+    }
+
+    // 创建 Java 参数
+    jstring jServerID = env->NewStringUTF(serverID.c_str());
+
+    jbyteArray jPublicKey = env->NewByteArray(static_cast<jsize>(publicKey.size()));
+    env->SetByteArrayRegion(jPublicKey, 0, static_cast<jsize>(publicKey.size()),
+                            reinterpret_cast<const jbyte*>(publicKey.data()));
+
+    jbyteArray jVerifyToken = env->NewByteArray(static_cast<jsize>(verifyToken.size()));
+    env->SetByteArrayRegion(jVerifyToken, 0, static_cast<jsize>(verifyToken.size()),
+                            reinterpret_cast<const jbyte*>(verifyToken.data()));
+
+    jstring jAccessToken = env->NewStringUTF(g_accessToken.c_str());
+    jstring jPlayerUuid = env->NewStringUTF(g_playerUuid.c_str());
+
+    // 调用 MainActivity.handleEncryptionRequest
+    jclass clazz = env->GetObjectClass(g_mainActivityObj);
+    jmethodID method = env->GetMethodID(clazz, "handleEncryptionRequest",
+        "(Ljava/lang/String;[B[BLjava/lang/String;Ljava/lang/String;)[B");
+
+    jbyteArray jResult = nullptr;
+    if (method) {
+        jResult = (jbyteArray)env->CallObjectMethod(g_mainActivityObj, method,
+            jServerID, jPublicKey, jVerifyToken, jAccessToken, jPlayerUuid);
+
+        if (env->ExceptionCheck()) {
+            JNI_LOGE("Java handleEncryptionRequest threw exception");
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+            jResult = nullptr;
+        }
+    } else {
+        JNI_LOGE("handleEncryptionRequest method not found");
+    }
+
+    bool success = false;
+    if (jResult != nullptr) {
+        // 解析返回的打包字节数组
+        // 格式：[4字节 sharedSecret_len][sharedSecret][4字节 encryptedSecret_len][encryptedSecret][4字节 encryptedVerifyToken_len][encryptedVerifyToken]
+        jsize resultLen = env->GetArrayLength(jResult);
+        jbyte* resultBytes = env->GetByteArrayElements(jResult, nullptr);
+
+        const uint8_t* data = reinterpret_cast<const uint8_t*>(resultBytes);
+        size_t offset = 0;
+
+        if (resultLen >= 4) {
+            // 读取 sharedSecret
+            int32_t ssLen = (data[offset] << 24) | (data[offset+1] << 16) | (data[offset+2] << 8) | data[offset+3];
+            offset += 4;
+            if (offset + ssLen <= (size_t)resultLen && ssLen > 0) {
+                sharedSecret.assign(data + offset, data + offset + ssLen);
+                offset += ssLen;
+            }
+
+            // 读取 encryptedSecret
+            if (offset + 4 <= (size_t)resultLen) {
+                int32_t esLen = (data[offset] << 24) | (data[offset+1] << 16) | (data[offset+2] << 8) | data[offset+3];
+                offset += 4;
+                if (offset + esLen <= (size_t)resultLen && esLen > 0) {
+                    encryptedSecret.assign(data + offset, data + offset + esLen);
+                    offset += esLen;
+                }
+            }
+
+            // 读取 encryptedVerifyToken
+            if (offset + 4 <= (size_t)resultLen) {
+                int32_t evtLen = (data[offset] << 24) | (data[offset+1] << 16) | (data[offset+2] << 8) | data[offset+3];
+                offset += 4;
+                if (offset + evtLen <= (size_t)resultLen && evtLen > 0) {
+                    encryptedVerifyToken.assign(data + offset, data + offset + evtLen);
+                    offset += evtLen;
+                }
+            }
+
+            success = !sharedSecret.empty() && !encryptedSecret.empty() && !encryptedVerifyToken.empty();
+        }
+
+        env->ReleaseByteArrayElements(jResult, resultBytes, JNI_ABORT);
+        JNI_LOGI("Encryption request handled: sharedSecret_len=%zu, encSecret_len=%zu, encVerifyToken_len=%zu",
+                 sharedSecret.size(), encryptedSecret.size(), encryptedVerifyToken.size());
+    } else {
+        JNI_LOGE("handleEncryptionRequest returned null");
+    }
+
+    // 清理 JNI 引用
+    env->DeleteLocalRef(jServerID);
+    env->DeleteLocalRef(jPublicKey);
+    env->DeleteLocalRef(jVerifyToken);
+    env->DeleteLocalRef(jAccessToken);
+    env->DeleteLocalRef(jPlayerUuid);
+    if (jResult) env->DeleteLocalRef(jResult);
+    env->DeleteLocalRef(clazz);
+
+    if (attached) {
+        g_jvm->DetachCurrentThread();
+    }
+
+    return success;
 }
 
 extern "C" JNIEXPORT void JNICALL

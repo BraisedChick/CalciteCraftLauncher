@@ -89,7 +89,11 @@ public class AccountListAdapter extends BaseAdapter {
 
         radio.setChecked(position == selectedPosition);
         tvName.setText(account.getName());
-        tvType.setText(account.getTypeDisplay());
+        String typeDisplay = account.getTypeDisplay();
+        if (account.isPremium() && account.isTokenExpired()) {
+            typeDisplay = "正版(需刷新)";
+        }
+        tvType.setText(typeDisplay);
 
         radio.setOnClickListener(v -> {
             selectedPosition = position;

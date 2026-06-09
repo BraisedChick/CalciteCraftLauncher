@@ -7,6 +7,7 @@ find_library(z-lib z)
 find_library(egl-lib EGL)
 find_library(gles-lib GLESv3)
 
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
 
@@ -55,6 +56,7 @@ set(APP_SOURCES
     NetworkManager.cpp
     native-lib.cpp
     utils.cpp
+    AESEncrypter.cpp
     ChunkManager.cpp
     ChunkParser.cpp
     MinecraftVersion.cpp

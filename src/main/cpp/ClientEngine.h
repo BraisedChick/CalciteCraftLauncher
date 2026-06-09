@@ -13,6 +13,7 @@
 class ChunkManager;
 class NetworkManager;
 class GLRenderer;
+class AESEncrypter;
 
 class ClientEngine {
 public:
@@ -22,6 +23,10 @@ public:
     static ClientEngine* getInstance() { return instance; }
 
     bool start(const std::string& host, int port, const std::string& username);
+
+    // 设置正版认证信息
+    void setAuthInfo(const std::string& accessToken, const std::string& uuid, const std::string& tokenType);
+    bool isPremium() const { return g_isPremium; }
 
     // 获取 ChunkManager 引用
     ChunkManager* getChunkManager() { return chunkManager.get(); }
@@ -150,5 +155,14 @@ private:
 
     // 语言翻译表（从 zh_cn.json 加载）
     std::map<std::string, std::string> translations;
+
+    // 正版认证信息
+    std::string g_accessToken;
+    std::string g_playerUuid;
+    std::string g_tokenType;
+    bool g_isPremium = false;
+
+    // AES 加密器（在线模式服务器启用加密后使用）
+    std::unique_ptr<AESEncrypter> aesEncrypter;
 };
 
