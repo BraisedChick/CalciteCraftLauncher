@@ -89,5 +89,8 @@ private:
 
     void tick();
     AABB getPlayerAABB() const;
+
+public:
+    // 获取指定方块的碰撞箱（世界坐标）
     std::vector<AABB> getBlockAABBs(int blockX, int blockY, int blockZ) const;
 };
