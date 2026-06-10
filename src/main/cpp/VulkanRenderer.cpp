@@ -3,6 +3,8 @@
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #define LOG_TAG "VulkanRenderer"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -457,92 +459,26 @@ void VulkanRenderer::updateUniformBuffer(float cameraX, float cameraY, float cam
     } ubo{};
 
     // 模型矩阵（单位矩阵）
-    ubo.model[0] = 1.0f; ubo.model[5] = 1.0f; ubo.model[10] = 1.0f; ubo.model[15] = 1.0f;
+    glm::mat4 model(1.0f);
+    memcpy(ubo.model, &model[0][0], sizeof(float) * 16);
 
-    // 计算前方向量（摄像机朝向）
-    float cosPitch = cosf(pitch);
-    float sinPitch = sinf(pitch);
-    float cosYaw = cosf(yaw);
-    float sinYaw = sinf(yaw);
+    // 视图矩阵（使用 GLM）
+    glm::vec3 eye(cameraX, cameraY, cameraZ);
+    glm::vec3 front(
+        -sinf(yaw) * cosf(pitch),
+        -sinf(pitch),
+        cosf(yaw) * cosf(pitch)
+    );
+    glm::vec3 up(0.0f, 1.0f, 0.0f);
+    glm::mat4 view = glm::lookAt(eye, eye + front, up);
+    memcpy(ubo.view, &view[0][0], sizeof(float) * 16);
 
-    // 前方向量
-    float frontX = cosYaw * cosPitch;
-    float frontY = sinPitch;
-    float frontZ = sinYaw * cosPitch;
-
-    // 归一化
-    float len = sqrtf(frontX*frontX + frontY*frontY + frontZ*frontZ);
-    if (len > 1e-6f) {
-        frontX /= len;
-        frontY /= len;
-        frontZ /= len;
-    }
-
-    // 计算目标点
-    float targetX = cameraX + frontX;
-    float targetY = cameraY + frontY;
-    float targetZ = cameraZ + frontZ;
-
-    // 世界向上向量
-    float upX = 0.0f;
-    float upY = 1.0f;
-    float upZ = 0.0f;
-
-    // 使用标准的 lookAt 公式构建视图矩阵
-
-    // Z轴 = normalize(eye - center)
-    float zX = cameraX - targetX;
-    float zY = cameraY - targetY;
-    float zZ = cameraZ - targetZ;
-    len = sqrtf(zX*zX + zY*zY + zZ*zZ);
-    if (len > 1e-6f) {
-        zX /= len;
-        zY /= len;
-        zZ /= len;
-    }
-
-    // X轴 = normalize(up × Z)
-    float xX = upY * zZ - upZ * zY;
-    float xY = upZ * zX - upX * zZ;
-    float xZ = upX * zY - upY * zX;
-    len = sqrtf(xX*xX + xY*xY + xZ*xZ);
-    if (len > 1e-6f) {
-        xX /= len;
-        xY /= len;
-        xZ /= len;
-    }
-
-    // Y轴 = Z × X
-    float yX = zY * xZ - zZ * xY;
-    float yY = zZ * xX - zX * xZ;
-    float yZ = zX * xY - zY * xX;
-
-    // 构建视图矩阵（列主序）- 与 OpenGL 完全一致
-    ubo.view[0] = xX;   ubo.view[4] = xY;   ubo.view[8] = xZ;   ubo.view[12] = -(xX * cameraX + xY * cameraY + xZ * cameraZ);
-    ubo.view[1] = yX;   ubo.view[5] = yY;   ubo.view[9] = yZ;   ubo.view[13] = -(yX * cameraX + yY * cameraY + yZ * cameraZ);
-    ubo.view[2] = zX;   ubo.view[6] = zY;   ubo.view[10] = zZ;  ubo.view[14] = -(zX * cameraX + zY * cameraY + zZ * cameraZ);
-    ubo.view[3] = 0.0f; ubo.view[7] = 0.0f; ubo.view[11] = 0.0f; ubo.view[15] = 1.0f;
-
-    // 透视投影矩阵（标准 Vulkan 风格）
-    // 参考：https://matthewwellings.com/blog/the-new-vulkan-coordinate-system/
+    // 透视投影矩阵（Vulkan 坐标系：Y 轴向下，Z 轴 [0, 1]）
     float aspect = (float)swapchainExtent.width / (float)swapchainExtent.height;
-    float nearPlane = 0.1f, farPlane = 100.0f;
     float fov = 70.0f * 3.14159f / 180.0f;
-    float tanHalfFov = tanf(fov / 2.0f);
-
-    // Vulkan NDC: X[-1,1], Y[1,-1](向下), Z[0,1]
-    ubo.proj[0] = 1.0f / (aspect * tanHalfFov);   // x scale
-    ubo.proj[5] = -1.0f / tanHalfFov;              // y scale (负号翻转Y轴)
-    ubo.proj[10] = farPlane / (farPlane - nearPlane);  // z scale
-    ubo.proj[11] = 1.0f;                            // z bias
-    ubo.proj[14] = -(farPlane * nearPlane) / (farPlane - nearPlane);  // z translation
-    ubo.proj[15] = 0.0f;
-
-    // 其他元素为 0
-    ubo.proj[1] = ubo.proj[2] = ubo.proj[3] = 0.0f;
-    ubo.proj[4] = ubo.proj[6] = ubo.proj[7] = 0.0f;
-    ubo.proj[8] = ubo.proj[9] = 0.0f;
-    ubo.proj[12] = ubo.proj[13] = 0.0f;
+    glm::mat4 proj = glm::perspective(fov, aspect, 0.1f, 100.0f);
+    proj[1][1] *= -1.0f;  // 翻转 Y 轴（Vulkan NDC Y 轴向下）
+    memcpy(ubo.proj, &proj[0][0], sizeof(float) * 16);
 
     memcpy(uniformBufferMapped, &ubo, sizeof(ubo));
 }
