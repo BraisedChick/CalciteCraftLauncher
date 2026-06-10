@@ -40,8 +40,5 @@ public:
         std::vector<uint32_t>& waterIndices);
 
 private:
-    static void addFace(std::vector<Vertex>& vertices, float x, float y, float z,
-                       float nx, float ny, float nz,
-                       float r, float g, float b);
     static int32_t getBlockStateAt(int x, int y, int z, const ChunkManager* chunkManager);
 };

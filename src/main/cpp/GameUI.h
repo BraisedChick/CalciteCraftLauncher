@@ -5,6 +5,7 @@
 #include <vector>
 #include <mutex>
 #include <chrono>
+#include <GLES3/gl3.h>
 
 enum class UIState {
     MAIN_MENU,

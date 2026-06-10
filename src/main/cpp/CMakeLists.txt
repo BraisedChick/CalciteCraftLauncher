@@ -55,7 +55,6 @@ set(APP_SOURCES
     Compression.cpp
     NetworkManager.cpp
     native-lib.cpp
-    utils.cpp
     AESEncrypter.cpp
     AESEncrypter_armv8.cpp
     ChunkManager.cpp

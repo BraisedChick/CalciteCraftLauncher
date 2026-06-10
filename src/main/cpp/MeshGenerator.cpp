@@ -846,14 +846,3 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
 
     return {std::move(allVertices), std::move(allIndices), overlayIndexCount, waterIndexCount};
 }
-
-void MeshGenerator::addFace(std::vector<Vertex>& vertices, float x, float y, float z,
-                            float nx, float ny, float nz,
-                            float r, float g, float b) {
-    Vertex vertex;
-    vertex.pos[0] = x;
-    vertex.pos[1] = y;
-    vertex.pos[2] = z;
-    vertices.push_back(vertex);
-}
-
