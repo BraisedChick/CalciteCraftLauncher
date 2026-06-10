@@ -1,14 +1,47 @@
 /**
- * AES-128-CFB8 流加密器 — 纯 C++ 实现
- * 不依赖 OpenSSL/BoringSSL，使用标准 AES-128 算法 + CFB8 模式
+ * AES-128-CFB8 流加密器
+ * 支持两种模式：
+ * 1. ARMv8 Crypto Extensions（硬件加速）- 如果 CPU 支持
+ * 2. 纯 C++ 实现（回退方案）- 所有 ARM64 CPU
  *
- * AES 实现基于 FIPS 197 标准算法
- * CFB8 模式：每次处理 1 字节，移位寄存器反馈密文字节
+ * 运行时自动检测 CPU 特性并选择最优实现
  */
 
 #include "AESEncrypter.h"
 #include "utils.h"
 #include <chrono>
+
+// ARM64 CPU 特性检测
+#if defined(__aarch64__) || defined(_M_ARM64)
+    #include <sys/auxv.h>
+    #include <asm/hwcap.h>
+#endif
+
+// ARMv8 硬件加速函数（在 AESEncrypter_armv8.cpp 中实现）
+extern "C" void AES128_EncryptBlock_ARMv8(const uint8_t input[16],
+                                           const uint8_t expandedKey[176],
+                                           uint8_t output[16]);
+
+// 检测 CPU 是否支持 ARMv8 Crypto Extensions
+static bool HasARMCryptoSupport() {
+    #if defined(__aarch64__) || defined(_M_ARM64)
+        // 读取硬件能力标志
+        unsigned long hwcap = getauxval(AT_HWCAP);
+        // HWCAP_AES 表示支持 AES 指令
+        return (hwcap & HWCAP_AES) != 0;
+    #else
+        return false;
+    #endif
+}
+
+// AES 加密块函数指针类型
+typedef void (*AESEncryptBlockFunc)(const uint8_t input[16],
+                                     const uint8_t expandedKey[176],
+                                     uint8_t output[16]);
+
+// 全局函数指针和状态
+static AESEncryptBlockFunc g_aesEncryptBlockFunc = nullptr;
+static bool g_hardwareAESChecked = false;
 
 // ============================================================
 // AES S-Box（FIPS 197 标准替换盒）
@@ -82,10 +115,31 @@ void AESEncrypter::KeyExpansion(const uint8_t key[16], uint8_t out[EXPANDED_KEY_
 
 // ============================================================
 // AES-128 单块加密（ECB 模式加密一个 16 字节块）
+// 使用函数指针调度：首次调用时检测并选择最优实现
 // ============================================================
 void AESEncrypter::AES128_EncryptBlock(const uint8_t input[16],
                                         const uint8_t expandedKey[EXPANDED_KEY_SIZE],
                                         uint8_t output[16]) {
+    // 首次调用时检测 CPU 特性并设置函数指针
+    if (!g_hardwareAESChecked) {
+        if (HasARMCryptoSupport()) {
+            g_aesEncryptBlockFunc = AES128_EncryptBlock_ARMv8;
+            LOGI("AES: Using ARMv8 Crypto Extensions (hardware acceleration)");
+        } else {
+            // 使用纯 C++ 实现（内联在下方）
+            g_aesEncryptBlockFunc = nullptr;  // nullptr 表示使用内联实现
+            LOGI("AES: Using pure C++ implementation");
+        }
+        g_hardwareAESChecked = true;
+    }
+    
+    // 如果设置了硬件加速函数指针，直接调用
+    if (g_aesEncryptBlockFunc) {
+        g_aesEncryptBlockFunc(input, expandedKey, output);
+        return;
+    }
+    
+    // 回退到纯 C++ 实现（内联）
     uint8_t state[16];
     for (int i = 0; i < 16; ++i) {
         state[i] = input[i];

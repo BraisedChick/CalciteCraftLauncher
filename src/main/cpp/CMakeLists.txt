@@ -57,6 +57,7 @@ set(APP_SOURCES
     native-lib.cpp
     utils.cpp
     AESEncrypter.cpp
+    AESEncrypter_armv8.cpp
     ChunkManager.cpp
     ChunkParser.cpp
     MinecraftVersion.cpp
@@ -93,6 +94,12 @@ foreach(PVER ${SUPPORTED_VERSIONS})
         ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/include
         ${CMAKE_CURRENT_SOURCE_DIR}/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends
+    )
+
+    # 仅为 AESEncrypter_armv8.cpp 启用 ARMv8 Crypto Extensions
+    # 主文件 AESEncrypter.cpp 保持默认编译标志，通过函数指针调用
+    set_source_files_properties(AESEncrypter_armv8.cpp PROPERTIES
+        COMPILE_FLAGS "-march=armv8-a+crypto"
     )
 
     target_link_libraries(mc_${PVER}
