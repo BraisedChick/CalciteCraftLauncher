@@ -103,13 +103,12 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
     {
         LOGI("Sending handshake packet via ProtocolCraft");
 
-        // 从 VersionManager 获取协议版本（由启动器设置）
+        // 从 VersionManager 获取协议版本（由 Java 层版本选择设置）
         int protocolVersion = VersionManager::getInstance().getProtocolVersion();
         if (protocolVersion == 0) {
-            // 如果没有设置，默认使用 1.18.2
-            protocolVersion = 758;
-            VersionManager::getInstance().setProtocolVersion(protocolVersion);
-            LOGW("Protocol version not set, using default: %d (1.18.2)", protocolVersion);
+            LOGE("Protocol version not set! Please select a version in launcher");
+            net->disconnect();
+            return false;
         }
 
         ProtocolCraft::ServerboundClientIntentionPacket handshake;
