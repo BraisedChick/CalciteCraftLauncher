@@ -57,11 +57,7 @@ private:
     static void KeyExpansion(const uint8_t key[16], uint8_t out[EXPANDED_KEY_SIZE]);
     static void AES128_EncryptBlock(const uint8_t input[16], const uint8_t expandedKey[EXPANDED_KEY_SIZE], uint8_t output[16]);
 
-    // CFB8 流加解密（慢速，保留用于兼容性）
+    // CFB8 流加解密（Minecraft 协议标准模式）
     void encryptCFB8(const uint8_t* input, uint8_t* output, size_t length);
     void decryptCFB8(const uint8_t* input, uint8_t* output, size_t length);
-    
-    // CFB128 流加解密（高性能，一次处理 16 字节）
-    void encryptCFB128(const uint8_t* input, uint8_t* output, size_t length);
-    void decryptCFB128(const uint8_t* input, uint8_t* output, size_t length);
 };

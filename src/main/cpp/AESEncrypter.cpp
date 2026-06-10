@@ -242,64 +242,6 @@ void AESEncrypter::decryptCFB8(const uint8_t* input, uint8_t* output, size_t len
 }
 
 // ============================================================
-// CFB128 加密：一次处理 16 字节（高性能版本）
-// ============================================================
-void AESEncrypter::encryptCFB128(const uint8_t* input, uint8_t* output, size_t length) {
-    uint8_t encryptedBlock[16];
-    size_t i = 0;
-
-    // 处理完整的 16 字节块
-    for (; i + 16 <= length; i += 16) {
-        // 加密当前移位寄存器
-        AES128_EncryptBlock(encShiftReg.data(), expandedKey, encryptedBlock);
-
-        // 16 字节明文 XOR 密钥流 → 密文
-        for (int j = 0; j < 16; ++j) {
-            output[i + j] = input[i + j] ^ encryptedBlock[j];
-        }
-
-        // 更新移位寄存器 = 刚生成的密文
-        for (int j = 0; j < 16; ++j) {
-            encShiftReg[j] = output[i + j];
-        }
-    }
-
-    // 处理剩余字节（使用 CFB8）
-    if (i < length) {
-        encryptCFB8(input + i, output + i, length - i);
-    }
-}
-
-// ============================================================
-// CFB128 解密：一次处理 16 字节（高性能版本）
-// ============================================================
-void AESEncrypter::decryptCFB128(const uint8_t* input, uint8_t* output, size_t length) {
-    uint8_t encryptedBlock[16];
-    size_t i = 0;
-
-    // 处理完整的 16 字节块
-    for (; i + 16 <= length; i += 16) {
-        // 加密当前移位寄存器（注意：仍然是加密操作）
-        AES128_EncryptBlock(decShiftReg.data(), expandedKey, encryptedBlock);
-
-        // 16 字节密文 XOR 密钥流 → 明文
-        for (int j = 0; j < 16; ++j) {
-            output[i + j] = input[i + j] ^ encryptedBlock[j];
-        }
-
-        // 更新移位寄存器 = 输入的密文（不是明文！）
-        for (int j = 0; j < 16; ++j) {
-            decShiftReg[j] = input[i + j];
-        }
-    }
-
-    // 处理剩余字节（使用 CFB8）
-    if (i < length) {
-        decryptCFB8(input + i, output + i, length - i);
-    }
-}
-
-// ============================================================
 // Encrypt / Decrypt 公开接口
 // ============================================================
 std::vector<unsigned char> AESEncrypter::Encrypt(const std::vector<unsigned char>& in) {
@@ -308,19 +250,8 @@ std::vector<unsigned char> AESEncrypter::Encrypt(const std::vector<unsigned char
         return in;
     }
     
-    auto start = std::chrono::high_resolution_clock::now();
-    
     std::vector<unsigned char> output(in.size());
-    encryptCFB8(in.data(), output.data(), in.size());  // 保持 CFB8 以兼容 Minecraft 协议
-    
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-    
-    // 只记录大于 1KB 的数据包，避免日志过多
-    if (in.size() > 1024) {
-        LOGI("[AES] Encrypt: %zu bytes took %lld μs", in.size(), (long long)duration);
-    }
-    
+    encryptCFB8(in.data(), output.data(), in.size());
     return output;
 }
 
@@ -330,18 +261,7 @@ std::vector<unsigned char> AESEncrypter::Decrypt(const std::vector<unsigned char
         return in;
     }
     
-    auto start = std::chrono::high_resolution_clock::now();
-    
     std::vector<unsigned char> output(in.size());
-    decryptCFB8(in.data(), output.data(), in.size());  // 保持 CFB8 以兼容 Minecraft 协议
-    
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-    
-    // 只记录大于 1KB 的数据包，避免日志过多
-    if (in.size() > 1024) {
-        LOGI("[AES] Decrypt: %zu bytes took %lld μs", in.size(), (long long)duration);
-    }
-    
+    decryptCFB8(in.data(), output.data(), in.size());
     return output;
 }
