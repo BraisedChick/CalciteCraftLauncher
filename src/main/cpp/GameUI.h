@@ -201,6 +201,15 @@ private:
     std::chrono::steady_clock::time_point digStartTime;
     float digDuration = 0.0f;  // 挖掘所需时间（秒）
 
+    // HUD 纹理缓存（初始化时加载，避免每帧查询）
+    GLuint texHeartContainer = 0;
+    GLuint texHeartFull = 0;
+    GLuint texHeartHalf = 0;
+    GLuint texFoodEmpty = 0;
+    GLuint texFoodFull = 0;
+    GLuint texFoodHalf = 0;
+    bool hudTexturesLoaded = false;
+
     // 死亡界面状态
     bool deathScreenActive = false;
     std::string deathReason;

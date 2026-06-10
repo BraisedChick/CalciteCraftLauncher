@@ -754,52 +754,57 @@ void GameUI::renderInGameUI() {
             const float GAP = 1.0f;
             const float HUD_Y = h - 61.0f - ICON_SIZE - 8.0f;  // 快捷栏上方
 
-            GLuint hContainer = ResourcepackManager::getInstance().getHudTexture("heart/container");
-            GLuint hFull = ResourcepackManager::getInstance().getHudTexture("heart/full");
-            GLuint hHalf = ResourcepackManager::getInstance().getHudTexture("heart/half");
+            // 延迟加载 HUD 纹理（首次渲染时）
+            if (!hudTexturesLoaded) {
+                auto& rm = ResourcepackManager::getInstance();
+                texHeartContainer = rm.getHudTexture("heart/container");
+                texHeartFull = rm.getHudTexture("heart/full");
+                texHeartHalf = rm.getHudTexture("heart/half");
+                texFoodEmpty = rm.getHudTexture("food_empty");
+                texFoodFull = rm.getHudTexture("food_full");
+                texFoodHalf = rm.getHudTexture("food_half");
+                hudTexturesLoaded = true;
+                LOGI("HUD textures cached");
+            }
 
             for (int i = 0; i < 10; i++) {
                 float hx = hotbarX + i * (ICON_SIZE + GAP);
-                if (hContainer) {
+                if (texHeartContainer) {
                     ImGui::GetWindowDrawList()->AddImage(
-                        (ImTextureID)(intptr_t)hContainer,
+                        (ImTextureID)(intptr_t)texHeartContainer,
                         ImVec2(hx, HUD_Y), ImVec2(hx + ICON_SIZE, HUD_Y + ICON_SIZE));
                 }
                 float remain = healthVal - i * 2.0f;
-                if (remain >= 2.0f && hFull) {
+                if (remain >= 2.0f && texHeartFull) {
                     ImGui::GetWindowDrawList()->AddImage(
-                        (ImTextureID)(intptr_t)hFull,
+                        (ImTextureID)(intptr_t)texHeartFull,
                         ImVec2(hx, HUD_Y), ImVec2(hx + ICON_SIZE, HUD_Y + ICON_SIZE));
-                } else if (remain >= 1.0f && hHalf) {
+                } else if (remain >= 1.0f && texHeartHalf) {
                     ImGui::GetWindowDrawList()->AddImage(
-                        (ImTextureID)(intptr_t)hHalf,
+                        (ImTextureID)(intptr_t)texHeartHalf,
                         ImVec2(hx, HUD_Y), ImVec2(hx + ICON_SIZE, HUD_Y + ICON_SIZE));
                 }
             }
 
             // ===== 饥饿值（顶部右侧） =====
-            GLuint fEmpty = ResourcepackManager::getInstance().getHudTexture("food_empty");
-            GLuint fFull = ResourcepackManager::getInstance().getHudTexture("food_full");
-            GLuint fHalf = ResourcepackManager::getInstance().getHudTexture("food_half");
-
             float totalWFood = 10.0f * (ICON_SIZE + GAP) - GAP;
             float foodStartX = hotbarX + totalW - totalWFood;
 
             for (int i = 0; i < 10; i++) {
                 float fx = foodStartX + i * (ICON_SIZE + GAP);
-                if (fEmpty) {
+                if (texFoodEmpty) {
                     ImGui::GetWindowDrawList()->AddImage(
-                        (ImTextureID)(intptr_t)fEmpty,
+                        (ImTextureID)(intptr_t)texFoodEmpty,
                         ImVec2(fx, HUD_Y), ImVec2(fx + ICON_SIZE, HUD_Y + ICON_SIZE));
                 }
                 int remain = foodVal - i * 2;
-                if (remain >= 2 && fFull) {
+                if (remain >= 2 && texFoodFull) {
                     ImGui::GetWindowDrawList()->AddImage(
-                        (ImTextureID)(intptr_t)fFull,
+                        (ImTextureID)(intptr_t)texFoodFull,
                         ImVec2(fx, HUD_Y), ImVec2(fx + ICON_SIZE, HUD_Y + ICON_SIZE));
-                } else if (remain >= 1 && fHalf) {
+                } else if (remain >= 1 && texFoodHalf) {
                     ImGui::GetWindowDrawList()->AddImage(
-                        (ImTextureID)(intptr_t)fHalf,
+                        (ImTextureID)(intptr_t)texFoodHalf,
                         ImVec2(fx, HUD_Y), ImVec2(fx + ICON_SIZE, HUD_Y + ICON_SIZE));
                 }
             }
