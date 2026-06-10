@@ -764,7 +764,6 @@ void GameUI::renderInGameUI() {
                 texFoodFull = rm.getHudTexture("food_full");
                 texFoodHalf = rm.getHudTexture("food_half");
                 hudTexturesLoaded = true;
-                LOGI("HUD textures cached");
             }
 
             for (int i = 0; i < 10; i++) {
