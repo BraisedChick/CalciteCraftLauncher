@@ -30,6 +30,7 @@
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundClientInformationPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundSetCarriedItemPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundUseItemOnPacket.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundPlayerActionPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundClientCommandPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundLoginPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundBlockUpdatePacket.hpp"
@@ -531,7 +532,66 @@ void ClientEngine::sendBlockPlacement(int blockX, int blockY, int blockZ, int fa
     ProtocolCraft::WriteContainer writeData;
     placePacket.Write(writeData);
     net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
-    LOGI("Sent block placement: (%d, %d, %d) face=%d hand=%d", blockX, blockY, blockZ, face, hand);
+}
+
+void ClientEngine::sendBlockBreakStart(int blockX, int blockY, int blockZ, int face) {
+    std::lock_guard<std::mutex> lock(netMutex);
+    if (!net || !net->isConnected()) return;
+
+    ProtocolCraft::NetworkPosition pos;
+    pos.SetX(blockX);
+    pos.SetY(blockY);
+    pos.SetZ(blockZ);
+
+    // Action 0 = START_DIGGING (开始挖掘)
+    ProtocolCraft::ServerboundPlayerActionPacket startDig;
+    startDig.SetAction(0);
+    startDig.SetPos(pos);
+    startDig.SetDirection(static_cast<char>(face));
+
+    ProtocolCraft::WriteContainer writeStart;
+    startDig.Write(writeStart);
+    net->sendRawPacket(std::vector<uint8_t>(writeStart.begin(), writeStart.end()));
+}
+
+void ClientEngine::sendBlockBreakFinish(int blockX, int blockY, int blockZ, int face) {
+    std::lock_guard<std::mutex> lock(netMutex);
+    if (!net || !net->isConnected()) return;
+
+    ProtocolCraft::NetworkPosition pos;
+    pos.SetX(blockX);
+    pos.SetY(blockY);
+    pos.SetZ(blockZ);
+
+    // Action 2 = STOP_DESTROY_BLOCK (完成挖掘)
+    ProtocolCraft::ServerboundPlayerActionPacket finishDig;
+    finishDig.SetAction(2);
+    finishDig.SetPos(pos);
+    finishDig.SetDirection(static_cast<char>(face));
+
+    ProtocolCraft::WriteContainer writeFinish;
+    finishDig.Write(writeFinish);
+    net->sendRawPacket(std::vector<uint8_t>(writeFinish.begin(), writeFinish.end()));
+}
+
+void ClientEngine::sendBlockBreakAbort(int blockX, int blockY, int blockZ, int face) {
+    std::lock_guard<std::mutex> lock(netMutex);
+    if (!net || !net->isConnected()) return;
+
+    ProtocolCraft::NetworkPosition pos;
+    pos.SetX(blockX);
+    pos.SetY(blockY);
+    pos.SetZ(blockZ);
+
+    // Action 1 = ABORT_DESTROY_BLOCK (中断挖掘)
+    ProtocolCraft::ServerboundPlayerActionPacket abortDig;
+    abortDig.SetAction(1);
+    abortDig.SetPos(pos);
+    abortDig.SetDirection(static_cast<char>(face));
+
+    ProtocolCraft::WriteContainer writeAbort;
+    abortDig.Write(writeAbort);
+    net->sendRawPacket(std::vector<uint8_t>(writeAbort.begin(), writeAbort.end()));
 }
 
 void ClientEngine::sendRespawn() {

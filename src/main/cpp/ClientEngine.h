@@ -56,6 +56,12 @@ public:
     // blockX/Y/Z 是被点击的目标方块坐标，face 是击中面（0-5，对应 FaceDir）
     void sendBlockPlacement(int blockX, int blockY, int blockZ, int face, int hand = 0);
 
+    // 发送方块破坏（PlayerAction 包）
+    // blockX/Y/Z 是目标方块坐标，face 是破坏面（0-5）
+    void sendBlockBreakStart(int blockX, int blockY, int blockZ, int face);
+    void sendBlockBreakFinish(int blockX, int blockY, int blockZ, int face);
+    void sendBlockBreakAbort(int blockX, int blockY, int blockZ, int face);
+
     // 发送重生请求
     void sendRespawn();
 

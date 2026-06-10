@@ -523,6 +523,20 @@ void GameUI::renderInGameUI() {
     float w = io.DisplaySize.x;
     float h = io.DisplaySize.y;
 
+    // 检查挖掘进度（每帧检查，如果挖掘完成则发送 STOP_DESTROY_BLOCK）
+    if (digging && buttons.attackPressed) {
+        auto now = std::chrono::steady_clock::now();
+        float elapsed = std::chrono::duration<float>(now - digStartTime).count();
+        if (elapsed >= digDuration) {
+            // 挖掘完成，发送 STOP_DESTROY_BLOCK (Action=2)
+            auto* engine = ClientEngine::getInstance();
+            if (engine) {
+                engine->sendBlockBreakFinish(digBlockX, digBlockY, digBlockZ, digFace);
+                digging = false;
+            }
+        }
+    }
+
     // 检测死亡：生命值从 > 0 降到 <= 0 时激活死亡界面
     {
         auto* engine = ClientEngine::getInstance();
@@ -604,25 +618,26 @@ void GameUI::renderInGameUI() {
     draw->AddLine(ImVec2(btnX - 8, btnSprintY), ImVec2(btnX + 8, btnSprintY + 6), IM_COL32(255, 255, 255, 180), 3.0f);
     draw->AddLine(ImVec2(btnX - 8, btnSprintY + 6), ImVec2(btnX + 8, btnSprintY + 10), IM_COL32(255, 255, 255, 180), 3.0f);
 
-    // ===== 攻击按钮（上升按钮上方） =====
-    float btnAttackY = h * 0.5f - BTN_VERTICAL_SPACING * 2;
+    // ===== 攻击按钮（上升按钮上方，向左下方偏移） =====
+    float btnAttackY = h * 0.5f - BTN_VERTICAL_SPACING * 2 + 150.0f;
+    float btnAttackX = btnX - 200.0f;
     {
         ImU32 atkCol = buttons.attackPressed ? IM_COL32(255, 100, 100, 200) : IM_COL32(255, 255, 255, 60);
-        draw->AddCircleFilled(ImVec2(btnX, btnAttackY), BTN_RADIUS, atkCol);
-        draw->AddCircle(ImVec2(btnX, btnAttackY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
+        draw->AddCircleFilled(ImVec2(btnAttackX, btnAttackY), BTN_RADIUS, atkCol);
+        draw->AddCircle(ImVec2(btnAttackX, btnAttackY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
         // 剑形图标：简化为斜十字
-        draw->AddLine(ImVec2(btnX - 8, btnAttackY - 8), ImVec2(btnX + 8, btnAttackY + 8), IM_COL32(255, 255, 255, 180), 2.5f);
-        draw->AddLine(ImVec2(btnX + 8, btnAttackY - 8), ImVec2(btnX - 8, btnAttackY + 8), IM_COL32(255, 255, 255, 180), 2.5f);
+        draw->AddLine(ImVec2(btnAttackX - 8, btnAttackY - 8), ImVec2(btnAttackX + 8, btnAttackY + 8), IM_COL32(255, 255, 255, 180), 2.5f);
+        draw->AddLine(ImVec2(btnAttackX + 8, btnAttackY - 8), ImVec2(btnAttackX - 8, btnAttackY + 8), IM_COL32(255, 255, 255, 180), 2.5f);
     }
 
-    // ===== 放置按钮（疾跑按钮下方） =====
-    float btnPlaceY = h * 0.5f + BTN_VERTICAL_SPACING * 2;
+    // ===== 放置按钮（破坏按钮下方） =====
+    float btnPlaceY = btnAttackY + BTN_VERTICAL_SPACING;
     {
         ImU32 plcCol = buttons.placePressed ? IM_COL32(100, 255, 100, 200) : IM_COL32(255, 255, 255, 60);
-        draw->AddCircleFilled(ImVec2(btnX, btnPlaceY), BTN_RADIUS, plcCol);
-        draw->AddCircle(ImVec2(btnX, btnPlaceY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
+        draw->AddCircleFilled(ImVec2(btnAttackX, btnPlaceY), BTN_RADIUS, plcCol);
+        draw->AddCircle(ImVec2(btnAttackX, btnPlaceY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
         // 方块图标：矩形边框
-        draw->AddRect(ImVec2(btnX - 10, btnPlaceY - 10), ImVec2(btnX + 10, btnPlaceY + 10),
+        draw->AddRect(ImVec2(btnAttackX - 10, btnPlaceY - 10), ImVec2(btnAttackX + 10, btnPlaceY + 10),
                       IM_COL32(255, 255, 255, 180), 0, 0, 2.5f);
     }
 
@@ -1269,8 +1284,8 @@ bool GameUI::isInSprintButtonArea(float x, float y) const {
 
 bool GameUI::isInAttackButtonArea(float x, float y) const {
     ImGuiIO& io = ImGui::GetIO();
-    float bx = io.DisplaySize.x - BTN_RIGHT_MARGIN;
-    float by = io.DisplaySize.y * 0.5f - BTN_VERTICAL_SPACING * 2;
+    float bx = io.DisplaySize.x - BTN_RIGHT_MARGIN - 200.0f;  // 左移 200px
+    float by = io.DisplaySize.y * 0.5f - BTN_VERTICAL_SPACING * 2 + 150.0f;  // 下移 150px
     float dx = x - bx;
     float dy = y - by;
     return (dx * dx + dy * dy) <= (BTN_RADIUS * BTN_RADIUS * 1.5f);
@@ -1278,8 +1293,8 @@ bool GameUI::isInAttackButtonArea(float x, float y) const {
 
 bool GameUI::isInPlaceButtonArea(float x, float y) const {
     ImGuiIO& io = ImGui::GetIO();
-    float bx = io.DisplaySize.x - BTN_RIGHT_MARGIN;
-    float by = io.DisplaySize.y * 0.5f + BTN_VERTICAL_SPACING * 2;
+    float bx = io.DisplaySize.x - BTN_RIGHT_MARGIN - 200.0f;  // 与破坏按钮相同 X
+    float by = io.DisplaySize.y * 0.5f - BTN_VERTICAL_SPACING * 2 + 150.0f + BTN_VERTICAL_SPACING;  // 破坏按钮 Y + 间距
     float dx = x - bx;
     float dy = y - by;
     return (dx * dx + dy * dy) <= (BTN_RADIUS * BTN_RADIUS * 1.5f);
@@ -1412,7 +1427,8 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
         } else if (!isRoleTaken(TouchPoint::ATTACK_BUTTON) && isInAttackButtonArea(x, y)) {
             pt->role = TouchPoint::ATTACK_BUTTON;
             buttons.attackPressed = true;
-            // 攻击暂时只保留视觉效果，挖掘功能后续添加
+            // 执行方块破坏
+            performBlockBreak();
         } else if (!isRoleTaken(TouchPoint::PLACE_BUTTON) && isInPlaceButtonArea(x, y)) {
             pt->role = TouchPoint::PLACE_BUTTON;
             buttons.placePressed = true;
@@ -1477,6 +1493,15 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
                 break;
             case TouchPoint::ATTACK_BUTTON:
                 buttons.attackPressed = false;
+                // 发送挖掘中断包（松开按钮时，如果挖掘未完成）
+                if (digging) {
+                    digging = false;
+                    auto* engine = ClientEngine::getInstance();
+                    if (engine) {
+                        // 发送 ABORT_DESTROY_BLOCK (Action=1)
+                        engine->sendBlockBreakAbort(digBlockX, digBlockY, digBlockZ, digFace);
+                    }
+                }
                 break;
             case TouchPoint::PLACE_BUTTON:
                 buttons.placePressed = false;
@@ -1579,6 +1604,53 @@ void GameUI::performBlockPlacement() {
 
     // 发送 UseItemOn 包（Location = 被点击的方块，Direction = 击中的面）
     engine->sendBlockPlacement(result.blockX, result.blockY, result.blockZ, result.hitFace, 0);
+}
+
+void GameUI::performBlockBreak() {
+    // 从玩家视角发射射线检测目标方块
+    auto& cam = CameraController::getInstance();
+    glm::vec3 playerPos = cam.getPosition();
+    float pitch = cam.getPitch();
+    float yaw = cam.getYaw();
+
+    // 视线方向
+    glm::vec3 dir;
+    dir.x = -std::sin(yaw) * std::cos(pitch);
+    dir.y = -std::sin(pitch);
+    dir.z = std::cos(yaw) * std::cos(pitch);
+
+    // 眼睛位置（玩家高度 + 1.62 眼高）
+    glm::vec3 eyePos = playerPos + glm::vec3(0.0f, 1.62f, 0.0f);
+
+    // 执行射线检测（最大距离 5 格）
+    auto* engine = ClientEngine::getInstance();
+    if (!engine) return;
+    auto* cm = engine->getChunkManager();
+    if (!cm) return;
+    auto result = rayCast(eyePos, dir, 5.0f, *cm);
+
+    if (!result.hit) return;
+
+    // 记录挖掘状态
+    digging = true;
+    digBlockX = result.blockX;
+    digBlockY = result.blockY;
+    digBlockZ = result.blockZ;
+    digFace = result.hitFace;
+    digStartTime = std::chrono::steady_clock::now();
+
+    // 计算挖掘时间（简化：根据游戏模式）
+    int gameMode = engine->getGameMode();
+    if (gameMode == 1) {
+        // 创造模式：立即完成
+        digDuration = 0.0f;
+    } else {
+        // 生存/冒险模式：简化为 1 秒（实际应根据方块硬度和工具计算）
+        digDuration = 1.0f;
+    }
+
+    // 发送 START_DESTROY_BLOCK (Action=0)
+    engine->sendBlockBreakStart(result.blockX, result.blockY, result.blockZ, result.hitFace);
 }
 
 void GameUI::handleCameraTouch(int pointerId, float x, float y, int action) {

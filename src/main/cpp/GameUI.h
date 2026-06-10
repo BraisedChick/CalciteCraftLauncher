@@ -4,6 +4,7 @@
 #include <functional>
 #include <vector>
 #include <mutex>
+#include <chrono>
 
 enum class UIState {
     MAIN_MENU,
@@ -133,6 +134,7 @@ private:
     void handleJoystickTouch(int pointerId, float x, float y, int action);
     void handleCameraTouch(int pointerId, float x, float y, int action);
     void performBlockPlacement();
+    void performBlockBreak();
     bool isInJoystickArea(float x, float y) const;
     bool isInUpButtonArea(float x, float y) const;
     bool isInDownButtonArea(float x, float y) const;
@@ -191,6 +193,13 @@ private:
     } buttons;
 
     bool showDebugInfo = false;
+
+    // 挖掘中断追踪
+    bool digging = false;
+    int digBlockX = 0, digBlockY = 0, digBlockZ = 0;
+    int digFace = 0;
+    std::chrono::steady_clock::time_point digStartTime;
+    float digDuration = 0.0f;  // 挖掘所需时间（秒）
 
     // 死亡界面状态
     bool deathScreenActive = false;
