@@ -502,6 +502,12 @@ Java_com_calcite_MainActivity_cleanupRenderer(
         g_glRenderer = nullptr;
     }
 
+    // 释放 Activity 全局引用，防止内存泄漏
+    if (g_mainActivityObj) {
+        env->DeleteGlobalRef(g_mainActivityObj);
+        g_mainActivityObj = nullptr;
+    }
+
     g_initialized = false;
     JNI_LOGI("Cleanup completed");
 }
