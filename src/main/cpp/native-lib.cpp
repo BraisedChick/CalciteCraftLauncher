@@ -17,6 +17,7 @@
 #include "CameraController.h"
 #include "Collision.h"
 #include "GameUI.h"
+#include "imgui.h"
 
 #define JNI_LOG_TAG "JNI"
 #define JNI_LOGI(...) __android_log_print(ANDROID_LOG_INFO, JNI_LOG_TAG, __VA_ARGS__)
@@ -172,11 +173,13 @@ static void renderLoop() {
         if (g_glRenderer) {
             g_glRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
 
-            // 检查 ImGui 是否需要键盘输入，通过 JNI 直接调用
+            // 每帧检查 ImGui 是否需要键盘输入
             static bool lastWantTextInput = false;
             bool wantText = GameUI::getInstance().wantsTextInput();
+            
             if (wantText != lastWantTextInput) {
                 lastWantTextInput = wantText;
+                
                 if (g_jvm && g_mainActivityObj) {
                     JNIEnv* env;
                     bool attached = false;

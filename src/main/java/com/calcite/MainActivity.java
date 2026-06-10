@@ -303,9 +303,25 @@ public class MainActivity extends Activity {
                 if (imm == null) return;
                 if (show) {
                     rendererSurfaceView.requestFocus();
-                    imm.showSoftInput(rendererSurfaceView, InputMethodManager.SHOW_IMPLICIT);
+                    imm.showSoftInput(rendererSurfaceView, InputMethodManager.SHOW_FORCED);
                 } else {
                     imm.hideSoftInputFromWindow(rendererSurfaceView.getWindowToken(), 0);
+                    rendererSurfaceView.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            // 发送模拟点击到屏幕左上角 (10, 10)，重置 ImGui 焦点
+                            android.view.MotionEvent down = android.view.MotionEvent.obtain(
+                                System.currentTimeMillis(), System.currentTimeMillis(),
+                                android.view.MotionEvent.ACTION_DOWN, 10, 10, 0);
+                            android.view.MotionEvent up = android.view.MotionEvent.obtain(
+                                System.currentTimeMillis(), System.currentTimeMillis(),
+                                android.view.MotionEvent.ACTION_UP, 10, 10, 0);
+                            rendererSurfaceView.dispatchTouchEvent(down);
+                            rendererSurfaceView.dispatchTouchEvent(up);
+                            down.recycle();
+                            up.recycle();
+                        }
+                    }, 50);
                 }
             }
         });
