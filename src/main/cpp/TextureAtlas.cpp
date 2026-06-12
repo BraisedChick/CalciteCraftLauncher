@@ -1174,7 +1174,7 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
         {"axis",     {"x", "y", "z"}},
         {"facing",   {"down", "up", "north", "south", "west", "east"}},
         {"half",     {"top", "bottom"}},
-        {"type",     {"bottom", "top", "double"}},
+        {"type",     {"top", "bottom", "double"}},
         {"shape",    {"straight", "inner_left", "inner_right", "outer_left", "outer_right"}},
         {"face",     {"floor", "wall", "ceiling"}},
         {"egde",     {"none", "up", "side"}},
