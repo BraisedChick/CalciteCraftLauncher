@@ -259,11 +259,20 @@ static void setPixel(uint8_t* out, int x, int y, int iconSize, uint32_t color) {
     uint8_t r = (color >> 16) & 0xFF;
     uint8_t g = (color >> 8) & 0xFF;
     uint8_t b = color & 0xFF;
-    // 简单混合（不透明覆盖）
-    out[idx+0] = r;
-    out[idx+1] = g;
-    out[idx+2] = b;
-    out[idx+3] = a;
+    // Alpha 混合（支持半透明覆盖层叠加）
+    if (a == 255) {
+        out[idx+0] = r;
+        out[idx+1] = g;
+        out[idx+2] = b;
+        out[idx+3] = a;
+    } else {
+        // 预乘 Alpha 混合：dst = src*alpha + dst*(1-alpha)
+        float fa = a / 255.0f;
+        out[idx+0] = (uint8_t)(r * fa + out[idx+0] * (1.0f - fa));
+        out[idx+1] = (uint8_t)(g * fa + out[idx+1] * (1.0f - fa));
+        out[idx+2] = (uint8_t)(b * fa + out[idx+2] * (1.0f - fa));
+        out[idx+3] = 255;
+    }
 }
 
 // 等距投影：将方块局部坐标 (0~16) 映射到屏幕
@@ -277,10 +286,12 @@ static void isoProject(float x, float y, float z, int iconSize, float& sx, float
 }
 
 // 光栅化一个四边形面（4个三维顶点→屏幕投影→纹理映射）
+// tintColor: 0xFFFFFFFF 表示不染色；其他值按 RGB 相乘
 static void rasterQuad(uint8_t* out, int iconSize,
     const float v0[3], const float v1[3], const float v2[3], const float v3[3],
     const uint8_t* texData, int texW, int texH,
-    float uv0[2], float uv1[2], float uv2[2], float uv3[2]) {
+    float uv0[2], float uv1[2], float uv2[2], float uv3[2],
+    uint32_t tintColor = 0xFFFFFFFF) {
 
     // 投影到屏幕
     float s[4][2];
@@ -345,6 +356,22 @@ static void rasterQuad(uint8_t* out, int iconSize,
             }
 
             uint32_t color = sampleTex(texData, texW, texH, u, v);
+            // 应用染色
+            if (tintColor != 0xFFFFFFFF) {
+                uint8_t tr = (tintColor >> 16) & 0xFF;
+                uint8_t tg = (tintColor >> 8) & 0xFF;
+                uint8_t tb = tintColor & 0xFF;
+                uint8_t cr = (color >> 16) & 0xFF;
+                uint8_t cg = (color >> 8) & 0xFF;
+                uint8_t cb = color & 0xFF;
+                uint8_t ca = (color >> 24) & 0xFF;
+                // 跳过暗像素（灰度覆盖层用深色表示透明，阈值64对应~25%亮度）
+                if (cr < 64 && cg < 64 && cb < 64) continue;
+                cr = (uint8_t)(((int)cr * tr) / 255);
+                cg = (uint8_t)(((int)cg * tg) / 255);
+                cb = (uint8_t)(((int)cb * tb) / 255);
+                color = ((uint32_t)ca << 24) | ((uint32_t)cr << 16) | ((uint32_t)cg << 8) | cb;
+            }
             setPixel(out, px, py, iconSize, color);
         }
     }
@@ -354,32 +381,33 @@ GLuint GLRenderer::renderBlockIcon(const std::string& modelName, int iconSize) {
     auto& atlas = TextureAtlas::getInstance();
     const auto* modelObj = atlas.getBlockModel(modelName);
     if (!modelObj || modelObj->elements.empty()) {
-        // 没有模型数据：尝试直接从纹理缓存取
-        // 回退：使用 blockTextureMap 中的 top 纹理生成简单图标
-        GLuint fallback = 0;
-        // ... 留空，走 getMissingTexture
         return 0;
     }
 
-    // 输出缓冲区
     std::vector<uint8_t> pixels(iconSize * iconSize * 4, 0);
 
-    // 收集所有用到的纹理路径并加载像素数据
-    // 为避免重复加载，使用 texturePathToLayer 中的路径
-    struct TexData { const uint8_t* data; int w, h; };
-    std::unordered_map<int, TexData> texCache;  // layer → pixel data
-
-    // 加载纹理像素数据的 lambda
+    // 加载所有用到的纹理像素（总是检查是否有真正的透明像素）
+    struct TexCacheEntry {
+        TextureData td;  // 拥有数据所有权
+        bool hasAlpha;
+    };
+    std::unordered_map<int, TexCacheEntry> texCache;
     auto loadTex = [&](int layer) -> bool {
         if (texCache.find(layer) != texCache.end()) return true;
         std::string fname = atlas.getTextureFileName(layer);
         TextureData td = TextureLoader::loadImage(fname);
         if (!td.data) return false;
-        texCache[layer] = {td.data, td.width, td.height};
+        // 检查纹理是否有透明像素
+        bool hasAlpha = false;
+        int total = td.width * td.height;
+        for (int i = 0; i < total; i++) {
+            if (td.data[i * 4 + 3] < 255) { hasAlpha = true; break; }
+        }
+        texCache[layer] = {std::move(td), hasAlpha};
         return true;
     };
 
-    // 收集所有用到的纹理
+    // 收集全部纹理（统一检查 alpha）
     for (const auto& elem : modelObj->elements) {
         for (int f = 0; f < 6; f++) {
             if (!elem.hasFaces[f]) continue;
@@ -388,11 +416,36 @@ GLuint GLRenderer::renderBlockIcon(const std::string& modelName, int iconSize) {
         }
     }
 
-    // 按每个面的深度排序（等距视角下，同一个元素的不同面深度不同）
+    // 渲染辅助 lambda：构建4个顶点并 raster
+    auto renderFace = [&](const ModelElementData& elem, int face, const TexCacheEntry& entry,
+                          uint32_t tintColor, int pass) {
+        const auto& fd = elem.faces[face];
+        const auto& texData = entry.td;
+        float fx=elem.from[0], fy=elem.from[1], fz=elem.from[2];
+        float tx=elem.to[0], ty=elem.to[1], tz=elem.to[2];
+
+        float v[4][3];
+        switch(face){
+            case 0: v[0][0]=fx;v[0][1]=fy;v[0][2]=fz; v[1][0]=tx;v[1][1]=fy;v[1][2]=fz; v[2][0]=tx;v[2][1]=fy;v[2][2]=tz; v[3][0]=fx;v[3][1]=fy;v[3][2]=tz; break;
+            case 1: v[0][0]=fx;v[0][1]=ty;v[0][2]=fz; v[1][0]=tx;v[1][1]=ty;v[1][2]=fz; v[2][0]=tx;v[2][1]=ty;v[2][2]=tz; v[3][0]=fx;v[3][1]=ty;v[3][2]=tz; break;
+            case 2: v[0][0]=fx;v[0][1]=fy;v[0][2]=fz; v[1][0]=tx;v[1][1]=fy;v[1][2]=fz; v[2][0]=tx;v[2][1]=ty;v[2][2]=fz; v[3][0]=fx;v[3][1]=ty;v[3][2]=fz; break;
+            case 3: v[0][0]=fx;v[0][1]=fy;v[0][2]=tz; v[1][0]=tx;v[1][1]=fy;v[1][2]=tz; v[2][0]=tx;v[2][1]=ty;v[2][2]=tz; v[3][0]=fx;v[3][1]=ty;v[3][2]=tz; break;
+            case 4: v[0][0]=fx;v[0][1]=fy;v[0][2]=fz; v[1][0]=fx;v[1][1]=fy;v[1][2]=tz; v[2][0]=fx;v[2][1]=ty;v[2][2]=tz; v[3][0]=fx;v[3][1]=ty;v[3][2]=fz; break;
+            case 5: v[0][0]=tx;v[0][1]=fy;v[0][2]=fz; v[1][0]=tx;v[1][1]=fy;v[1][2]=tz; v[2][0]=tx;v[2][1]=ty;v[2][2]=tz; v[3][0]=tx;v[3][1]=ty;v[3][2]=fz; break;
+        }
+
+        float u1=fd.uv[0]/16.0f, uv1=fd.uv[3]/16.0f, u2=fd.uv[2]/16.0f, uv2=fd.uv[1]/16.0f;
+        float uvs[4][2] = {{u1,uv1},{u2,uv1},{u2,uv2},{u1,uv2}};
+        rasterQuad(pixels.data(), iconSize,
+            v[0],v[1],v[2],v[3],
+            texData.data, texData.width, texData.height,
+            uvs[0],uvs[1],uvs[2],uvs[3],
+            tintColor);
+    };
+
+    // 深度排序（等距视角）
     struct FaceSort {
-        int elemIdx;
-        int faceIdx;
-        float depth;
+        int elemIdx; int faceIdx; float depth;
     };
     std::vector<FaceSort> faceOrder;
     for (int ei = 0; ei < (int)modelObj->elements.size(); ei++) {
@@ -411,46 +464,54 @@ GLuint GLRenderer::renderBlockIcon(const std::string& modelName, int iconSize) {
                 case 4: cx=fx; cy=(fy+ty)*0.5f; cz=(fz+tz)*0.5f; break;
                 case 5: cx=tx; cy=(fy+ty)*0.5f; cz=(fz+tz)*0.5f; break;
             }
-            // 到相机的距离平方（相机在 16,14,16，远的先画）
             float dx = cx - 16.0f, dy = cy - 14.0f, dz = cz - 16.0f;
             float depth = dx*dx + dy*dy + dz*dz;
+            // 背面剔除：法线与视线方向(8,6,8)点积 <= 0 的面为背面
+            // 视线方向 = 方块中心(8,8,8) → 相机(16,14,16)
+            static const float FN[6][3] = {{0,-1,0},{0,1,0},{0,0,-1},{0,0,1},{-1,0,0},{1,0,0}};
+            float viewDot = FN[f][0]*8.0f + FN[f][1]*6.0f + FN[f][2]*8.0f;
+            if (viewDot <= 0) continue;
             faceOrder.push_back({ei, f, depth});
         }
     }
     std::sort(faceOrder.begin(), faceOrder.end(), [](const FaceSort& a, const FaceSort& b) {
-        return a.depth > b.depth;  // 降序：距离远的（离相机远）先画
+        return a.depth > b.depth || (a.depth == b.depth && a.elemIdx < b.elemIdx);
     });
 
-    // 按排序后的顺序渲染每个面
+    // ===== 两阶段渲染（MC 官方算法）=====
+    // 阶段 1：所有无 tintindex 的基层面
     for (const auto& fo : faceOrder) {
         const auto& elem = modelObj->elements[fo.elemIdx];
         int face = fo.faceIdx;
         const auto& fd = elem.faces[face];
+        if (fd.tintindex >= 0) continue;
+        if (fd.textureLayer < 0) continue;
+        auto it = texCache.find(fd.textureLayer);
+        if (it == texCache.end()) continue;
+        renderFace(elem, face, it->second, 0xFFFFFFFF, 1);
+    }
+
+    // 阶段 2：所有有 tintindex 的覆盖层面（半透明/灰度纹理叠加）
+    for (const auto& fo : faceOrder) {
+        const auto& elem = modelObj->elements[fo.elemIdx];
+        int face = fo.faceIdx;
+        const auto& fd = elem.faces[face];
+        if (fd.tintindex < 0) continue;
         if (fd.textureLayer < 0) continue;
         auto it = texCache.find(fd.textureLayer);
         if (it == texCache.end()) continue;
 
-        float fx=elem.from[0], fy=elem.from[1], fz=elem.from[2];
-        float tx=elem.to[0], ty=elem.to[1], tz=elem.to[2];
-
-            float v[4][3];
-            switch(face){
-                case 0: v[0][0]=fx;v[0][1]=fy;v[0][2]=fz; v[1][0]=tx;v[1][1]=fy;v[1][2]=fz; v[2][0]=tx;v[2][1]=fy;v[2][2]=tz; v[3][0]=fx;v[3][1]=fy;v[3][2]=tz; break;
-                case 1: v[0][0]=fx;v[0][1]=ty;v[0][2]=fz; v[1][0]=tx;v[1][1]=ty;v[1][2]=fz; v[2][0]=tx;v[2][1]=ty;v[2][2]=tz; v[3][0]=fx;v[3][1]=ty;v[3][2]=tz; break;
-                case 2: v[0][0]=fx;v[0][1]=fy;v[0][2]=fz; v[1][0]=tx;v[1][1]=fy;v[1][2]=fz; v[2][0]=tx;v[2][1]=ty;v[2][2]=fz; v[3][0]=fx;v[3][1]=ty;v[3][2]=fz; break;
-                case 3: v[0][0]=fx;v[0][1]=fy;v[0][2]=tz; v[1][0]=tx;v[1][1]=fy;v[1][2]=tz; v[2][0]=tx;v[2][1]=ty;v[2][2]=tz; v[3][0]=fx;v[3][1]=ty;v[3][2]=tz; break;
-                case 4: v[0][0]=fx;v[0][1]=fy;v[0][2]=fz; v[1][0]=fx;v[1][1]=fy;v[1][2]=tz; v[2][0]=fx;v[2][1]=ty;v[2][2]=tz; v[3][0]=fx;v[3][1]=ty;v[3][2]=fz; break;
-                case 5: v[0][0]=tx;v[0][1]=fy;v[0][2]=fz; v[1][0]=tx;v[1][1]=fy;v[1][2]=tz; v[2][0]=tx;v[2][1]=ty;v[2][2]=tz; v[3][0]=tx;v[3][1]=ty;v[3][2]=fz; break;
-            }
-
-            // UV 坐标
-            float u1=fd.uv[0]/16.0f, uv1=fd.uv[1]/16.0f, u2=fd.uv[2]/16.0f, uv2=fd.uv[3]/16.0f;
-            float uvs[4][2] = {{u1,uv1},{u2,uv1},{u2,uv2},{u1,uv2}};
-
-            rasterQuad(pixels.data(), iconSize,
-                v[0],v[1],v[2],v[3],
-                it->second.data, it->second.w, it->second.h,
-                uvs[0],uvs[1],uvs[2],uvs[3]);
+        uint32_t tintColor = 0xFF7FA752;  // 默认草绿
+        if (!it->second.hasAlpha) {
+            // 无 alpha 通道的纹理用暗像素跳过（stb_image 将 RGB/灰阶 PNG 转成 alpha=255）
+            // 需要特殊处理：不传 tintColor，改用 rasterQuad 默认不染色
+            // 并在渲染后用 green 覆盖
+            // 方案：仍然用 tint 渲染，rasterQuad 中的暗色跳过逻辑会处理
+            renderFace(elem, face, it->second, tintColor, 2);
+        } else {
+            // 有真 alpha：直接染色渲染，setPixel 处理 α==0
+            renderFace(elem, face, it->second, tintColor, 2);
+        }
     }
 
     // 上传为 GL 纹理
@@ -463,8 +524,7 @@ GLuint GLRenderer::renderBlockIcon(const std::string& modelName, int iconSize) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    LOGI("Generated CPU icon for '%s' (%d faces, %d elements)",
-         modelName.c_str(), (int)texCache.size(), (int)modelObj->elements.size());
+    LOGI("Generated CPU icon for '%s' (%d elements)", modelName.c_str(), (int)modelObj->elements.size());
     return tex;
 }
 
