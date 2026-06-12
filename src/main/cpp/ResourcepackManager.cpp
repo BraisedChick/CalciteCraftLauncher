@@ -1,6 +1,12 @@
 #include "ResourcepackManager.h"
 #include "TextureLoader.h"
+#include "TextureAtlas.h"
+#include "GLRenderer.h"
 #include <android/log.h>
+
+// g_glRenderer 定义在 native-lib.cpp
+
+extern GLRenderer* g_glRenderer;
 
 #define LOG_TAG "Resourcepack"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -74,19 +80,32 @@ GLuint ResourcepackManager::getItemTexture(const std::string& itemName) {
     auto it = cache.find(itemName);
     if (it != cache.end()) return it->second;
 
-    // 先从 item/ 加载
-    std::string path = "item/" + itemName + ".png";
-    GLuint glTex = loadAndUploadTexture(path);
+    GLuint glTex = 0;
+
+    // 1) 优先使用 3D 方块模型渲染的图标（所有可放置方块显示为立体）
+    if (g_glRenderer) {
+        const GLuint* cached = g_glRenderer->getBlockIcon(itemName);
+        if (cached) {
+            glTex = *cached;
+        }
+    }
+
+    // 2) 无 3D 图标时，从 item/ 加载 2D 纹理（工具、物品等非方块）
     if (glTex == 0) {
-        // 回退到 blocks/
+        std::string path = "item/" + itemName + ".png";
+        glTex = loadAndUploadTexture(path);
+    }
+
+    // 3) 回退到 blocks/ 目录的 2D 纹理
+    if (glTex == 0) {
         std::string fallbackPath = "blocks/" + itemName + ".png";
         glTex = loadAndUploadTexture(fallbackPath);
-        if (glTex == 0) {
-            LOGE("Failed to load item texture: %s", path.c_str());
-            GLuint fallback = getMissingTexture();
-            cache[itemName] = fallback;
-            return fallback;
-        }
+    }
+
+    // 4) 全部失败，使用紫色棋盘格
+    if (glTex == 0) {
+        LOGE("Failed to load item texture: %s", itemName.c_str());
+        glTex = getMissingTexture();
     }
 
     cache[itemName] = glTex;

@@ -1,6 +1,7 @@
 #include "GLRenderer.h"
 #include <android/log.h>
 #include <cmath>
+#include <algorithm>
 #include <android/asset_manager.h>
 #include <cstring>
 #include <cstddef>  // for offsetof
@@ -223,9 +224,266 @@ bool GLRenderer::finishTextureInit() {
 
         textureInitPending = false;
         LOGI("=== finishTextureInit COMPLETE ===");
+
+        // 纹理数组就绪后，预渲染所有方块 3D 物品图标
+        preRenderBlockIcons();
     }
 
     return true;
+}
+
+// ============================================================
+// 方块模型 → 3D 图标纹理渲染（物品栏用）
+// ============================================================
+
+// ============================================================
+// 方块模型 → 3D 图标纹理渲染（CPU生成等距立方体，不依赖FBO）
+// ============================================================
+
+// CPU 端采样纹理像素
+static uint32_t sampleTex(const uint8_t* data, int w, int h, float u, float v) {
+    int px = (int)(u * w);
+    int py = (int)(v * h);
+    if (px < 0) px = 0; if (px >= w) px = w - 1;
+    if (py < 0) py = 0; if (py >= h) py = h - 1;
+    int idx = (py * w + px) * 4;
+    return ((uint32_t)data[idx+3] << 24) | ((uint32_t)data[idx+0] << 16) | ((uint32_t)data[idx+1] << 8) | (uint32_t)data[idx+2];
+}
+
+// 设置输出像素（Alpha 预乘）
+static void setPixel(uint8_t* out, int x, int y, int iconSize, uint32_t color) {
+    if (x < 0 || x >= iconSize || y < 0 || y >= iconSize) return;
+    uint8_t a = (color >> 24) & 0xFF;
+    if (a == 0) return;
+    int idx = (y * iconSize + x) * 4;
+    uint8_t r = (color >> 16) & 0xFF;
+    uint8_t g = (color >> 8) & 0xFF;
+    uint8_t b = color & 0xFF;
+    // 简单混合（不透明覆盖）
+    out[idx+0] = r;
+    out[idx+1] = g;
+    out[idx+2] = b;
+    out[idx+3] = a;
+}
+
+// 等距投影：将方块局部坐标 (0~16) 映射到屏幕
+static void isoProject(float x, float y, float z, int iconSize, float& sx, float& sy) {
+    float scale = iconSize * 0.04f;  // 保持适中大小，配合偏移防止顶部裁剪
+    sx = (z - x) * 0.7071f * scale;
+    sy = ((x + z) * 0.3535f - y * 0.8660f) * scale;
+    sx += iconSize * 0.5f;
+    sy += iconSize * 0.5f;
+    sy += 3.0f;  // 少下移1像素
+}
+
+// 光栅化一个四边形面（4个三维顶点→屏幕投影→纹理映射）
+static void rasterQuad(uint8_t* out, int iconSize,
+    const float v0[3], const float v1[3], const float v2[3], const float v3[3],
+    const uint8_t* texData, int texW, int texH,
+    float uv0[2], float uv1[2], float uv2[2], float uv3[2]) {
+
+    // 投影到屏幕
+    float s[4][2];
+    isoProject(v0[0],v0[1],v0[2], iconSize, s[0][0],s[0][1]);
+    isoProject(v1[0],v1[1],v1[2], iconSize, s[1][0],s[1][1]);
+    isoProject(v2[0],v2[1],v2[2], iconSize, s[2][0],s[2][1]);
+    isoProject(v3[0],v3[1],v3[2], iconSize, s[3][0],s[3][1]);
+
+    // 包围盒
+    int minX=iconSize,maxX=0,minY=iconSize,maxY=0;
+    for(int i=0;i<4;i++){
+        int ix=(int)s[i][0], iy=(int)s[i][1];
+        if(ix<minX)minX=ix; if(ix>maxX)maxX=ix;
+        if(iy<minY)minY=iy; if(iy>maxY)maxY=iy;
+    }
+    if(minX<0)minX=0; if(maxX>=iconSize)maxX=iconSize-1;
+    if(minY<0)minY=0; if(maxY>=iconSize)maxY=iconSize-1;
+
+    // 使用边缘函数判断点是否在四边形内
+    auto edge = [](float ax,float ay,float bx,float by,float px,float py)->float{
+        return (bx-ax)*(py-ay)-(by-ay)*(px-ax);
+    };
+
+    for(int py=minY;py<=maxY;py++){
+        for(int px=minX;px<=maxX;px++){
+            float fx=(float)px+0.5f, fy=(float)py+0.5f;
+            // 分解为两个三角形 (0,1,2) 和 (0,2,3)
+            float e0=edge(s[0][0],s[0][1],s[1][0],s[1][1],fx,fy);
+            float e1=edge(s[1][0],s[1][1],s[2][0],s[2][1],fx,fy);
+            float e2=edge(s[2][0],s[2][1],s[3][0],s[3][1],fx,fy);
+            float e3=edge(s[3][0],s[3][1],s[0][0],s[0][1],fx,fy);
+
+            bool inside = (e0>=0&&e1>=0&&e2>=0&&e3>=0)||(e0<=0&&e1<=0&&e2<=0&&e3<=0);
+            if(!inside) continue;
+
+            // 双线性插值 UV
+            // 简化为四边形中的重心坐标
+            float ax = s[0][0], ay = s[0][1];
+            float bx = s[1][0], by = s[1][1];
+            float cx = s[2][0], cy = s[2][1];
+            float dx = s[3][0], dy = s[3][1];
+
+            // 计算重心坐标（在三角形 0-1-2 中）
+            float area = (bx-ax)*(cy-ay)-(by-ay)*(cx-ax);
+            float w0 = ((bx-fx)*(cy-fy)-(by-fy)*(cx-fx))/area;
+            float w1 = ((fx-ax)*(cy-fy)-(fy-ay)*(cx-fx))/area;
+            float w2 = ((bx-ax)*(fy-ay)-(by-ay)*(fx-ax))/area;
+
+            float u,v;
+            if(w0>=0&&w1>=0&&w2>=0) {
+                u = w0*uv0[0] + w1*uv1[0] + w2*uv2[0];
+                v = w0*uv0[1] + w1*uv1[1] + w2*uv2[1];
+            } else {
+                // 在三角形 0-2-3 中
+                float area2 = (cx-ax)*(dy-ay)-(cy-ay)*(dx-ax);
+                if(area2==0) continue;
+                float ww0 = ((cx-fx)*(dy-fy)-(cy-fy)*(dx-fx))/area2;
+                float ww1 = ((fx-ax)*(dy-fy)-(fy-ay)*(dx-fx))/area2;
+                float ww2 = ((cx-ax)*(fy-ay)-(cy-ay)*(fx-ax))/area2;
+                u = ww0*uv0[0] + ww1*uv2[0] + ww2*uv3[0];
+                v = ww0*uv0[1] + ww1*uv2[1] + ww2*uv3[1];
+            }
+
+            uint32_t color = sampleTex(texData, texW, texH, u, v);
+            setPixel(out, px, py, iconSize, color);
+        }
+    }
+}
+
+GLuint GLRenderer::renderBlockIcon(const std::string& modelName, int iconSize) {
+    auto& atlas = TextureAtlas::getInstance();
+    const auto* modelObj = atlas.getBlockModel(modelName);
+    if (!modelObj || modelObj->elements.empty()) {
+        // 没有模型数据：尝试直接从纹理缓存取
+        // 回退：使用 blockTextureMap 中的 top 纹理生成简单图标
+        GLuint fallback = 0;
+        // ... 留空，走 getMissingTexture
+        return 0;
+    }
+
+    // 输出缓冲区
+    std::vector<uint8_t> pixels(iconSize * iconSize * 4, 0);
+
+    // 收集所有用到的纹理路径并加载像素数据
+    // 为避免重复加载，使用 texturePathToLayer 中的路径
+    struct TexData { const uint8_t* data; int w, h; };
+    std::unordered_map<int, TexData> texCache;  // layer → pixel data
+
+    // 加载纹理像素数据的 lambda
+    auto loadTex = [&](int layer) -> bool {
+        if (texCache.find(layer) != texCache.end()) return true;
+        std::string fname = atlas.getTextureFileName(layer);
+        TextureData td = TextureLoader::loadImage(fname);
+        if (!td.data) return false;
+        texCache[layer] = {td.data, td.width, td.height};
+        return true;
+    };
+
+    // 收集所有用到的纹理
+    for (const auto& elem : modelObj->elements) {
+        for (int f = 0; f < 6; f++) {
+            if (!elem.hasFaces[f]) continue;
+            int layer = elem.faces[f].textureLayer;
+            if (layer >= 0) loadTex(layer);
+        }
+    }
+
+    // 按每个面的深度排序（等距视角下，同一个元素的不同面深度不同）
+    struct FaceSort {
+        int elemIdx;
+        int faceIdx;
+        float depth;
+    };
+    std::vector<FaceSort> faceOrder;
+    for (int ei = 0; ei < (int)modelObj->elements.size(); ei++) {
+        const auto& elem = modelObj->elements[ei];
+        for (int f = 0; f < 6; f++) {
+            if (!elem.hasFaces[f]) continue;
+            if (elem.faces[f].textureLayer < 0) continue;
+            float fx=elem.from[0], fy=elem.from[1], fz=elem.from[2];
+            float tx=elem.to[0], ty=elem.to[1], tz=elem.to[2];
+            float cx,cy,cz;
+            switch(f){
+                case 0: cx=(fx+tx)*0.5f; cy=fy; cz=(fz+tz)*0.5f; break;
+                case 1: cx=(fx+tx)*0.5f; cy=ty; cz=(fz+tz)*0.5f; break;
+                case 2: cx=(fx+tx)*0.5f; cy=(fy+ty)*0.5f; cz=fz; break;
+                case 3: cx=(fx+tx)*0.5f; cy=(fy+ty)*0.5f; cz=tz; break;
+                case 4: cx=fx; cy=(fy+ty)*0.5f; cz=(fz+tz)*0.5f; break;
+                case 5: cx=tx; cy=(fy+ty)*0.5f; cz=(fz+tz)*0.5f; break;
+            }
+            // 到相机的距离平方（相机在 16,14,16，远的先画）
+            float dx = cx - 16.0f, dy = cy - 14.0f, dz = cz - 16.0f;
+            float depth = dx*dx + dy*dy + dz*dz;
+            faceOrder.push_back({ei, f, depth});
+        }
+    }
+    std::sort(faceOrder.begin(), faceOrder.end(), [](const FaceSort& a, const FaceSort& b) {
+        return a.depth > b.depth;  // 降序：距离远的（离相机远）先画
+    });
+
+    // 按排序后的顺序渲染每个面
+    for (const auto& fo : faceOrder) {
+        const auto& elem = modelObj->elements[fo.elemIdx];
+        int face = fo.faceIdx;
+        const auto& fd = elem.faces[face];
+        if (fd.textureLayer < 0) continue;
+        auto it = texCache.find(fd.textureLayer);
+        if (it == texCache.end()) continue;
+
+        float fx=elem.from[0], fy=elem.from[1], fz=elem.from[2];
+        float tx=elem.to[0], ty=elem.to[1], tz=elem.to[2];
+
+            float v[4][3];
+            switch(face){
+                case 0: v[0][0]=fx;v[0][1]=fy;v[0][2]=fz; v[1][0]=tx;v[1][1]=fy;v[1][2]=fz; v[2][0]=tx;v[2][1]=fy;v[2][2]=tz; v[3][0]=fx;v[3][1]=fy;v[3][2]=tz; break;
+                case 1: v[0][0]=fx;v[0][1]=ty;v[0][2]=fz; v[1][0]=tx;v[1][1]=ty;v[1][2]=fz; v[2][0]=tx;v[2][1]=ty;v[2][2]=tz; v[3][0]=fx;v[3][1]=ty;v[3][2]=tz; break;
+                case 2: v[0][0]=fx;v[0][1]=fy;v[0][2]=fz; v[1][0]=tx;v[1][1]=fy;v[1][2]=fz; v[2][0]=tx;v[2][1]=ty;v[2][2]=fz; v[3][0]=fx;v[3][1]=ty;v[3][2]=fz; break;
+                case 3: v[0][0]=fx;v[0][1]=fy;v[0][2]=tz; v[1][0]=tx;v[1][1]=fy;v[1][2]=tz; v[2][0]=tx;v[2][1]=ty;v[2][2]=tz; v[3][0]=fx;v[3][1]=ty;v[3][2]=tz; break;
+                case 4: v[0][0]=fx;v[0][1]=fy;v[0][2]=fz; v[1][0]=fx;v[1][1]=fy;v[1][2]=tz; v[2][0]=fx;v[2][1]=ty;v[2][2]=tz; v[3][0]=fx;v[3][1]=ty;v[3][2]=fz; break;
+                case 5: v[0][0]=tx;v[0][1]=fy;v[0][2]=fz; v[1][0]=tx;v[1][1]=fy;v[1][2]=tz; v[2][0]=tx;v[2][1]=ty;v[2][2]=tz; v[3][0]=tx;v[3][1]=ty;v[3][2]=fz; break;
+            }
+
+            // UV 坐标
+            float u1=fd.uv[0]/16.0f, uv1=fd.uv[1]/16.0f, u2=fd.uv[2]/16.0f, uv2=fd.uv[3]/16.0f;
+            float uvs[4][2] = {{u1,uv1},{u2,uv1},{u2,uv2},{u1,uv2}};
+
+            rasterQuad(pixels.data(), iconSize,
+                v[0],v[1],v[2],v[3],
+                it->second.data, it->second.w, it->second.h,
+                uvs[0],uvs[1],uvs[2],uvs[3]);
+    }
+
+    // 上传为 GL 纹理
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, iconSize, iconSize, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    LOGI("Generated CPU icon for '%s' (%d faces, %d elements)",
+         modelName.c_str(), (int)texCache.size(), (int)modelObj->elements.size());
+    return tex;
+}
+
+void GLRenderer::preRenderBlockIcons() {
+    LOGI("Pre-rendering block icons for inventory...");
+    auto& atlas = TextureAtlas::getInstance();
+    int rendered = 0;
+    // 遍历所有已加载的 block 模型，检查是否有对应的 item 引用
+    for (const auto& [itemName, parentModel] : atlas.getItemModelCache()) {
+        // 跳过已有 2D 纹理的物品
+        // 直接渲染 3D 图标（getItemTexture 会优先检查 2D 纹理）
+        if (blockIconCache.find(itemName) != blockIconCache.end()) continue;
+        GLuint tex = renderBlockIcon(parentModel, 64);
+        if (tex != 0) {
+            blockIconCache[itemName] = tex;
+            rendered++;
+        }
+    }
+    LOGI("Pre-rendered %d block icons", rendered);
 }
 
 bool GLRenderer::createEGLContext(ANativeWindow* window) {
@@ -1318,6 +1576,12 @@ void GLRenderer::cleanup() {
         glDeleteProgram(shaderProgram);
         shaderProgram = 0;
     }
+
+    // 清理方块图标缓存
+    for (auto& [name, tex] : blockIconCache) {
+        glDeleteTextures(1, &tex);
+    }
+    blockIconCache.clear();
 
     if (display) {
         eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);

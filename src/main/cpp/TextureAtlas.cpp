@@ -864,6 +864,35 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
         LOGI("Parsed %d blockstate files", bsCount);
     }
 
+    // 4.6 加载 models/item/*.json（物品图标对应的方块模型映射）
+    {
+        auto itemModelFiles = TextureLoader::readAllTextFromZip("models/item/");
+        int itemCount = 0;
+        for (const auto& [entryPath, content] : itemModelFiles) {
+            std::string itemName = entryPath;
+            size_t slash = itemName.rfind('/');
+            if (slash != std::string::npos) itemName = itemName.substr(slash + 1);
+            size_t dot = itemName.rfind(".json");
+            if (dot != std::string::npos) itemName = itemName.substr(0, dot);
+            if (!itemName.empty()) {
+                std::string parent = jsonExtractParent(content);
+                if (!parent.empty()) {
+                    size_t colonPos = parent.find(':');
+                    if (colonPos != std::string::npos) {
+                        parent = parent.substr(colonPos + 1);
+                    }
+                    // 去掉 "block/" 前缀（parent 可能是 "minecraft:block/oak_stairs"）
+                    if (parent.find("block/") == 0) {
+                        parent = parent.substr(6);
+                    }
+                    itemModelCache[itemName] = parent;
+                    itemCount++;
+                }
+            }
+        }
+        LOGI("Parsed %d item model references", itemCount);
+    }
+
     // 5. 强制加入特殊纹理（MeshGenerator 需要，但可能不被任何模型引用）
     ensureTexture("block/grass_block_side_overlay");
     ensureTexture("block/snow");
@@ -1646,6 +1675,14 @@ const BlockStateVariant* TextureAtlas::getBlockStateVariant(
     if (it == blockstateVariantCache.end()) return nullptr;
     if (offset < 0 || offset >= (int32_t)it->second.size()) return nullptr;
     return &it->second[offset];
+}
+
+const std::string* TextureAtlas::getItemModelParent(const std::string& itemName) const {
+    auto it = itemModelCache.find(itemName);
+    if (it != itemModelCache.end()) {
+        return &it->second;
+    }
+    return nullptr;
 }
 
 // ============================================================

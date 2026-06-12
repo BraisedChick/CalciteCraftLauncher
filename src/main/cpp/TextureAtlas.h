@@ -149,6 +149,15 @@ public:
                                                       int32_t blockState,
                                                       int32_t minStateId) const;
 
+    // 获取物品对应的父级方块模型名（从 models/item/*.json 解析）
+    // 返回 nullptr 表示该物品没有对应的方块模型
+    const std::string* getItemModelParent(const std::string& itemName) const;
+
+    // 获取物品方块模型映射表（用于预渲染物品栏图标）
+    const std::unordered_map<std::string, std::string>& getItemModelCache() const {
+        return itemModelCache;
+    }
+
     bool isInitialized() const { return initialized; }
 
 private:
@@ -169,6 +178,9 @@ private:
 
     // 纹理路径 → 图层索引（"block/stone" → 3）
     std::unordered_map<std::string, int> texturePathToLayer;
+
+    // item 名称 → 父级方块模型名（从 models/item/*.json 解析）
+    std::unordered_map<std::string, std::string> itemModelCache;
 
     // 特殊纹理图层（缓存查询结果）
     int grassSideOverlayLayer = -1;

@@ -24,7 +24,7 @@
 #define JNI_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, JNI_LOG_TAG, __VA_ARGS__)
 
 static VulkanRenderer* g_vulkanRenderer = nullptr;
-static GLRenderer* g_glRenderer = nullptr;
+GLRenderer* g_glRenderer = nullptr;
 static bool g_useVulkan = false;
 static bool g_rendererTypeSet = false;  // 标记是否已设置渲染器类型
 static ClientEngine* g_engine = nullptr;

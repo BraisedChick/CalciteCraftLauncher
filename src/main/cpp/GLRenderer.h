@@ -17,6 +17,7 @@
 #include <condition_variable>
 #include <atomic>
 #include <unordered_set>
+#include <unordered_map>
 #include <chrono>
 #include "GameUI.h"
 // 添加 GLM 库
@@ -96,6 +97,20 @@ public:
     // 断开连接时清理所有区块 VAO/VBO/EBO（线程安全，渲染线程实际执行）
     void clearChunks();
     void doClearChunks();
+
+    // 将方块模型渲染到 GL 纹理（用于物品栏3D图标）
+    // modelName: 模型名（如 "oak_stairs"），iconSize: 输出纹理尺寸
+    // 返回 GL 纹理 ID，0=失败
+    GLuint renderBlockIcon(const std::string& modelName, int iconSize = 32);
+
+    // 预渲染所有物品对应的方块图标
+    void preRenderBlockIcons();
+
+    // 获取已缓存的方块图标纹理
+    const GLuint* getBlockIcon(const std::string& name) const {
+        auto it = blockIconCache.find(name);
+        return it != blockIconCache.end() ? &it->second : nullptr;
+    }
 
 private:
     // ===== 工作线程（离线网格生成）=====
@@ -242,4 +257,7 @@ private:
     int textureWidth = 16;
     int textureHeight = 16;
     static constexpr int TEXTURES_PER_FRAME = 200;  // 每帧最多上传的纹理数
+
+    // 方块图标缓存（物品栏3D模型预渲染）
+    std::unordered_map<std::string, GLuint> blockIconCache;
 };
