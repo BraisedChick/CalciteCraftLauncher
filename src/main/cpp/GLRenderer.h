@@ -33,6 +33,8 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "GLRenderer", __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "GLRenderer", __VA_ARGS__)
 
+#include "ResourcepackManager.h"
+
 struct BlockPosition {
     int x, y, z;
 
@@ -51,8 +53,6 @@ class GLRenderer {
 public:
     GLRenderer();
     ~GLRenderer();
-
-    static void setAssetManager(AAssetManager* assets);
 
     bool initialize(ANativeWindow* window);
     void cleanup();
@@ -157,9 +157,6 @@ private:
     bool createEGLContext(ANativeWindow* window);
     bool createShaders();
     bool createBuffers();
-    std::string loadShaderFile(const std::string& filename);
-    GLuint compileShader(GLenum type, const std::string& source);
-    GLuint createProgram(const std::string& vertSource, const std::string& fragSource);
     // 从视图和投影矩阵计算视锥体平面
     void computeFrustumPlanes(const glm::mat4& viewProj);
 
@@ -177,20 +174,14 @@ private:
     EGLContext context = EGL_NO_CONTEXT;
     EGLSurface surface = EGL_NO_SURFACE;
 
-    GLuint shaderProgram = 0;
-    GLuint vao = 0;
-    GLuint vbo = 0;
-    GLuint ebo = 0;
     GLuint textureArrayID = 0;  // 纹理数组（替代单个 textureID）
-    GLuint waterTextureID = 0;  // 水纹理（单独加载，16x512 支持动画）
+    GLuint lightmapTextureID = 0;  // 光照贴图纹理（Sampler2，默认白色=全亮）
 
-    GLint uniformModel = -1;
-    GLint uniformView = -1;
-    GLint uniformProj = -1;
-    GLint uniformTexture = -1;
-    GLint uniformWaterTexture = -1;
-    GLint uniformWaterTime = -1;
-    GLint uniformUseWaterTexture = -1;
+    // ===== Mojang 官方着色器程序 =====
+    ShaderProgramInfo shaderSolid;         // rendertype_solid（不透明）
+    ShaderProgramInfo shaderCutout;        // rendertype_cutout（镂空，alpha<0.1 丢弃）
+    ShaderProgramInfo shaderCutoutMipped;  // rendertype_cutout_mipped（带 mipmap 的镂空）
+    ShaderProgramInfo shaderTranslucent;   // rendertype_translucent（半透明）
 
     float cameraMatrix[16];
     float projectionMatrix[16];
@@ -201,8 +192,6 @@ private:
     
     int screenWidth = 0;
     int screenHeight = 0;
-
-    static AAssetManager* g_assetManager;
 
     // 区块管理（原子指针，跨线程安全）
     std::atomic<ChunkManager*> chunkManager{nullptr};
@@ -218,10 +207,6 @@ private:
     
     // 帧计数器
     uint32_t frameCount = 0;
-
-    // 水动画时间（累计，帧率无关）
-    float waterAnimTime = 0.0f;
-    std::chrono::steady_clock::time_point lastFrameTime;
     
     // ===== 区块合批渲染优化 =====
     struct ChunkRenderData {

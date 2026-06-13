@@ -905,6 +905,8 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
     grassSideOverlayLayer = findLayer("block/grass_block_side_overlay");
     grassBlockSnowLayer = findLayer("block/grass_block_top");
     grassSideLayer = findLayer("block/grass_block_side");
+    LOGI("DIAG_FINDLAYER: side_overlay=%d grass_side=%d grass_top=%d (from texturePathToLayer)",
+         grassSideOverlayLayer, grassSideLayer, grassBlockSnowLayer);
 
     // 如果某些特殊纹理找不到，用 stone 回退
     if (grassSideOverlayLayer < 0) grassSideOverlayLayer = findLayer("block/stone");

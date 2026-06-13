@@ -552,7 +552,6 @@ Java_com_calcite_MainActivity_setAssetManager(
 
     AAssetManager* assets = AAssetManager_fromJava(env, assetManager);
     if (assets) {
-        GLRenderer::setAssetManager(assets);
         VulkanRenderer::setAssetManager(assets);
         TextureLoader::setAssetManager(assets);
         JNI_LOGI("Asset manager set for OpenGL ES, Vulkan renderers and TextureLoader");

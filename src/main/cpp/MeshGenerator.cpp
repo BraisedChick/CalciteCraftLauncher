@@ -12,7 +12,6 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <chrono>
 
 #define LOG_TAG "MeshGenerator"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -39,6 +38,28 @@ static const float FACE_VERTS[6][4][5] = {
     {{1,0,0,0,1},{0,0,0,1,1},{0,1,0,1,0},{1,1,0,0,0}}, // BACK
 };
 
+// 面法线查找表（Face 枚举 → 法线向量）
+// TOP=0, BOTTOM=1, RIGHT=2, LEFT=3, FRONT=4, BACK=5
+static const float FACE_NORMALS[6][3] = {
+    { 0.0f,  1.0f,  0.0f},  // TOP
+    { 0.0f, -1.0f,  0.0f},  // BOTTOM
+    { 1.0f,  0.0f,  0.0f},  // RIGHT / EAST
+    {-1.0f,  0.0f,  0.0f},  // LEFT / WEST
+    { 0.0f,  0.0f,  1.0f},  // FRONT / SOUTH
+    { 0.0f,  0.0f, -1.0f},  // BACK / NORTH
+};
+
+// FaceDir 法线查找表（FaceDir 枚举 → 法线向量）
+// DOWN=0, UP=1, NORTH=2, SOUTH=3, WEST=4, EAST=5
+static const float FACEDIR_NORMALS[6][3] = {
+    { 0.0f, -1.0f,  0.0f},  // DOWN
+    { 0.0f,  1.0f,  0.0f},  // UP
+    { 0.0f,  0.0f, -1.0f},  // NORTH
+    { 0.0f,  0.0f,  1.0f},  // SOUTH
+    {-1.0f,  0.0f,  0.0f},  // WEST
+    { 1.0f,  0.0f,  0.0f},  // EAST
+};
+
 // ===== 通用方块面生成 =====
 static void addCubicFace(
     std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
@@ -58,6 +79,10 @@ static void addCubicFace(
         vert.texCoord[1] = fv[4];
         vert.texIndex = texIndex;
         vert.color[0] = r; vert.color[1] = g; vert.color[2] = b; vert.color[3] = a;
+        vert.normal[0] = FACE_NORMALS[face][0];
+        vert.normal[1] = FACE_NORMALS[face][1];
+        vert.normal[2] = FACE_NORMALS[face][2];
+        // uv2 使用默认全亮值 (240, 240)，已在 Vertex 构造中设置
         vertices.push_back(vert);
     }
     indices.push_back(base);     indices.push_back(base + 1); indices.push_back(base + 2);
@@ -334,6 +359,11 @@ static void generateFromModel(
                 faceVerts[v].color[1] = cg;
                 faceVerts[v].color[2] = cb;
                 faceVerts[v].color[3] = 255;
+                // 面法线（使用 FaceDir 法线，未旋转——Mojang 着色器会用 ModelViewMat 变换）
+                faceVerts[v].normal[0] = FACEDIR_NORMALS[dir][0];
+                faceVerts[v].normal[1] = FACEDIR_NORMALS[dir][1];
+                faceVerts[v].normal[2] = FACEDIR_NORMALS[dir][2];
+                // uv2 默认全亮 (240, 240)
             }
             vertices.insert(vertices.end(), faceVerts, faceVerts + 4);
 
@@ -568,7 +598,6 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
     };
 
 // 阶段计时
-    auto tStart = std::chrono::steady_clock::now();
     int countModel = 0, countWater = 0, countCubic = 0;
 
     // 遍历所有方块
@@ -638,6 +667,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                 // 跳过水：水使用独立的渲染管道（alpha blend + 动画纹理）
                 bool isSnowCovered2 = (blockMeta.isGrassBlock && n[TOP] != 0 &&
                                       BlockRegistry::getInstance().getBlockMetadata(n[TOP]).isSnow);
+
                 if (!blockMeta.isWater) {
                     // ---- 快速路径：完整简单立方体，跳过模型解析直接用 addCubicFace ----
                     if (blockMeta.isFullBlock) {
@@ -835,13 +865,6 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         }
         allVertices.insert(allVertices.end(), waterVertices.begin(), waterVertices.end());
         waterIndexCount = static_cast<uint32_t>(waterIndices.size());
-    }
-
-    auto tEnd = std::chrono::steady_clock::now();
-    long long totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(tEnd - tStart).count();
-    if (totalMs > 5) {
-        LOGI("MESH: chunk(%d,%d) sectionY=%d total=%lldms modelBlock=%d waterBlock=%d cubicBlock=%d",
-             chunkX, chunkZ, sectionY, totalMs, countModel, countWater, countCubic);
     }
 
     return {std::move(allVertices), std::move(allIndices), overlayIndexCount, waterIndexCount};

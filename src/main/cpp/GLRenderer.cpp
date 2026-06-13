@@ -19,12 +19,6 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
-AAssetManager* GLRenderer::g_assetManager = nullptr;
-
-void GLRenderer::setAssetManager(AAssetManager* assetManager) {
-    g_assetManager = assetManager;
-}
-
 void GLRenderer::setChunkManager(ChunkManager* manager) {
     chunkManager.store(manager);
 
@@ -38,8 +32,7 @@ void GLRenderer::setChunkManager(ChunkManager* manager) {
 
 GLRenderer::GLRenderer()
         : display(EGL_NO_DISPLAY), context(EGL_NO_CONTEXT), surface(EGL_NO_SURFACE),
-          shaderProgram(0), vao(0), vbo(0), ebo(0), textureArrayID(0),
-          uniformModel(-1), uniformView(-1), uniformProj(-1), uniformTexture(-1),
+          textureArrayID(0),
           vertexCount(0), indexCount(0), screenWidth(0), screenHeight(0) {
     memset(cameraMatrix, 0, sizeof(cameraMatrix));
     memset(projectionMatrix, 0, sizeof(projectionMatrix));
@@ -118,6 +111,7 @@ bool GLRenderer::initialize(ANativeWindow* window) {
 bool GLRenderer::finishTextureInit() {
     if (!textureInitPending) return true;
 
+
     if (textureArrayID == 0) {
         // 第一帧：创建纹理数组
         textureTotalCount = TextureAtlas::getInstance().getLayerCount();
@@ -151,10 +145,15 @@ bool GLRenderer::finishTextureInit() {
 
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
         textureNextBatch = 0;
+    } else {
+        // 后续批次：重新绑定纹理数组到 unit 0（渲染代码可能切换了活跃单元）
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayID);
     }
 
     // 逐帧分批上传纹理
@@ -189,43 +188,9 @@ bool GLRenderer::finishTextureInit() {
     textureNextBatch = end;
 
     if (textureNextBatch >= textureTotalCount) {
-        // 全部纹理上传完成，加载水纹理
-        LOGI("All %d textures uploaded, loading water texture...", textureTotalCount);
-
-        glGenTextures(1, &waterTextureID);
-        glBindTexture(GL_TEXTURE_2D, waterTextureID);
-        {
-            TextureData waterTex = TextureLoader::loadImage("water_still.png");
-            if (waterTex.data) {
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-                             waterTex.width, waterTex.height, 0,
-                             GL_RGBA, GL_UNSIGNED_BYTE, waterTex.data);
-                LOGI("Loaded water_still.png: %dx%d", waterTex.width, waterTex.height);
-            } else {
-                LOGW("water_still.png not found, using placeholder");
-                std::vector<uint8_t> placeholder(16 * 512 * 4, 0);
-                for (int y = 0; y < 512; y++) {
-                    for (int x = 0; x < 16; x++) {
-                        int p = (y * 16 + x) * 4;
-                        placeholder[p + 0] = 0x3F;
-                        placeholder[p + 1] = 0x76;
-                        placeholder[p + 2] = 0xE4;
-                        placeholder[p + 3] = 255;
-                    }
-                }
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-                             16, 512, 0, GL_RGBA, GL_UNSIGNED_BYTE, placeholder.data());
-            }
-        }
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
+        LOGI("All %d textures uploaded", textureTotalCount);
         textureInitPending = false;
         LOGI("=== finishTextureInit COMPLETE ===");
-
-        // 纹理数组就绪后，预渲染所有方块 3D 物品图标
         preRenderBlockIcons();
     }
 
@@ -597,137 +562,50 @@ bool GLRenderer::createEGLContext(ANativeWindow* window) {
     return true;
 }
 
-std::string GLRenderer::loadShaderFile(const std::string& filename) {
-    if (!g_assetManager) {
-        LOGE("Asset manager not set!");
-        return "";
-    }
-
-    AAsset* asset = AAssetManager_open(g_assetManager, filename.c_str(), AASSET_MODE_BUFFER);
-    if (!asset) {
-        LOGE("Failed to open shader file: %s", filename.c_str());
-        return "";
-    }
-
-    off_t length = AAsset_getLength(asset);
-    const char* buffer = static_cast<const char*>(AAsset_getBuffer(asset));
-
-    std::string content(buffer, length);
-    AAsset_close(asset);
-
-    LOGI("Loaded shader file: %s (%d bytes)", filename.c_str(), (int)content.size());
-    return content;
-}
-
-GLuint GLRenderer::compileShader(GLenum type, const std::string& source) {
-    GLuint shader = glCreateShader(type);
-    const char* src = source.c_str();
-    glShaderSource(shader, 1, &src, nullptr);
-    glCompileShader(shader);
-
-    GLint success;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetShaderInfoLog(shader, 512, nullptr, infoLog);
-        LOGE("Shader compilation failed: %s", infoLog);
-        glDeleteShader(shader);
-        return 0;
-    }
-
-    return shader;
-}
-
-GLuint GLRenderer::createProgram(const std::string& vertSource, const std::string& fragSource) {
-    GLuint vertShader = compileShader(GL_VERTEX_SHADER, vertSource);
-    if (vertShader == 0) return 0;
-
-    GLuint fragShader = compileShader(GL_FRAGMENT_SHADER, fragSource);
-    if (fragShader == 0) {
-        glDeleteShader(vertShader);
-        return 0;
-    }
-
-    GLuint program = glCreateProgram();
-    glAttachShader(program, vertShader);
-    glAttachShader(program, fragShader);
-    glLinkProgram(program);
-
-    GLint success;
-    glGetProgramiv(program, GL_LINK_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetProgramInfoLog(program, 512, nullptr, infoLog);
-        LOGE("Program linking failed: %s", infoLog);
-        glDeleteProgram(program);
-        glDeleteShader(vertShader);
-        glDeleteShader(fragShader);
-        return 0;
-    }
-
-    glDeleteShader(vertShader);
-    glDeleteShader(fragShader);
-    return program;
-}
-
 bool GLRenderer::createShaders() {
-    std::string vertSource = loadShaderFile("shaders/gl_shader.vert");
-    std::string fragSource = loadShaderFile("shaders/gl_shader.frag");
+    auto& rpm = ResourcepackManager::getInstance();
+    shaderSolid = rpm.loadShaderProgram("rendertype_solid");
+    shaderCutout = rpm.loadShaderProgram("rendertype_cutout");
+    shaderCutoutMipped = rpm.loadShaderProgram("rendertype_cutout_mipped");
+    shaderTranslucent = rpm.loadShaderProgram("rendertype_translucent");
 
-    if (vertSource.empty() || fragSource.empty()) {
-        LOGE("Failed to load shader files");
+    LOGI("Mojang shaders: solid=%d, cutout=%d, cutout_mipped=%d, translucent=%d",
+         shaderSolid.program, shaderCutout.program, shaderCutoutMipped.program, shaderTranslucent.program);
+
+    // 输出 cutout 着色器的 uniform 位置，便于诊断
+    LOGI("Cutout uniforms: ModelViewMat=%d ProjMat=%d ChunkOffset=%d ColorMod=%d FogStart=%d FogEnd=%d FogColor=%d FogShape=%d Sampler0=%d Sampler2=%d TextureMat=%d",
+         shaderCutout.uModelViewMat, shaderCutout.uProjMat, shaderCutout.uChunkOffset,
+         shaderCutout.uColorModulator, shaderCutout.uFogStart, shaderCutout.uFogEnd,
+         shaderCutout.uFogColor, shaderCutout.uFogShape,
+         shaderCutout.uSampler0, shaderCutout.uSampler2, shaderCutout.uTextureMatrix);
+
+    // 至少需要 cutout 着色器才能渲染
+    if (shaderCutout.program == 0) {
+        LOGE("Failed to load Mojang shaders (rendertype_cutout is required)");
         return false;
     }
 
-    shaderProgram = createProgram(vertSource, fragSource);
-    if (shaderProgram == 0) {
-        return false;
+    // ===== 创建默认光照贴图（白色 16x16 = 全亮）=====
+    {
+        glGenTextures(1, &lightmapTextureID);
+        glBindTexture(GL_TEXTURE_2D, lightmapTextureID);
+        uint8_t whitePixels[16 * 16 * 4];
+        memset(whitePixels, 255, sizeof(whitePixels));
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 16, 16, 0, GL_RGBA, GL_UNSIGNED_BYTE, whitePixels);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        LOGI("Created default lightmap texture -> GL%d", lightmapTextureID);
     }
 
-    uniformModel = glGetUniformLocation(shaderProgram, "model");
-    uniformView = glGetUniformLocation(shaderProgram, "view");
-    uniformProj = glGetUniformLocation(shaderProgram, "proj");
-    uniformTexture = glGetUniformLocation(shaderProgram, "textureSampler");
-    uniformWaterTexture = glGetUniformLocation(shaderProgram, "waterTexture");
-    uniformWaterTime = glGetUniformLocation(shaderProgram, "waterTime");
-    uniformUseWaterTexture = glGetUniformLocation(shaderProgram, "useWaterTexture");
-
-    LOGI("Uniform locations: model=%d, view=%d, proj=%d, texture=%d, waterTex=%d, waterTime=%d, useWater=%d",
-         uniformModel, uniformView, uniformProj, uniformTexture,
-         uniformWaterTexture, uniformWaterTime, uniformUseWaterTexture);
-
-    LOGI("Shaders compiled and linked successfully");
+    LOGI("Mojang shaders loaded successfully");
     return true;
 }
 
 bool GLRenderer::createBuffers() {
-    glGenVertexArrays(1, &vao);
-    glGenBuffers(1, &vbo);
-    glGenBuffers(1, &ebo);
-
-    glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-
-    // 位置属性 (location = 0)
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
-    glEnableVertexAttribArray(0);
-
-    // 纹理坐标属性 (location = 1)
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-    
-    // 纹理索引属性 (location = 2)
-    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(5 * sizeof(float)));
-    glEnableVertexAttribArray(2);
-
-    // 顶点颜色属性 (location = 3) — 4 bytes RGBA, normalized unsigned byte
-    glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex), (void*)(offsetof(Vertex, color)));
-    glEnableVertexAttribArray(3);
-
-    glBindVertexArray(0);
-
-    LOGI("Buffers created with 4 vertex attributes (pos, texCoord, texIndex, color)");
+    // 使用 per-chunk VAO（在 processCompletedWork 中创建）
+    LOGI("Buffers will be created per-chunk in processCompletedWork");
     return true;
 }
 
@@ -1080,14 +958,24 @@ void GLRenderer::processCompletedWork() {
                 glBindVertexArray(renderData.vao);
                 glBindBuffer(GL_ARRAY_BUFFER, renderData.vbo);
                 glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderData.ebo);
+                // location 0: Position
                 glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
                 glEnableVertexAttribArray(0);
+                // location 1: UV0
                 glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float)));
                 glEnableVertexAttribArray(1);
+                // location 2: TexIndex
                 glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(5 * sizeof(float)));
                 glEnableVertexAttribArray(2);
+                // location 3: Color
                 glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex), (void*)(offsetof(Vertex, color)));
                 glEnableVertexAttribArray(3);
+                // location 4: Normal
+                glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(offsetof(Vertex, normal)));
+                glEnableVertexAttribArray(4);
+                // location 5: UV2
+                glVertexAttribPointer(5, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(offsetof(Vertex, uv2)));
+                glEnableVertexAttribArray(5);
                 glBindVertexArray(0);
 
                 renderData.vertexCount = static_cast<uint32_t>(result.vertices.size());
@@ -1369,73 +1257,79 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     glm::mat4 projMatrix = glm::make_mat4(projectionMatrix);
     computeFrustumPlanes(projMatrix * viewMatrix);
 
-    glUseProgram(shaderProgram);
-
-    // ===== 水动画时间（帧率无关）=====
-    {
-        auto now = std::chrono::steady_clock::now();
-        float deltaSec = std::chrono::duration<float>(now - lastFrameTime).count();
-        lastFrameTime = now;
-        if (deltaSec > 0.0f && deltaSec < 1.0f) {
-            waterAnimTime = fmodf(waterAnimTime + deltaSec / 3.2f, 1.0f);
-        }
+    // ===== Phase 1: 使用 rendertype_cutout 渲染基体 + 覆盖层 =====
+    // cutout 着色器会丢弃 alpha < 0.1 的像素，对不透明块（alpha=1.0）无害
+    if (shaderCutout.program == 0) {
+        renderUI();
+        eglSwapBuffers(display, surface);
+        return;
     }
 
-    // ===== 绑定水纹理到 GL_TEXTURE1 =====
-    if (waterTextureID != 0) {
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, waterTextureID);
-        if (uniformWaterTexture != -1) glUniform1i(uniformWaterTexture, 1);
-        if (uniformWaterTime != -1) glUniform1f(uniformWaterTime, waterAnimTime);
-    }
+    glUseProgram(shaderCutout.program);
 
-    // 设置矩阵 uniform
-    float modelMatrix[16] = {
-            1, 0, 0, 0,
-            0, 1, 0, 0,
-            0, 0, 1, 0,
-            0, 0, 0, 1
-    };
-    glUniformMatrix4fv(uniformModel, 1, GL_FALSE, modelMatrix);
-    glUniformMatrix4fv(uniformView, 1, GL_FALSE, cameraMatrix);
-    glUniformMatrix4fv(uniformProj, 1, GL_FALSE, projectionMatrix);
+    // 设置公共 uniform
+    glm::mat4 modelMat(1.0f);
+    glm::mat4 modelViewMat = viewMatrix * modelMat;
+    if (shaderCutout.uModelViewMat != -1)
+        glUniformMatrix4fv(shaderCutout.uModelViewMat, 1, GL_FALSE, glm::value_ptr(modelViewMat));
+    if (shaderCutout.uProjMat != -1)
+        glUniformMatrix4fv(shaderCutout.uProjMat, 1, GL_FALSE, glm::value_ptr(projMatrix));
+    if (shaderCutout.uChunkOffset != -1)
+        glUniform3f(shaderCutout.uChunkOffset, 0.0f, 0.0f, 0.0f);
+    if (shaderCutout.uColorModulator != -1)
+        glUniform4f(shaderCutout.uColorModulator, 1.0f, 1.0f, 1.0f, 1.0f);
+    if (shaderCutout.uFogShape != -1)
+        glUniform1i(shaderCutout.uFogShape, 0);
+    if (shaderCutout.uTextureMatrix != -1)
+        glUniformMatrix4fv(shaderCutout.uTextureMatrix, 1, GL_FALSE, glm::value_ptr(glm::mat4(1.0f)));
 
-    // 绑定纹理数组
+    // 雾效
+    float fogEnd = farPlane;
+    float fogStart = farPlane * 0.7f;
+    if (shaderCutout.uFogStart != -1) glUniform1f(shaderCutout.uFogStart, fogStart);
+    if (shaderCutout.uFogEnd != -1) glUniform1f(shaderCutout.uFogEnd, fogEnd);
+    if (shaderCutout.uFogColor != -1)
+        glUniform4f(shaderCutout.uFogColor, 0.53f, 0.81f, 0.92f, 1.0f);
+
+    // 绑定纹理数组到 Sampler0
+    glActiveTexture(GL_TEXTURE0);
     if (textureArrayID != 0) {
-        glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayID);
-        glUniform1i(uniformTexture, 0);
-
-        // 启用纹理采样
-        GLint useTextureLoc = glGetUniformLocation(shaderProgram, "useTexture");
-        if (useTextureLoc != -1) {
-            glUniform1i(useTextureLoc, 1);
+        // 一次性记录纹理数组层数供诊断
+        if (frameCount <= 5) {
+            LOGI("Texture array: %d layers, %dx%d", textureTotalCount, textureWidth, textureHeight);
         }
     } else {
-        // 没有纹理时使用红色
-        GLint useTextureLoc = glGetUniformLocation(shaderProgram, "useTexture");
-        if (useTextureLoc != -1) {
-            glUniform1i(useTextureLoc, 0);
+        LOGE("Texture array not initialized! No texture bound - all blocks will be black");
+    }
+    if (shaderCutout.uSampler0 != -1) glUniform1i(shaderCutout.uSampler0, 0);
+
+    // 绑定光照贴图到 Sampler2（Mojang 光照贴图约定在 sampler2D Sampler2）
+    // 即使 uSampler2==-1 也尝试查询和设置，防止编译器优化导致无绑定
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, lightmapTextureID);
+    {
+        GLint s2loc = shaderCutout.uSampler2;
+        if (s2loc == -1) {
+            s2loc = glGetUniformLocation(shaderCutout.program, "Sampler2");
         }
+        if (s2loc != -1) glUniform1i(s2loc, 2);
+        else LOGW("Sampler2 uniform not active (lightmap disabled)");
     }
 
     // ===== 合批渲染所有可见区块 =====
     int chunksRendered = 0;
     int totalTriangles = 0;
 
-    // 默认使用主纹理数组
-    if (uniformUseWaterTexture != -1) glUniform1i(uniformUseWaterTexture, 0);
-
-    // 获取维度 Y 范围用于 chunk AABB
     const auto& dim = VersionManager::getInstance().getDimensionConfig();
     float worldMinY = (float)dim.minY;
     float worldMaxY = (float)dim.maxY;
 
-    // 启用透明混合（玻璃等透明方块需要）
+    // 启用透明混合（覆盖层需要 alpha blend）
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // 加锁保护 chunkRenderCache，防止网络线程的 markChunkForUpdate 并发修改
+    // 加锁保护 chunkRenderCache
     std::lock_guard<std::mutex> renderLock(cacheMutex);
     for (auto& [chunkKey, renderData] : chunkRenderCache) {
 
@@ -1443,42 +1337,55 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
             continue;
         }
 
-        // ===== 距离剔除（基于渲染距离设置）=====
+        // DIAG: 打印附近 chunk 的信息
+        static int chunkDiagPrinted = 0;
+        if (chunkDiagPrinted < 5) {
+            int cx = (int)(renderData.position.x / 16.0f);
+            int cz = (int)(renderData.position.z / 16.0f);
+            // 从 chunkKey 解码 sectionY
+            // key 编码: ((int64_t)chunkX << 24) | ((int64_t)sectionY << 12) | (chunkZ & 0xFFF)
+            int64_t k = (long long)chunkKey;
+            int sectionY = (int)((k >> 12) & 0xFFF);
+            float dist2 = (renderData.position.x - lastCameraX)*(renderData.position.x - lastCameraX)
+                         + (renderData.position.z - lastCameraZ)*(renderData.position.z - lastCameraZ);
+            LOGI("CHUNK_DIAG: key=%lld pos=(%.0f,%.0f) chunk=(%d,%d) secY=%d dist=%.0f idx=%u overlay=%u water=%u",
+                 (long long)chunkKey, renderData.position.x, renderData.position.z,
+                 cx, cz, sectionY, sqrtf(dist2),
+                 renderData.indexCount, renderData.overlayIndexCount, renderData.waterIndexCount);
+            chunkDiagPrinted++;
+        }
+
+        // 距离剔除
         float chunkCenterX = renderData.position.x + 8.0f;
         float chunkCenterZ = renderData.position.z + 8.0f;
         float dx = chunkCenterX - lastCameraX;
         float dz = chunkCenterZ - lastCameraZ;
         float dist = sqrtf(dx * dx + dz * dz);
-        if (dist > farPlane) {
-            continue;
-        }
+        if (dist > farPlane) continue;
 
-        // ===== 视锥体裁剪：检查区块 AABB 是否在视锥体内 =====
+        // 视锥体裁剪
         float minX = renderData.position.x;
         float maxX = minX + 16.0f;
         float minZ = renderData.position.z;
         float maxZ = minZ + 16.0f;
-        if (!isAABBInFrustum(minX, worldMinY, minZ, maxX, worldMaxY, maxZ)) {
-            // 区块不在视锥体内，跳过渲染
-            continue;
-        }
+        if (!isAABBInFrustum(minX, worldMinY, minZ, maxX, worldMaxY, maxZ)) continue;
 
-        // 绑定该区块的 VAO（captures VBO/EBO + attrib 配置）
         glBindVertexArray(renderData.vao);
+        { GLenum e; while((e=glGetError())!=GL_NO_ERROR) LOGE("GL_ERR_VAO 0x%x frame=%u key=%lld", e, frameCount, (long long)chunkKey); }
 
-        // 索引区域划分：[不透明基体 | 草覆盖层(共面，需 LEQUAL) | 水(透明)]
         uint32_t baseEnd = renderData.indexCount - renderData.overlayIndexCount - renderData.waterIndexCount;
-        uint32_t grassEnd = baseEnd + renderData.overlayIndexCount;
 
-        // 第一遍：不透明几何体（写深度，LESS）
+        // 基体几何（LESS 深度测试，写深度）
         glDrawElements(GL_TRIANGLES, baseEnd, GL_UNSIGNED_INT, 0);
+        { GLenum e; while((e=glGetError())!=GL_NO_ERROR) LOGE("GL_ERR_BASE 0x%x frame=%u baseEnd=%u", e, frameCount, baseEnd); }
 
-        // 第二遍：草覆盖层（与基础层共面，LEQUAL 覆盖但不写深度，避免 z-fighting）
+        // 草覆盖层（LEQUAL 深度测试，不写深度，避免 z-fighting）
         if (renderData.overlayIndexCount > 0) {
             glDepthFunc(GL_LEQUAL);
             glDepthMask(GL_FALSE);
             glDrawElements(GL_TRIANGLES, renderData.overlayIndexCount, GL_UNSIGNED_INT,
                            (const GLvoid*)(uintptr_t)(baseEnd * sizeof(uint32_t)));
+            { GLenum e; while((e=glGetError())!=GL_NO_ERROR) LOGE("GL_ERR_OVER 0x%x frame=%u", e, frameCount); }
             glDepthMask(GL_TRUE);
             glDepthFunc(GL_LESS);
         }
@@ -1487,61 +1394,88 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         totalTriangles += renderData.indexCount / 3;
     }
 
-    // ===== 第二阶段：所有区块的水（在不透明几何体之后统一渲染）=====
-    bool waterStateSet = false;
-    for (auto& [chunkKey, renderData] : chunkRenderCache) {
-        if (!renderData.visible || renderData.indexCount == 0) continue;
-        if (renderData.waterIndexCount == 0) continue;
+    // ===== Phase 2: 使用 rendertype_translucent 渲染水 =====
+    if (shaderTranslucent.program != 0) {
+        bool waterStateSet = false;
+        for (auto& [chunkKey, renderData] : chunkRenderCache) {
+            if (!renderData.visible || renderData.indexCount == 0) continue;
+            if (renderData.waterIndexCount == 0) continue;
 
-        // 距离剔除
-        float cx = renderData.position.x + 8.0f;
-        float cz = renderData.position.z + 8.0f;
-        float dx = cx - lastCameraX, dz = cz - lastCameraZ;
-        if (sqrtf(dx * dx + dz * dz) > farPlane) continue;
+            // 距离剔除
+            float cx = renderData.position.x + 8.0f;
+            float cz = renderData.position.z + 8.0f;
+            float dx = cx - lastCameraX, dz = cz - lastCameraZ;
+            if (sqrtf(dx * dx + dz * dz) > farPlane) continue;
 
-        float minX = renderData.position.x;
-        float maxX = minX + 16.0f;
-        float minZ = renderData.position.z;
-        float maxZ = minZ + 16.0f;
-        if (!isAABBInFrustum(minX, worldMinY, minZ, maxX, worldMaxY, maxZ)) continue;
+            float minX = renderData.position.x;
+            float maxX = minX + 16.0f;
+            float minZ = renderData.position.z;
+            float maxZ = minZ + 16.0f;
+            if (!isAABBInFrustum(minX, worldMinY, minZ, maxX, worldMaxY, maxZ)) continue;
 
-        // 遇到第一个可见水区块时才设置渲染状态
-        if (!waterStateSet) {
-            glEnable(GL_BLEND);
-            glBlendColor(1.0f, 1.0f, 1.0f, 0.5f);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            glDepthFunc(GL_LEQUAL);
-            glDepthMask(GL_FALSE);
-            if (uniformUseWaterTexture != -1) glUniform1i(uniformUseWaterTexture, 1);
-            waterStateSet = true;
+            if (!waterStateSet) {
+                glUseProgram(shaderTranslucent.program);
+
+                if (shaderTranslucent.uModelViewMat != -1)
+                    glUniformMatrix4fv(shaderTranslucent.uModelViewMat, 1, GL_FALSE, glm::value_ptr(modelViewMat));
+                if (shaderTranslucent.uProjMat != -1)
+                    glUniformMatrix4fv(shaderTranslucent.uProjMat, 1, GL_FALSE, glm::value_ptr(projMatrix));
+                if (shaderTranslucent.uChunkOffset != -1)
+                    glUniform3f(shaderTranslucent.uChunkOffset, 0.0f, 0.0f, 0.0f);
+                if (shaderTranslucent.uColorModulator != -1)
+                    glUniform4f(shaderTranslucent.uColorModulator, 1.0f, 1.0f, 1.0f, 1.0f);
+                if (shaderTranslucent.uFogShape != -1)
+                    glUniform1i(shaderTranslucent.uFogShape, 0);
+                if (shaderTranslucent.uTextureMatrix != -1)
+                    glUniformMatrix4fv(shaderTranslucent.uTextureMatrix, 1, GL_FALSE, glm::value_ptr(glm::mat4(1.0f)));
+                if (shaderTranslucent.uFogStart != -1) glUniform1f(shaderTranslucent.uFogStart, fogStart);
+                if (shaderTranslucent.uFogEnd != -1) glUniform1f(shaderTranslucent.uFogEnd, fogEnd);
+                if (shaderTranslucent.uFogColor != -1)
+                    glUniform4f(shaderTranslucent.uFogColor, 0.53f, 0.81f, 0.92f, 1.0f);
+                if (shaderTranslucent.uSampler0 != -1) glUniform1i(shaderTranslucent.uSampler0, 0);
+                if (shaderTranslucent.uSampler2 != -1) glUniform1i(shaderTranslucent.uSampler2, 2);
+
+                // 水渲染状态
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glDepthFunc(GL_LEQUAL);
+                glDepthMask(GL_FALSE);
+                waterStateSet = true;
+            }
+
+            glBindVertexArray(renderData.vao);
+            uint32_t baseEnd = renderData.indexCount - renderData.overlayIndexCount - renderData.waterIndexCount;
+            uint32_t grassEnd = baseEnd + renderData.overlayIndexCount;
+            glDrawElements(GL_TRIANGLES, renderData.waterIndexCount, GL_UNSIGNED_INT,
+                           (const GLvoid*)(uintptr_t)(grassEnd * sizeof(uint32_t)));
         }
 
-        glBindVertexArray(renderData.vao);
-
-        uint32_t baseEnd = renderData.indexCount - renderData.overlayIndexCount - renderData.waterIndexCount;
-        uint32_t grassEnd = baseEnd + renderData.overlayIndexCount;
-
-        glDrawElements(GL_TRIANGLES, renderData.waterIndexCount, GL_UNSIGNED_INT,
-                       (const GLvoid*)(uintptr_t)(grassEnd * sizeof(uint32_t)));
-    }
-
-    // 有水的区块才设置了状态，需要恢复
-    if (waterStateSet) {
-        if (uniformUseWaterTexture != -1) glUniform1i(uniformUseWaterTexture, 0);
-        glDepthMask(GL_TRUE);
-        glDepthFunc(GL_LESS);
-        glDisable(GL_BLEND);
+        if (waterStateSet) {
+            glDepthMask(GL_TRUE);
+            glDepthFunc(GL_LESS);
+            glDisable(GL_BLEND);
+        }
+        { GLenum e; while((e=glGetError())!=GL_NO_ERROR) LOGE("GL_ERR_WATER 0x%x frame=%u", e, frameCount); }
     }
 
     glBindVertexArray(0);
+    { GLenum e; while((e=glGetError())!=GL_NO_ERROR) LOGE("GL_ERR_UNBIND 0x%x frame=%u", e, frameCount); }
 
-    // 每 60 帧打印一次统计信息
+    // 每 60 帧检查 OpenGL 错误
+    if (frameCount % 60 == 0) {
+        GLenum err;
+        while ((err = glGetError()) != GL_NO_ERROR) {
+            LOGE("GL_ERROR 0x%x after chunk rendering frame %u", err, frameCount);
+        }
+    }
+
+    // 每 60 帧打印统计信息
     if (frameCount % 60 == 0) {
         LOGI("Frame %u: Rendered %d chunks, %d triangles",
              frameCount, chunksRendered, totalTriangles);
     }
 
-    // 游戏内 UI 叠加（摇杆 + 升降按钮）
+    // 游戏内 UI 叠加
     renderUI();
 
     eglSwapBuffers(display, surface);
@@ -1600,10 +1534,28 @@ void GLRenderer::cleanup() {
         textureArrayID = 0;
     }
 
-    // 清理水纹理
-    if (waterTextureID != 0) {
-        glDeleteTextures(1, &waterTextureID);
-        waterTextureID = 0;
+    // 清理光照贴图纹理
+    if (lightmapTextureID != 0) {
+        glDeleteTextures(1, &lightmapTextureID);
+        lightmapTextureID = 0;
+    }
+
+    // 清理 Mojang 官方着色器程序
+    if (shaderSolid.program != 0) {
+        glDeleteProgram(shaderSolid.program);
+        shaderSolid.program = 0;
+    }
+    if (shaderCutout.program != 0) {
+        glDeleteProgram(shaderCutout.program);
+        shaderCutout.program = 0;
+    }
+    if (shaderCutoutMipped.program != 0) {
+        glDeleteProgram(shaderCutoutMipped.program);
+        shaderCutoutMipped.program = 0;
+    }
+    if (shaderTranslucent.program != 0) {
+        glDeleteProgram(shaderTranslucent.program);
+        shaderTranslucent.program = 0;
     }
     
     // 清理所有区块的渲染数据
@@ -1619,23 +1571,6 @@ void GLRenderer::cleanup() {
         }
     }
     chunkRenderCache.clear();
-    
-    if (vao != 0) {
-        glDeleteVertexArrays(1, &vao);
-        vao = 0;
-    }
-    if (vbo != 0) {
-        glDeleteBuffers(1, &vbo);
-        vbo = 0;
-    }
-    if (ebo != 0) {
-        glDeleteBuffers(1, &ebo);
-        ebo = 0;
-    }
-    if (shaderProgram != 0) {
-        glDeleteProgram(shaderProgram);
-        shaderProgram = 0;
-    }
 
     // 清理方块图标缓存
     for (auto& [name, tex] : blockIconCache) {
