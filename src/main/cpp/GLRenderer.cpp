@@ -824,6 +824,10 @@ void GLRenderer::doClearChunks() {
 }
 
 void GLRenderer::enqueueWork(ChunkWorkItem item) {
+    // 复制当前视锥平面到工作项，供工作线程做 section 级裁剪
+    for (int i = 0; i < 6; i++) {
+        item.frustumPlanes[i] = frustumPlanes[i];
+    }
     {
         std::lock_guard<std::mutex> lock(workMutex);
         workQueue.push(std::move(item));
@@ -1180,27 +1184,15 @@ void GLRenderer::computeFrustumPlanes(const glm::mat4& viewProj) {
 }
 
 bool GLRenderer::isAABBInFrustum(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) const {
-    // 检查 AABB 的 8 个顶点是否完全在某个平面的外侧
-    glm::vec3 corners[8] = {
-            {minX, minY, minZ}, {maxX, minY, minZ},
-            {minX, maxY, minZ}, {maxX, maxY, minZ},
-            {minX, minY, maxZ}, {maxX, minY, maxZ},
-            {minX, maxY, maxZ}, {maxX, maxY, maxZ}
-    };
-
+    // 优化版：p-vertex 测试，每个平面只检查1个顶点（最可能在平面外侧的角点）
+    // 6 个平面 × 1 个顶点 = 6 次测试（原版 8 顶点 × 6 平面 = 48 次）
     for (int p = 0; p < 6; p++) {
-        int outsideCount = 0;
-        for (int c = 0; c < 8; c++) {
-            float dist = frustumPlanes[p].x * corners[c].x +
-                         frustumPlanes[p].y * corners[c].y +
-                         frustumPlanes[p].z * corners[c].z +
-                         frustumPlanes[p].w;
-            if (dist < 0) {
-                outsideCount++;
-            }
-        }
-        // 如果所有顶点都在平面外侧，AABB 不可见
-        if (outsideCount == 8) {
+        const auto& pl = frustumPlanes[p];
+        // p-vertex: 在平面法线方向上投影最大的角点
+        float px = (pl.x > 0) ? maxX : minX;
+        float py = (pl.y > 0) ? maxY : minY;
+        float pz = (pl.z > 0) ? maxZ : minZ;
+        if (pl.x * px + pl.y * py + pl.z * pz + pl.w < 0) {
             return false;
         }
     }
@@ -1258,7 +1250,6 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     computeFrustumPlanes(projMatrix * viewMatrix);
 
     // ===== Phase 1: 使用 rendertype_cutout 渲染基体 + 覆盖层 =====
-    // cutout 着色器会丢弃 alpha < 0.1 的像素，对不透明块（alpha=1.0）无害
     if (shaderCutout.program == 0) {
         renderUI();
         eglSwapBuffers(display, surface);
@@ -1295,17 +1286,12 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     glActiveTexture(GL_TEXTURE0);
     if (textureArrayID != 0) {
         glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayID);
-        // 一次性记录纹理数组层数供诊断
-        if (frameCount <= 5) {
-            LOGI("Texture array: %d layers, %dx%d", textureTotalCount, textureWidth, textureHeight);
-        }
     } else {
         LOGE("Texture array not initialized! No texture bound - all blocks will be black");
     }
     if (shaderCutout.uSampler0 != -1) glUniform1i(shaderCutout.uSampler0, 0);
 
-    // 绑定光照贴图到 Sampler2（Mojang 光照贴图约定在 sampler2D Sampler2）
-    // 即使 uSampler2==-1 也尝试查询和设置，防止编译器优化导致无绑定
+    // 绑定光照贴图到 Sampler2
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, lightmapTextureID);
     {
@@ -1314,7 +1300,6 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
             s2loc = glGetUniformLocation(shaderCutout.program, "Sampler2");
         }
         if (s2loc != -1) glUniform1i(s2loc, 2);
-        else LOGW("Sampler2 uniform not active (lightmap disabled)");
     }
 
     // ===== 合批渲染所有可见区块 =====
@@ -1325,45 +1310,23 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     float worldMinY = (float)dim.minY;
     float worldMaxY = (float)dim.maxY;
 
-    // 启用透明混合（覆盖层需要 alpha blend）
+    // 加锁保护 chunkRenderCache
+    std::lock_guard<std::mutex> renderLock(cacheMutex);
+
+    // 启用透明混合（玻璃、树叶等需要 alpha blend）
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // 加锁保护 chunkRenderCache
-    std::lock_guard<std::mutex> renderLock(cacheMutex);
+    // ---- Phase 1a: 基体几何（纯深度测试，写深度）----
     for (auto& [chunkKey, renderData] : chunkRenderCache) {
+        if (!renderData.visible || renderData.indexCount == 0) continue;
 
-        if (!renderData.visible || renderData.indexCount == 0) {
-            continue;
-        }
-
-        // DIAG: 打印附近 chunk 的信息
-        static int chunkDiagPrinted = 0;
-        if (chunkDiagPrinted < 5) {
-            int cx = (int)(renderData.position.x / 16.0f);
-            int cz = (int)(renderData.position.z / 16.0f);
-            // 从 chunkKey 解码 sectionY
-            // key 编码: ((int64_t)chunkX << 24) | ((int64_t)sectionY << 12) | (chunkZ & 0xFFF)
-            int64_t k = (long long)chunkKey;
-            int sectionY = (int)((k >> 12) & 0xFFF);
-            float dist2 = (renderData.position.x - lastCameraX)*(renderData.position.x - lastCameraX)
-                         + (renderData.position.z - lastCameraZ)*(renderData.position.z - lastCameraZ);
-            LOGI("CHUNK_DIAG: key=%lld pos=(%.0f,%.0f) chunk=(%d,%d) secY=%d dist=%.0f idx=%u overlay=%u water=%u",
-                 (long long)chunkKey, renderData.position.x, renderData.position.z,
-                 cx, cz, sectionY, sqrtf(dist2),
-                 renderData.indexCount, renderData.overlayIndexCount, renderData.waterIndexCount);
-            chunkDiagPrinted++;
-        }
-
-        // 距离剔除
         float chunkCenterX = renderData.position.x + 8.0f;
         float chunkCenterZ = renderData.position.z + 8.0f;
         float dx = chunkCenterX - lastCameraX;
         float dz = chunkCenterZ - lastCameraZ;
-        float dist = sqrtf(dx * dx + dz * dz);
-        if (dist > farPlane) continue;
+        if (dx * dx + dz * dz > farPlane * farPlane) continue;
 
-        // 视锥体裁剪
         float minX = renderData.position.x;
         float maxX = minX + 16.0f;
         float minZ = renderData.position.z;
@@ -1371,27 +1334,41 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         if (!isAABBInFrustum(minX, worldMinY, minZ, maxX, worldMaxY, maxZ)) continue;
 
         glBindVertexArray(renderData.vao);
-        { GLenum e; while((e=glGetError())!=GL_NO_ERROR) LOGE("GL_ERR_VAO 0x%x frame=%u key=%lld", e, frameCount, (long long)chunkKey); }
 
         uint32_t baseEnd = renderData.indexCount - renderData.overlayIndexCount - renderData.waterIndexCount;
+        if (baseEnd > 0) {
+            glDrawElements(GL_TRIANGLES, baseEnd, GL_UNSIGNED_INT, 0);
+        }
 
-        // 基体几何（LESS 深度测试，写深度）
-        glDrawElements(GL_TRIANGLES, baseEnd, GL_UNSIGNED_INT, 0);
-        { GLenum e; while((e=glGetError())!=GL_NO_ERROR) LOGE("GL_ERR_BASE 0x%x frame=%u baseEnd=%u", e, frameCount, baseEnd); }
+        chunksRendered++;
+        totalTriangles += baseEnd / 3;
+    }
 
-        // 草覆盖层（LEQUAL 深度测试，不写深度，避免 z-fighting）
-        if (renderData.overlayIndexCount > 0) {
+    // ---- Phase 1b: 覆盖层（LEQUAL depth，不写深度）----
+    // 注：覆盖层已确保在 Phase 1a 中通过了视锥检测
+    {
+        bool blendEnabled = false;
+        for (auto& [chunkKey, renderData] : chunkRenderCache) {
+            if (!renderData.visible || renderData.overlayIndexCount == 0) continue;
+            if (!blendEnabled) {
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                blendEnabled = true;
+            }
+
+            glBindVertexArray(renderData.vao);
+            uint32_t baseEnd = renderData.indexCount - renderData.overlayIndexCount - renderData.waterIndexCount;
+
             glDepthFunc(GL_LEQUAL);
             glDepthMask(GL_FALSE);
             glDrawElements(GL_TRIANGLES, renderData.overlayIndexCount, GL_UNSIGNED_INT,
                            (const GLvoid*)(uintptr_t)(baseEnd * sizeof(uint32_t)));
-            { GLenum e; while((e=glGetError())!=GL_NO_ERROR) LOGE("GL_ERR_OVER 0x%x frame=%u", e, frameCount); }
             glDepthMask(GL_TRUE);
             glDepthFunc(GL_LESS);
-        }
 
-        chunksRendered++;
-        totalTriangles += renderData.indexCount / 3;
+            totalTriangles += renderData.overlayIndexCount / 3;
+        }
+        if (blendEnabled) glDisable(GL_BLEND);
     }
 
     // ===== Phase 2: 使用 rendertype_translucent 渲染水 =====
@@ -1404,8 +1381,8 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
             // 距离剔除
             float cx = renderData.position.x + 8.0f;
             float cz = renderData.position.z + 8.0f;
-            float dx = cx - lastCameraX, dz = cz - lastCameraZ;
-            if (sqrtf(dx * dx + dz * dz) > farPlane) continue;
+            float dx2 = cx - lastCameraX, dz2 = cz - lastCameraZ;
+            if (dx2 * dx2 + dz2 * dz2 > farPlane * farPlane) continue;
 
             float minX = renderData.position.x;
             float maxX = minX + 16.0f;
@@ -1455,19 +1432,9 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
             glDepthFunc(GL_LESS);
             glDisable(GL_BLEND);
         }
-        { GLenum e; while((e=glGetError())!=GL_NO_ERROR) LOGE("GL_ERR_WATER 0x%x frame=%u", e, frameCount); }
     }
 
     glBindVertexArray(0);
-    { GLenum e; while((e=glGetError())!=GL_NO_ERROR) LOGE("GL_ERR_UNBIND 0x%x frame=%u", e, frameCount); }
-
-    // 每 60 帧检查 OpenGL 错误
-    if (frameCount % 60 == 0) {
-        GLenum err;
-        while ((err = glGetError()) != GL_NO_ERROR) {
-            LOGE("GL_ERROR 0x%x after chunk rendering frame %u", err, frameCount);
-        }
-    }
 
     // 每 60 帧打印统计信息
     if (frameCount % 60 == 0) {

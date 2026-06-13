@@ -119,6 +119,7 @@ private:
         int chunkX;
         int chunkZ;
         float distance;  // 距离玩家距离，优先级队列排序用
+        glm::vec4 frustumPlanes[6];  // 工作线程侧 section 级视锥裁剪用
 
         bool operator<(const ChunkWorkItem& other) const {
             return distance > other.distance;  // 小顶堆：距离近的优先级高
