@@ -2,6 +2,7 @@
 #include "BlockRegistry.h"
 #include "TextureAtlas.h"
 #include "BiomeColorManager.h"
+#include "GameUI.h"
 #include <android/log.h>
 #include <map>
 #include <string>
@@ -838,6 +839,125 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                 }
             }
         }
+    }
+
+    // ===== 光照：基于 blockStates 位置查 skyLight/blockLight，计算 UV2 =====
+
+    // 跨区块光照查询：世界坐标 → 光照值
+    auto getLightAtWorld = [&](int worldX, int worldY, int worldZ,
+                               uint8_t& outSky, uint8_t& outBlock) {
+        int cx = (worldX >> 4);
+        int cz = (worldZ >> 4);
+        int lx = worldX & 15;
+        int lz = worldZ & 15;
+
+        // 优先在当前 section 查找（快速路径）
+        if (cx == chunkX && cz == chunkZ &&
+            worldY >= sectionY && worldY < sectionY + 16) {
+            outSky = section.getSkyLight(lx, worldY - sectionY, lz);
+            outBlock = section.getBlockLight(lx, worldY - sectionY, lz);
+            return;
+        }
+
+        // 跨区块查询
+        if (!chunkManager) {
+            outSky = 15; outBlock = 0; return;
+        }
+        auto chunk = chunkManager->getChunk(cx, cz);
+        if (!chunk || !chunk->isLoaded) {
+            outSky = 15; outBlock = 0; return;
+        }
+        for (const auto& s : chunk->sections) {
+            if (!s) continue;
+            if (worldY >= s->y && worldY < s->y + 16) {
+                outSky = s->getSkyLight(lx, worldY - s->y, lz);
+                outBlock = s->getBlockLight(lx, worldY - s->y, lz);
+                return;
+            }
+        }
+        outSky = 15; outBlock = 0;
+    };
+
+    // 平滑光照辅助函数：对顶点周围 4 个方块做平均
+    auto getSmoothLight = [&](float wx, float wy, float wz,
+                               float nx, float ny, float nz,
+                               uint8_t& outSky, uint8_t& outBlock) {
+        int fnx = (nx > 0.5f) ? 1 : ((nx < -0.5f) ? -1 : 0);
+        int fny = (ny > 0.5f) ? 1 : ((ny < -0.5f) ? -1 : 0);
+        int fnz = (nz > 0.5f) ? 1 : ((nz < -0.5f) ? -1 : 0);
+
+        int vx = (int)floorf(wx);
+        int vy = (int)floorf(wy);
+        int vz = (int)floorf(wz);
+
+        int sumSky = 0, sumBlock = 0, count = 0;
+        auto smpl = [&](int sx, int sy, int sz) {
+            uint8_t sk, bk;
+            getLightAtWorld(sx, sy, sz, sk, bk);
+            sumSky += sk;
+            sumBlock += bk;
+            count++;
+        };
+
+        // 根据面法线方向，采样顶点周围的 4 个方块（采样面法线指向的空气侧）
+        // 偏移量：正方向面=max(fn,0)=1，负方向面=max(fn,0)=0
+        int ox = (fnx > 0) ? 1 : 0;
+        int oy = (fny > 0) ? 1 : 0;
+        int oz = (fnz > 0) ? 1 : 0;
+
+        if (fny != 0) {  // Y 面（TOP/BOTTOM）：在 XZ 平面采样
+            for (int dx = 0; dx <= 1; dx++)
+                for (int dz = 0; dz <= 1; dz++)
+                    smpl(vx - 1 + dx, vy - 1 + oy, vz - 1 + dz);
+        } else if (fnx != 0) {  // X 面（EAST/WEST）：在 YZ 平面采样
+            for (int dy = 0; dy <= 1; dy++)
+                for (int dz = 0; dz <= 1; dz++)
+                    smpl(vx - 1 + ox, vy - 1 + dy, vz - 1 + dz);
+        } else {  // Z 面（SOUTH/NORTH）：在 XY 平面采样
+            for (int dx = 0; dx <= 1; dx++)
+                for (int dy = 0; dy <= 1; dy++)
+                    smpl(vx - 1 + dx, vy - 1 + dy, vz - 1 + oz);
+        }
+
+        if (count > 0) {
+            outSky = (uint8_t)((sumSky + count/2) / count);
+            outBlock = (uint8_t)((sumBlock + count/2) / count);
+        } else {
+            outSky = 15; outBlock = 0;
+        }
+    };
+
+    bool smoothLighting = GameUI::getInstance().isSmoothLightingEnabled();
+    {
+        auto applyLight = [&](std::vector<Vertex>& verts) {
+            for (auto& vert : verts) {
+                uint8_t sky = 15, block = 0;
+                if (smoothLighting) {
+                    getSmoothLight(vert.pos[0], vert.pos[1], vert.pos[2],
+                                   vert.normal[0], vert.normal[1], vert.normal[2],
+                                   sky, block);
+                } else {
+                    int wx = (int)floorf(vert.pos[0]);
+                    int wy = (int)floorf(vert.pos[1]);
+                    int wz = (int)floorf(vert.pos[2]);
+                    int lx = wx & 15;
+                    int ly = wy - sectionY;
+                    int lz = wz & 15;
+                    if (ly >= 0 && ly < 16) {
+                        sky = section.getSkyLight(lx, ly, lz);
+                        block = section.getBlockLight(lx, ly, lz);
+                    } else {
+                        // 跨 section 边界：查询相邻 section 的光照
+                        getLightAtWorld(wx, wy, wz, sky, block);
+                    }
+                }
+                vert.uv2[0] = block * 16.0f + 8.0f;
+                vert.uv2[1] = sky * 16.0f + 8.0f;
+            }
+        };
+    applyLight(baseVertices);
+    applyLight(overlayVertices);
+    applyLight(waterVertices);
     }
 
     // ===== 合并：base → grass_overlay → water =====

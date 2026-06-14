@@ -585,18 +585,63 @@ bool GLRenderer::createShaders() {
         return false;
     }
 
-    // ===== 创建默认光照贴图（白色 16x16 = 全亮）=====
+    // ===== 创建光照贴图（16×16，每个 texel 代表一个 (blockLight, skyLight) 组合）=====
+    // 使用类似原版的彩色光照贴图：方块光暖色（橙红）、天空光冷色（蓝白）
     {
         glGenTextures(1, &lightmapTextureID);
         glBindTexture(GL_TEXTURE_2D, lightmapTextureID);
-        uint8_t whitePixels[16 * 16 * 4];
-        memset(whitePixels, 255, sizeof(whitePixels));
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 16, 16, 0, GL_RGBA, GL_UNSIGNED_BYTE, whitePixels);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        uint8_t pixels[16 * 16 * 4];
+        for (int sy = 0; sy < 16; sy++) {
+            for (int bx = 0; bx < 16; bx++) {
+                float blockBright = bx / 15.0f;
+                float skyBright = sy / 15.0f;
+
+                // 方块光颜色（暖色/橙红——火把/熔岩风格）
+                float blockR = blockBright;
+                float blockG = blockBright * ((blockBright * 0.6f + 0.4f) * 0.6f + 0.4f);
+                float blockB = blockBright * (blockBright * blockBright * 0.6f + 0.4f);
+
+                // 天空光颜色（冷色/蓝白——日光风格）
+                float skyR = skyBright * 0.9f;
+                float skyG = skyBright * 1.0f;
+                float skyB = skyBright * 1.1f;
+
+                // 合成
+                float totalR = fminf(blockR + skyR, 1.0f);
+                float totalG = fminf(blockG + skyG, 1.0f);
+                float totalB = fminf(blockB + skyB, 1.0f);
+
+                // 混合一点灰色
+                totalR = totalR * 0.96f + 0.04f * 0.75f;
+                totalG = totalG * 0.96f + 0.04f * 0.75f;
+                totalB = totalB * 0.96f + 0.04f * 0.75f;
+
+                // Gamma 校正（原版 notGamma 风格）
+                float gamma = 0.5f;
+                float ngR = 1.0f - powf(1.0f - totalR, 4.0f);
+                float ngG = 1.0f - powf(1.0f - totalG, 4.0f);
+                float ngB = 1.0f - powf(1.0f - totalB, 4.0f);
+                totalR = totalR * (1.0f - gamma) + ngR * gamma;
+                totalG = totalG * (1.0f - gamma) + ngG * gamma;
+                totalB = totalB * (1.0f - gamma) + ngB * gamma;
+
+                totalR = fminf(fmaxf(totalR, 0.0f), 1.0f);
+                totalG = fminf(fmaxf(totalG, 0.0f), 1.0f);
+                totalB = fminf(fmaxf(totalB, 0.0f), 1.0f);
+
+                int idx = (sy * 16 + bx) * 4;
+                pixels[idx + 0] = (uint8_t)(totalR * 255.0f);
+                pixels[idx + 1] = (uint8_t)(totalG * 255.0f);
+                pixels[idx + 2] = (uint8_t)(totalB * 255.0f);
+                pixels[idx + 3] = 255;
+            }
+        }
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 16, 16, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        LOGI("Created default lightmap texture -> GL%d", lightmapTextureID);
+        LOGI("Created lightmap texture 16x16 with colored lighting (warm block/cool sky)");
     }
 
     LOGI("Mojang shaders loaded successfully");
@@ -954,9 +999,9 @@ void GLRenderer::workerLoop() {
                 dst.normal[1] = (int8_t)(src.normal[1] * 127.0f);
                 dst.normal[2] = (int8_t)(src.normal[2] * 127.0f);
                 dst.normal[3] = 0;
-                // uv2: lightmap [0,1] → [0,65535]
-                dst.uv2[0] = (uint16_t)(src.uv2[0] * 65535.0f + 0.5f);
-                dst.uv2[1] = (uint16_t)(src.uv2[1] * 65535.0f + 0.5f);
+                // uv2: lightmap [0,240] → [0,65535]
+                dst.uv2[0] = (uint16_t)(src.uv2[0] + 0.5f);
+                dst.uv2[1] = (uint16_t)(src.uv2[1] + 0.5f);
             }
 
             size_t regularCount = meshOut.indices.size()
@@ -1081,8 +1126,8 @@ void GLRenderer::processCompletedWork() {
                     glVertexAttribPointer(4, 4, GL_BYTE, GL_TRUE, sizeof(PackedVertex),
                         (void*)offsetof(PackedVertex, normal));
                     glEnableVertexAttribArray(4);
-                    // location 5: UV2 (GL_UNSIGNED_SHORT, 归一化)
-                    glVertexAttribPointer(5, 2, GL_UNSIGNED_SHORT, GL_TRUE, sizeof(PackedVertex),
+                    // location 5: UV2 (GL_UNSIGNED_SHORT, 原始值，shader 内除以 256)
+                    glVertexAttribPointer(5, 2, GL_UNSIGNED_SHORT, GL_FALSE, sizeof(PackedVertex),
                         (void*)offsetof(PackedVertex, uv2));
                     glEnableVertexAttribArray(5);
                     glBindVertexArray(0);

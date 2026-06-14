@@ -1204,7 +1204,7 @@ void GameUI::renderVideoSettings() {
         ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground);
 
     const float PANEL_W = 300.0f;
-    const float PANEL_H = 200.0f;
+    const float PANEL_H = 260.0f;
     float panelX = w * 0.5f - PANEL_W * 0.5f;
     float panelY = h * 0.5f - PANEL_H * 0.5f;
 
@@ -1235,6 +1235,14 @@ void GameUI::renderVideoSettings() {
 
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar();
+
+    // 平滑光照开关
+    ImGui::SetCursorPos(ImVec2(panelX + 20, panelY + 90));
+    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
+    if (ImGui::Checkbox("平滑光照", &smoothLightingEnabled)) {
+        // 设置变更立即生效（网格重建时使用新值）
+    }
+    ImGui::PopStyleColor();
 
     // 完成按钮
     ImGui::SetCursorPos(ImVec2(panelX + PANEL_W * 0.5f - 60.0f, panelY + PANEL_H - 55));

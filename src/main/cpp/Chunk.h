@@ -37,8 +37,44 @@ struct ChunkSection {
     std::vector<int32_t> biomes; // 生物群系数据 (4x4x4 = 64 个 biome ID)
     bool isEmpty = true;
 
+    // 光照数据（2048 bytes = 4096 blocks × 4 bits，每 byte 存两个值）
+    std::vector<uint8_t> skyLight;
+    std::vector<uint8_t> blockLight;
+
     ChunkSection() : y(0) {}
     ChunkSection(int yVal) : y(yVal), isEmpty(true) {}
+
+    // 获取某方块的光照值（坐标 0-15）
+    uint8_t getSkyLight(int x, int y, int z) const {
+        if (skyLight.size() != 2048) return 15;
+        int idx = ((y & 15) * 16 + (z & 15)) * 16 + (x & 15);
+        int byteIdx = idx / 2;
+        return (skyLight[byteIdx] >> ((idx & 1) * 4)) & 0xF;
+    }
+
+    uint8_t getBlockLight(int x, int y, int z) const {
+        if (blockLight.size() != 2048) return 0;
+        int idx = ((y & 15) * 16 + (z & 15)) * 16 + (x & 15);
+        int byteIdx = idx / 2;
+        return (blockLight[byteIdx] >> ((idx & 1) * 4)) & 0xF;
+    }
+
+    // 设置某方块的光照值
+    void setSkyLight(int x, int y, int z, uint8_t val) {
+        if (skyLight.size() != 2048) skyLight.resize(2048, 0);
+        int idx = ((y & 15) * 16 + (z & 15)) * 16 + (x & 15);
+        int byteIdx = idx / 2;
+        int shift = (idx & 1) * 4;
+        skyLight[byteIdx] = (skyLight[byteIdx] & ~(0xF << shift)) | ((val & 0xF) << shift);
+    }
+
+    void setBlockLight(int x, int y, int z, uint8_t val) {
+        if (blockLight.size() != 2048) blockLight.resize(2048, 0);
+        int idx = ((y & 15) * 16 + (z & 15)) * 16 + (x & 15);
+        int byteIdx = idx / 2;
+        int shift = (idx & 1) * 4;
+        blockLight[byteIdx] = (blockLight[byteIdx] & ~(0xF << shift)) | ((val & 0xF) << shift);
+    }
 };
 
 // 完整区块

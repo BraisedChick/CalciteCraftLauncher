@@ -34,6 +34,7 @@
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundClientCommandPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundLoginPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundBlockUpdatePacket.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundLightUpdatePacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundSectionBlocksUpdatePacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundContainerSetContentPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundContainerSetSlotPacket.hpp"
@@ -683,6 +684,101 @@ void ClientEngine::chunkWorkerFunc() {
         try {
             chunkManager->loadChunk(chunkX, chunkZ, rawData, true, bitMask,
                                     emptyHeightmaps, emptyBlockEntities, dimensionMinY);
+
+            // ===== 提取光照数据 =====
+            auto chunk = chunkManager->getChunk(chunkX, chunkZ);
+            if (chunk) {
+                const auto& lightData = chunkPacket.GetLightData();
+                const auto& skyMasks = lightData.GetSkyYMask();
+                const auto& blockMasks = lightData.GetBlockYMask();
+                const auto& emptySkyMasks = lightData.GetEmptySkyYMask();
+                const auto& emptyBlockMasks = lightData.GetEmptyBlockYMask();
+                const auto& skyUpdates = lightData.GetSkyUpdates();
+                const auto& blockUpdates = lightData.GetBlockUpdates();
+
+                uint64_t skyMask = skyMasks.empty() ? 0 : skyMasks[0];
+                uint64_t blockMask = blockMasks.empty() ? 0 : blockMasks[0];
+                uint64_t emptySkyMask = emptySkyMasks.empty() ? 0 : emptySkyMasks[0];
+                uint64_t emptyBlockMask = emptyBlockMasks.empty() ? 0 : emptyBlockMasks[0];
+
+                int skyIdx = 0, blockIdx = 0;
+                int sectionCount = (int)chunk->sections.size();
+                for (int i = 0; i < sectionCount; i++) {
+                    auto& section = chunk->sections[i];
+                    if (!section) continue;
+
+                    // Light section bits are offset by 1 from chunk section indices
+                    // bit 0 = Y=-80 (padding), bit 1 = Y=-64 (chunk section 0), etc.
+                    int lightBit = i + 1;
+                    if (skyMask & (1ULL << lightBit)) {
+                        if (skyIdx < (int)skyUpdates.size()) {
+                            const auto& data = skyUpdates[skyIdx];
+                            section->skyLight.resize(2048);
+                            memcpy(section->skyLight.data(), data.data(),
+                                   std::min(data.size(), (size_t)2048));
+                        }
+                        skyIdx++;
+                    } else if (emptySkyMask & (1ULL << lightBit)) {
+                        section->skyLight.assign(2048, 0);
+                    }
+                    // DIAG: chunk (-57,14) section 7 打印原始数据
+                    if (chunkX == -57 && chunkZ == 14 && i == 7 && (skyMask & (1ULL << lightBit))) {
+                        const auto& rd = skyUpdates[skyIdx - 1];
+                        char rh[256]; int rp = 0;
+                        for (int rb = 0; rb < 32 && rb < (int)rd.size(); rb++) {
+                            rp += snprintf(rh + rp, sizeof(rh)-rp, "%02x ", (unsigned char)rd[rb]);
+                        }
+                        LOGI("LIGHT_RAW: section[%d](Y=%d) raw skyUpdates[%d][0..31]: %s",
+                             i, section->y, skyIdx-1, rh);
+                    }
+
+                    if (blockMask & (1ULL << lightBit)) {
+                        if (blockIdx < (int)blockUpdates.size()) {
+                            const auto& data = blockUpdates[blockIdx];
+                            section->blockLight.resize(2048);
+                            memcpy(section->blockLight.data(), data.data(),
+                                   std::min(data.size(), (size_t)2048));
+                        }
+                        blockIdx++;
+                    } else if (emptyBlockMask & (1ULL << lightBit)) {
+                        section->blockLight.assign(2048, 0);
+                    }
+                }
+            }
+
+            // 针对 chunk (-57, 14) 打印 skyMask 映射和方块 (-912, 63, 234) 的光照
+            if (chunkX == -57 && chunkZ == 14) {
+                auto diagChunk = chunkManager->getChunk(chunkX, chunkZ);
+                if (diagChunk) {
+                    int si = 7;
+                    auto& sec = diagChunk->sections[si];
+                    if (sec) {
+                        int lx = 0, ly = 15, lz = 10;
+                        int idx = (ly * 16 + lz) * 16 + lx;
+                        int byteIdx = idx / 2;
+                        int shift = (idx & 1) * 4;
+                        int skyNib = (sec->skyLight.size() >= 2048)
+                            ? ((sec->skyLight[byteIdx] >> shift) & 0xF) : -1;
+                        int blkNib = (sec->blockLight.size() >= 2048)
+                            ? ((sec->blockLight[byteIdx] >> shift) & 0xF) : -1;
+                        LOGI("LIGHT_MAP: section[%d](Y=%d) local(0,15,10) -> world(-912,63,234) skyN=%d blkN=%d skySz=%zu",
+                             si, sec->y, skyNib, blkNib, sec->skyLight.size());
+                        // 打印每个 Y 层在 (0,0) 的光照值
+                        char yDump[512]; int yp = 0;
+                        for (int yy = 0; yy < 16; yy++) {
+                            int nidx = (yy * 16 + 0) * 16 + 0;
+                            int nbyte = nidx / 2;
+                            int nshift = (nidx & 1) * 4;
+                            int nib = (sec->skyLight.size() >= (size_t)(nbyte+1))
+                                ? ((sec->skyLight[nbyte] >> nshift) & 0xF) : -1;
+                            yp += snprintf(yDump + yp, sizeof(yDump)-yp, "Y%d=%d ", yy, nib);
+                        }
+                        LOGI("LIGHT_MAP:   skyPerY[at (0,0)]: %s", yDump);
+                        // 打印原始 skyUpdates 数据不可达（此处无 skyUpdates 引用）
+                    }
+                }
+            }
+
             if (glRenderer) {
                 glRenderer->setChunkManager(chunkManager.get());
                 glRenderer->markChunkForUpdate(chunkX, chunkZ);
@@ -1040,6 +1136,66 @@ void ClientEngine::handlePlayPacket(int packetId,
                     } else {
                         LOGW("BlockUpdate: chunk (%d, %d) not loaded", chunkX, chunkZ);
                     }
+                }
+                break;
+            }
+
+            case 0x0F: { // Light Update
+                try {
+                    ProtocolCraft::ClientboundLightUpdatePacket lightPacket;
+                    std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                    auto subIter = pktData.cbegin();
+                    size_t subLen = pktData.size();
+                    lightPacket.Read(subIter, subLen);
+                    int lx = lightPacket.GetX();
+                    int lz = lightPacket.GetZ();
+                    LOGI("LightUpdate: chunk (%d, %d)", lx, lz);
+                    if (chunkManager) {
+                        auto chunk = chunkManager->getChunk(lx, lz);
+                        if (chunk) {
+                            const auto& ld = lightPacket.GetLightData();
+                            const auto& skyMasks = ld.GetSkyYMask();
+                            const auto& blockMasks = ld.GetBlockYMask();
+                            const auto& emptySkyMasks = ld.GetEmptySkyYMask();
+                            const auto& emptyBlockMasks = ld.GetEmptyBlockYMask();
+                            const auto& skyUpdates = ld.GetSkyUpdates();
+                            const auto& blockUpdates = ld.GetBlockUpdates();
+                            uint64_t skyMask = skyMasks.empty() ? 0 : skyMasks[0];
+                            uint64_t blockMask = blockMasks.empty() ? 0 : blockMasks[0];
+                            uint64_t emptySkyMask = emptySkyMasks.empty() ? 0 : emptySkyMasks[0];
+                            uint64_t emptyBlockMask = emptyBlockMasks.empty() ? 0 : emptyBlockMasks[0];
+                            int skyIdx = 0, blockIdx = 0;
+                            for (int i = 0; i < (int)chunk->sections.size(); i++) {
+                                auto& sec = chunk->sections[i];
+                                if (!sec) continue;
+                                // Light section bits are offset by 1 from chunk section indices
+                                int lightBit = i + 1;
+                                if (skyMask & (1ULL << lightBit)) {
+                                    if (skyIdx < (int)skyUpdates.size()) {
+                                        const auto& d = skyUpdates[skyIdx];
+                                        sec->skyLight.resize(2048);
+                                        memcpy(sec->skyLight.data(), d.data(), std::min(d.size(), (size_t)2048));
+                                    }
+                                    skyIdx++;
+                                } else if (emptySkyMask & (1ULL << lightBit)) {
+                                    sec->skyLight.assign(2048, 0);
+                                }
+                                if (blockMask & (1ULL << lightBit)) {
+                                    if (blockIdx < (int)blockUpdates.size()) {
+                                        const auto& d = blockUpdates[blockIdx];
+                                        sec->blockLight.resize(2048);
+                                        memcpy(sec->blockLight.data(), d.data(), std::min(d.size(), (size_t)2048));
+                                    }
+                                    blockIdx++;
+                                } else if (emptyBlockMask & (1ULL << lightBit)) {
+                                    sec->blockLight.assign(2048, 0);
+                                }
+                            }
+                            if (glRenderer) glRenderer->markChunkForUpdate(lx, lz);
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    LOGW("LightUpdate: parse error: %s", e.what());
                 }
                 break;
             }

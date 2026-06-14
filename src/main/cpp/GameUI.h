@@ -62,6 +62,7 @@ public:
     void setVideoSettingsOpen(bool open) { videoSettingsOpen = open; }
     bool isVideoSettingsOpen() const { return videoSettingsOpen; }
     int getRenderDistance() const { return renderDistance; }
+    bool isSmoothLightingEnabled() const { return smoothLightingEnabled; }
 
     // FOV 更新回调
     using FovCallback = std::function<void(float)>;
@@ -178,6 +179,7 @@ private:
     float optionsFov = 70.0f;
     bool videoSettingsOpen = false;
     int renderDistance = 10;
+    bool smoothLightingEnabled = true;
 
     // 游戏内 UI 状态
     struct {
