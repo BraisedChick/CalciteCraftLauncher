@@ -11,6 +11,7 @@
 #include "BlockRegistry.h"
 #include "BiomeColorManager.h"
 #include "MinecraftVersion.h"
+#include "ClientEngine.h"
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
 
@@ -628,6 +629,12 @@ bool GLRenderer::createShaders() {
                 totalR = fminf(fmaxf(totalR, 0.0f), 1.0f);
                 totalG = fminf(fmaxf(totalG, 0.0f), 1.0f);
                 totalB = fminf(fmaxf(totalB, 0.0f), 1.0f);
+
+                // 最低环境光保底（避免全黑洞穴完全不可见）
+                const float minAmbient = 0.15f;
+                totalR = fmaxf(totalR, minAmbient);
+                totalG = fmaxf(totalG, minAmbient);
+                totalB = fmaxf(totalB, minAmbient);
 
                 int idx = (sy * 16 + bx) * 4;
                 pixels[idx + 0] = (uint8_t)(totalR * 255.0f);
@@ -1387,8 +1394,79 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         needRebuildMesh = rebuildMeshFromChunks();
     }
 
-    glClearColor(0.53f, 0.81f, 0.92f, 1.0f);
+    // ===== 昼夜循环：获取天空暗度因子 =====
+    float skyDarken = 0.0f;
+    {
+        auto* engine = ClientEngine::getInstance();
+        if (engine) skyDarken = engine->getSkyDarken();
+    }
+    // skyDarken: 0.0=白天, 1.0=夜晚
+    float skyBright = 1.0f - skyDarken;
+
+    // 天空/雾效颜色插值：白天蓝 → 夜晚深蓝黑
+    float skyR = 0.53f * skyBright + 0.02f * skyDarken;
+    float skyG = 0.81f * skyBright + 0.02f * skyDarken;
+    float skyB = 0.92f * skyBright + 0.08f * skyDarken;
+
+    glClearColor(skyR, skyG, skyB, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // 动态更新光照贴图（每帧重新生成，16×16 很小，几乎无性能影响）
+    if (lightmapTextureID != 0) {
+        uint8_t lmPixels[16 * 16 * 4];
+        for (int sy = 0; sy < 16; sy++) {
+            for (int bx = 0; bx < 16; bx++) {
+                float blockBright = bx / 15.0f;
+                // 天空光根据昼夜变暗
+                float skyBrightLevel = (sy / 15.0f) * skyBright;
+
+                // 方块光颜色（暖色/橙红）
+                float blockR = blockBright;
+                float blockG = blockBright * ((blockBright * 0.6f + 0.4f) * 0.6f + 0.4f);
+                float blockB = blockBright * (blockBright * blockBright * 0.6f + 0.4f);
+
+                // 天空光颜色（冷色/蓝白，随昼夜变暗）
+                float sR = skyBrightLevel * 0.9f;
+                float sG = skyBrightLevel * 1.0f;
+                float sB = skyBrightLevel * 1.1f;
+
+                float totalR = fminf(blockR + sR, 1.0f);
+                float totalG = fminf(blockG + sG, 1.0f);
+                float totalB = fminf(blockB + sB, 1.0f);
+
+                totalR = totalR * 0.96f + 0.04f * 0.75f;
+                totalG = totalG * 0.96f + 0.04f * 0.75f;
+                totalB = totalB * 0.96f + 0.04f * 0.75f;
+
+                float gamma = 0.5f;
+                float ngR = 1.0f - powf(1.0f - totalR, 4.0f);
+                float ngG = 1.0f - powf(1.0f - totalG, 4.0f);
+                float ngB = 1.0f - powf(1.0f - totalB, 4.0f);
+                totalR = totalR * (1.0f - gamma) + ngR * gamma;
+                totalG = totalG * (1.0f - gamma) + ngG * gamma;
+                totalB = totalB * (1.0f - gamma) + ngB * gamma;
+
+                totalR = fminf(fmaxf(totalR, 0.0f), 1.0f);
+                totalG = fminf(fmaxf(totalG, 0.0f), 1.0f);
+                totalB = fminf(fmaxf(totalB, 0.0f), 1.0f);
+
+                // 最低环境光保底（避免全黑洞穴完全不可见）
+                const float minAmbient = 0.15f;
+                totalR = fmaxf(totalR, minAmbient);
+                totalG = fmaxf(totalG, minAmbient);
+                totalB = fmaxf(totalB, minAmbient);
+
+                int idx = (sy * 16 + bx) * 4;
+                lmPixels[idx + 0] = (uint8_t)(totalR * 255.0f);
+                lmPixels[idx + 1] = (uint8_t)(totalG * 255.0f);
+                lmPixels[idx + 2] = (uint8_t)(totalB * 255.0f);
+                lmPixels[idx + 3] = 255;
+            }
+        }
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, lightmapTextureID);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 16, 16, GL_RGBA, GL_UNSIGNED_BYTE, lmPixels);
+    }
 
     // 帧计数器递增
     frameCount++;
@@ -1429,7 +1507,7 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     if (shaderCutout.uFogStart != -1) glUniform1f(shaderCutout.uFogStart, fogStart);
     if (shaderCutout.uFogEnd != -1) glUniform1f(shaderCutout.uFogEnd, fogEnd);
     if (shaderCutout.uFogColor != -1)
-        glUniform4f(shaderCutout.uFogColor, 0.53f, 0.81f, 0.92f, 1.0f);
+        glUniform4f(shaderCutout.uFogColor, skyR, skyG, skyB, 1.0f);
 
     // 绑定纹理数组到 Sampler0
     glActiveTexture(GL_TEXTURE0);
@@ -1630,7 +1708,7 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
                     if (shaderTranslucent.uFogStart != -1) glUniform1f(shaderTranslucent.uFogStart, fogStart);
                     if (shaderTranslucent.uFogEnd != -1) glUniform1f(shaderTranslucent.uFogEnd, fogEnd);
                     if (shaderTranslucent.uFogColor != -1)
-                        glUniform4f(shaderTranslucent.uFogColor, 0.53f, 0.81f, 0.92f, 1.0f);
+                        glUniform4f(shaderTranslucent.uFogColor, skyR, skyG, skyB, 1.0f);
                     if (shaderTranslucent.uSampler0 != -1) glUniform1i(shaderTranslucent.uSampler0, 0);
                     if (shaderTranslucent.uSampler2 != -1) glUniform1i(shaderTranslucent.uSampler2, 2);
 

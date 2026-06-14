@@ -42,6 +42,7 @@
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundPlayerCombatKillPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundGameEventPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundRespawnPacket.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundSetTimePacket.hpp"
 #include "protocolCraft/include/protocolCraft/Types/NBT/Tag.hpp"
 #include "protocolCraft/include/protocolCraft/Utilities/Json.hpp"
 #include "BiomeColorManager.h"
@@ -612,6 +613,28 @@ void ClientEngine::disconnect() {
     if (net) {
         net->disconnect();
     }
+}
+
+float ClientEngine::getSkyDarken() const {
+    // DayTime: 0=sunrise, 6000=noon, 12000=sunset, 18000=midnight, 24000=sunrise
+    long long dt = worldDayTime % 24000;
+    if (dt < 0) dt += 24000;
+
+    float darken;
+    if (dt < 12000) {
+        // 白天 (6:00AM - 6:00PM)
+        darken = 0.0f;
+    } else if (dt < 13000) {
+        // 黄昏 (6:00PM - 7:00PM)
+        darken = (float)(dt - 12000) / 1000.0f;
+    } else if (dt < 23000) {
+        // 夜晚 (7:00PM - 5:00AM)
+        darken = 1.0f;
+    } else {
+        // 黎明 (5:00AM - 6:00AM)
+        darken = 1.0f - (float)(dt - 23000) / 1000.0f;
+    }
+    return darken;
 }
 
 void ClientEngine::loadLanguage(const std::string& json) {
@@ -1414,6 +1437,16 @@ void ClientEngine::handlePlayPacket(int packetId,
                 gameMode = newMode;
                 Collision::getInstance().setGameMode(newMode);
                 LOGI("Respawn: game mode=%d", newMode);
+                break;
+            }
+
+            case 0x59: { // Set Time（昼夜时间更新）
+                ProtocolCraft::ClientboundSetTimePacket timePacket;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t len = pktData.size();
+                timePacket.Read(iter, len);
+                worldDayTime = timePacket.GetDayTime();
                 break;
             }
 

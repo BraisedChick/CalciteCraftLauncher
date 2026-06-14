@@ -78,6 +78,11 @@ public:
     std::string getDeathMessage() const { return deathMessage; }
     void clearDeathMessage() { deathMessage.clear(); }
 
+    // 世界时间（DayTime 0-24000，用于昼夜循环）
+    long long getWorldDayTime() const { return worldDayTime; }
+    // 天空暗度因子：0.0=白天，1.0=夜晚
+    float getSkyDarken() const;
+
     // 加载语言文件（如 zh_cn.json）
     void loadLanguage(const std::string& json);
 
@@ -155,6 +160,9 @@ private:
 
     // 游戏模式
     int gameMode = 0;
+
+    // 世界时间（DayTime 0-24000）
+    long long worldDayTime = 6000;  // 默认正午
 
     // 死亡消息（服务端 CombatKill 包提供）
     std::string deathMessage;
