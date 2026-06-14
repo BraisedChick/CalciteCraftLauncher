@@ -62,6 +62,7 @@ set(APP_SOURCES
     MinecraftVersion.cpp
     VulkanRenderer.cpp
     GLRenderer.cpp
+    Light.cpp
     MeshGenerator.cpp
     TextureLoader.cpp
     BlockRegistry.cpp

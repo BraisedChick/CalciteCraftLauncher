@@ -43,6 +43,7 @@
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundGameEventPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundRespawnPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundSetTimePacket.hpp"
+#include "Light.h"
 #include "protocolCraft/include/protocolCraft/Types/NBT/Tag.hpp"
 #include "protocolCraft/include/protocolCraft/Utilities/Json.hpp"
 #include "BiomeColorManager.h"
@@ -616,25 +617,11 @@ void ClientEngine::disconnect() {
 }
 
 float ClientEngine::getSkyDarken() const {
-    // DayTime: 0=sunrise, 6000=noon, 12000=sunset, 18000=midnight, 24000=sunrise
-    long long dt = worldDayTime % 24000;
-    if (dt < 0) dt += 24000;
+    return Light::getInstance().getSkyDarken();
+}
 
-    float darken;
-    if (dt < 12000) {
-        // 白天 (6:00AM - 6:00PM)
-        darken = 0.0f;
-    } else if (dt < 13000) {
-        // 黄昏 (6:00PM - 7:00PM)
-        darken = (float)(dt - 12000) / 1000.0f;
-    } else if (dt < 23000) {
-        // 夜晚 (7:00PM - 5:00AM)
-        darken = 1.0f;
-    } else {
-        // 黎明 (5:00AM - 6:00AM)
-        darken = 1.0f - (float)(dt - 23000) / 1000.0f;
-    }
-    return darken;
+long long ClientEngine::getWorldDayTime() const {
+    return Light::getInstance().getWorldDayTime();
 }
 
 void ClientEngine::loadLanguage(const std::string& json) {
@@ -1446,7 +1433,7 @@ void ClientEngine::handlePlayPacket(int packetId,
                 auto iter = pktData.cbegin();
                 size_t len = pktData.size();
                 timePacket.Read(iter, len);
-                worldDayTime = timePacket.GetDayTime();
+                Light::getInstance().setWorldDayTime(timePacket.GetDayTime());
                 break;
             }
 
