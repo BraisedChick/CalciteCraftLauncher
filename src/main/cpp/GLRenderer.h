@@ -6,6 +6,12 @@
 #include <android/log.h>
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
+
+// NDK r28 的 GLES3 头文件缺失 GL_HALF_FLOAT 定义
+#ifndef GL_HALF_FLOAT
+#define GL_HALF_FLOAT 0x140B
+#endif
+
 #include <string>
 #include <vector>
 #include <cmath>
@@ -26,6 +32,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/packing.hpp>
 
 #include "CommonTypes.h"
 #include "ChunkManager.h"
@@ -113,13 +120,22 @@ public:
     }
 
 private:
+    // ===== 压缩顶点格式（GPU 上传用，48→32 bytes）=====
+    struct PackedVertex {
+        float    pos[3];      //  0: 12 bytes (GL_FLOAT, 世界坐标，不压缩)
+        float    texIndex;    // 12:  4 bytes (GL_FLOAT)
+        uint8_t  color[4];    // 16:  4 bytes (GL_UNSIGNED_BYTE, 归一化)
+        uint16_t uv[2];       // 20:  4 bytes (GL_UNSIGNED_SHORT, 归一化 [0,1]→[0,65535])
+        uint16_t uv2[2];      // 24:  4 bytes (GL_UNSIGNED_SHORT, 归一化 [0,1]→[0,65535])
+        int8_t   normal[4];   // 28:  4 bytes (GL_BYTE, 归一化 [-1,1]→[-127,127], w未用)
+    }; // Total: 32 bytes
+
     // ===== 工作线程（离线网格生成）=====
     struct ChunkWorkItem {
         uint64_t chunkKey;
         int chunkX;
         int chunkZ;
         float distance;  // 距离玩家距离，优先级队列排序用
-        glm::vec4 frustumPlanes[6];  // 工作线程侧 section 级视锥裁剪用
 
         bool operator<(const ChunkWorkItem& other) const {
             return distance > other.distance;  // 小顶堆：距离近的优先级高
@@ -128,10 +144,16 @@ private:
 
     struct ChunkMeshResult {
         uint64_t chunkKey;
-        std::vector<Vertex> vertices;
-        std::vector<uint32_t> indices;
-        uint32_t overlayIndexCount = 0;  // 草覆盖层索引数
-        uint32_t waterIndexCount = 0;    // 水索引数
+        // 改为每个 section 独立数据，不合并
+        struct SectionData {
+            int sectionY;
+            std::vector<PackedVertex> packedVertices;  // 在工作线程压缩好，渲染线程直接上传
+            std::vector<uint32_t> baseIndices;
+            std::vector<uint32_t> overlayIndices;
+            std::vector<uint32_t> waterIndices;
+            uint64_t visibilityData = 0;  // 该 section 的方向连通性数据
+        };
+        std::vector<SectionData> sections;
     };
 
     void workerLoop();
@@ -151,6 +173,9 @@ private:
     // 完成结果队列（worker→render 线程）
     std::mutex resultMutex;
     std::queue<ChunkMeshResult> resultQueue;
+    // 待处理队列：每帧处理少量 chunk（但每个 chunk 整批上传），避免一帧内创建大量 GL 资源导致卡顿
+    std::queue<ChunkMeshResult> pendingResults;
+    static constexpr int MAX_CHUNKS_PER_FRAME = 2;
 
     // 避免重复入队同一区块
     std::unordered_set<uint64_t> pendingChunks;
@@ -208,18 +233,22 @@ private:
     
     // 帧计数器
     uint32_t frameCount = 0;
-    
+
     // ===== 区块合批渲染优化 =====
-    struct ChunkRenderData {
-        GLuint vao = 0;          // 顶点数组对象（捕获 attrib 配置 + VBO/EBO 绑定）
-        GLuint vbo = 0;          // 顶点缓冲
-        GLuint ebo = 0;          // 索引缓冲
-        uint32_t vertexCount = 0;
+    struct SectionRenderData {
+        int sectionY = 0;
+        GLuint vao = 0, vbo = 0, ebo = 0;
         uint32_t indexCount = 0;
-        uint32_t overlayIndexCount = 0;  // 草覆盖层索引数（需 LEQUAL 写深度）
-        uint32_t waterIndexCount = 0;    // 水索引数（需 alpha blend，不写深度）
+        uint32_t overlayIndexCount = 0;
+        uint32_t waterIndexCount = 0;
+        uint64_t visibilityData = 0;  // 6×6 方向连通性 bitmask（Sodium 风格遮挡剔除）
+        bool isVisible = true;        // 每帧 BFS 计算结果
+    };
+
+    struct ChunkRenderData {
+        std::vector<SectionRenderData> sections;
         glm::vec3 position;      // 区块世界坐标
-        bool visible = true;     // 是否在视锥体内
+        bool visible = true;
         bool needsUpdate = false; // 是否需要重建
         bool pending = false;    // 是否已在工作队列中
     };

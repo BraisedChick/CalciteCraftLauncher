@@ -652,8 +652,6 @@ bool GLRenderer::rebuildMeshFromChunks() {
                     chunkRenderCache.erase(it);
                     continue;
                 }
-                glGenBuffers(1, &it->second.vbo);
-                glGenBuffers(1, &it->second.ebo);
                 it->second.position = glm::vec3(chunk->pos.x * 16.0f, 0.0f, chunk->pos.z * 16.0f);
                 it->second.needsUpdate = true;
             }
@@ -710,8 +708,6 @@ bool GLRenderer::rebuildMeshFromChunks() {
                 std::lock_guard<std::mutex> lock(cacheMutex);
                 auto [it, inserted] = chunkRenderCache.try_emplace(chunkKey);
                 if (inserted) {
-                    glGenBuffers(1, &it->second.vbo);
-                    glGenBuffers(1, &it->second.ebo);
                     it->second.position = glm::vec3(chunk->pos.x * 16.0f, 0.0f, chunk->pos.z * 16.0f);
                     it->second.needsUpdate = true;
                 }
@@ -806,9 +802,12 @@ void GLRenderer::doClearChunks() {
     {
         std::lock_guard<std::mutex> lock(cacheMutex);
         for (auto& [chunkKey, renderData] : chunkRenderCache) {
-            if (renderData.vao != 0) glDeleteVertexArrays(1, &renderData.vao);
-            if (renderData.vbo != 0) glDeleteBuffers(1, &renderData.vbo);
-            if (renderData.ebo != 0) glDeleteBuffers(1, &renderData.ebo);
+            for (auto& sec : renderData.sections) {
+                if (sec.vao != 0) glDeleteVertexArrays(1, &sec.vao);
+                if (sec.vbo != 0) glDeleteBuffers(1, &sec.vbo);
+                if (sec.ebo != 0) glDeleteBuffers(1, &sec.ebo);
+            }
+            renderData.sections.clear();
         }
         chunkRenderCache.clear();
         dirtyChunks.clear();
@@ -824,15 +823,66 @@ void GLRenderer::doClearChunks() {
 }
 
 void GLRenderer::enqueueWork(ChunkWorkItem item) {
-    // 复制当前视锥平面到工作项，供工作线程做 section 级裁剪
-    for (int i = 0; i < 6; i++) {
-        item.frustumPlanes[i] = frustumPlanes[i];
-    }
     {
         std::lock_guard<std::mutex> lock(workMutex);
         workQueue.push(std::move(item));
     }
     workCV.notify_one();
+}
+
+// ===== Sodium 风格遮挡剔除：预计算 section 内部连通性 =====
+// 方向: 0=DOWN 1=UP 2=NORTH 3=SOUTH 4=WEST 5=EAST
+// 结果: bit(from*8+to)=1 表示 from 面→to 面在 section 内部可达
+static const int FACE_AXIS[6] = {1,1,2,2,0,0};
+static const int FACE_VAL[6]  = {0,15,0,15,0,15};
+
+static uint64_t computeSectionVisibility(const ChunkSection& section) {
+    auto toIdx = [](int x,int y,int z){ return (y<<8)|(z<<4)|x; };
+    bool isSolid[16*16*16]={false};
+    int solidCount=0;
+    for(int y=0;y<16;y++) for(int z=0;z<16;z++) for(int x=0;x<16;x++){
+        int idx=toIdx(x,y,z);
+        int32_t st=section.blockStates[idx];
+        if(!st) continue;
+        auto& meta=BlockRegistry::getInstance().getBlockMetadata(st);
+        if(meta.isFullBlock&&meta.isOpaque) { isSolid[idx]=true; solidCount++; }
+    }
+    if(solidCount==4096) return 0;
+    if(solidCount<256) return ~0ULL;
+    static const int NB[6][3]={{0,-1,0},{0,1,0},{0,0,-1},{0,0,1},{-1,0,0},{1,0,0}};
+    uint64_t vis=0;
+    int queue[4096];
+    for(int of=0;of<6;of++){
+        bool visited[4096]={false};
+        int qH=0,qT=0;
+        int fix=FACE_AXIS[of],val=FACE_VAL[of],a1=(fix+1)%3,a2=(fix+2)%3;
+        for(int d1=0;d1<16;d1++) for(int d2=0;d2<16;d2++){
+            int c[3]; c[fix]=val; c[a1]=d1; c[a2]=d2;
+            int idx=toIdx(c[0],c[1],c[2]);
+            if(!isSolid[idx]&&!visited[idx]){ visited[idx]=true; queue[qT++]=idx; }
+        }
+        while(qH<qT){
+            int cur=queue[qH++],cx=cur&0xF,cy=(cur>>8)&0xF,cz=(cur>>4)&0xF;
+            for(int d=0;d<6;d++){
+                int nx=cx+NB[d][0],ny=cy+NB[d][1],nz=cz+NB[d][2];
+                if((unsigned)nx>=16||(unsigned)ny>=16||(unsigned)nz>=16) continue;
+                int ni=toIdx(nx,ny,nz);
+                if(!isSolid[ni]&&!visited[ni]){ visited[ni]=true; queue[qT++]=ni; }
+            }
+        }
+        vis|=1ULL<<(of*8+of);
+        for(int tf=0;tf<6;tf++){
+            if(tf==of) continue;
+            int tfx=FACE_AXIS[tf],tfv=FACE_VAL[tf],ta1=(tfx+1)%3,ta2=(tfx+2)%3;
+            bool ok=false;
+            for(int d1=0;d1<16&&!ok;d1++) for(int d2=0;d2<16&&!ok;d2++){
+                int c[3]; c[tfx]=tfv; c[ta1]=d1; c[ta2]=d2;
+                if(visited[toIdx(c[0],c[1],c[2])]) ok=true;
+            }
+            if(ok) vis|=1ULL<<(of*8+tf);
+        }
+    }
+    return vis;
 }
 
 void GLRenderer::workerLoop() {
@@ -867,11 +917,9 @@ void GLRenderer::workerLoop() {
             continue;
         }
 
-        std::vector<Vertex> vertices;
-        std::vector<uint32_t> baseIndices, overlayIndices, waterIndices;
-        uint32_t totalOverlayIndexCount = 0;
-        uint32_t totalWaterIndexCount = 0;
-        auto block_start = std::chrono::steady_clock::now();
+        ChunkMeshResult result;
+        result.chunkKey = item.chunkKey;
+
         for (size_t sectionIdx = 0; sectionIdx < chunk->sections.size(); ++sectionIdx) {
             const auto& section = chunk->sections[sectionIdx];
             if (!section || section->isEmpty) continue;
@@ -882,122 +930,178 @@ void GLRenderer::workerLoop() {
                 wl_overlayVertices, wl_overlayIndices,
                 wl_waterVertices, wl_waterIndices);
 
-            uint32_t vertexOffset = static_cast<uint32_t>(vertices.size());
+            if (meshOut.vertices.empty()) continue;
+
+            ChunkMeshResult::SectionData secData;
+            secData.sectionY = section->y;
+            secData.visibilityData = computeSectionVisibility(*section);
+
+            // 在工作线程压缩 Vertex（48B）→ PackedVertex（32B），减轻渲染线程负担
+            auto& srcVerts = meshOut.vertices;
+            secData.packedVertices.resize(srcVerts.size());
+            for (size_t vi = 0; vi < srcVerts.size(); vi++) {
+                const auto& src = srcVerts[vi];
+                auto& dst = secData.packedVertices[vi];
+                // pos: 世界坐标，float 不压缩，无精度损失
+                memcpy(dst.pos, src.pos, sizeof(float) * 3);
+                dst.texIndex = src.texIndex;
+                memcpy(dst.color, src.color, 4);
+                // uv: [0,1] → [0,65535]
+                dst.uv[0] = (uint16_t)(src.texCoord[0] * 65535.0f + 0.5f);
+                dst.uv[1] = (uint16_t)(src.texCoord[1] * 65535.0f + 0.5f);
+                // normal: [-1,1] → [-127,127]
+                dst.normal[0] = (int8_t)(src.normal[0] * 127.0f);
+                dst.normal[1] = (int8_t)(src.normal[1] * 127.0f);
+                dst.normal[2] = (int8_t)(src.normal[2] * 127.0f);
+                dst.normal[3] = 0;
+                // uv2: lightmap [0,1] → [0,65535]
+                dst.uv2[0] = (uint16_t)(src.uv2[0] * 65535.0f + 0.5f);
+                dst.uv2[1] = (uint16_t)(src.uv2[1] * 65535.0f + 0.5f);
+            }
+
             size_t regularCount = meshOut.indices.size()
                 - meshOut.overlayIndexCount - meshOut.waterIndexCount;
 
-            // 按类别分离索引，确保所有 base → overlay → water 跨 section 连续排列
-            for (size_t i = 0; i < regularCount; i++) {
-                baseIndices.push_back(vertexOffset + meshOut.indices[i]);
-            }
+            secData.baseIndices.assign(
+                meshOut.indices.begin(),
+                meshOut.indices.begin() + regularCount);
+
             size_t ovStart = regularCount;
-            for (size_t i = 0; i < meshOut.overlayIndexCount; i++) {
-                overlayIndices.push_back(vertexOffset + meshOut.indices[ovStart + i]);
+            if (meshOut.overlayIndexCount > 0) {
+                secData.overlayIndices.assign(
+                    meshOut.indices.begin() + ovStart,
+                    meshOut.indices.begin() + ovStart + meshOut.overlayIndexCount);
             }
+
             size_t watStart = ovStart + meshOut.overlayIndexCount;
-            for (size_t i = 0; i < meshOut.waterIndexCount; i++) {
-                waterIndices.push_back(vertexOffset + meshOut.indices[watStart + i]);
+            if (meshOut.waterIndexCount > 0) {
+                secData.waterIndices.assign(
+                    meshOut.indices.begin() + watStart,
+                    meshOut.indices.end());
             }
 
-            vertices.insert(vertices.end(), meshOut.vertices.begin(), meshOut.vertices.end());
-            totalOverlayIndexCount += meshOut.overlayIndexCount;
-            totalWaterIndexCount += meshOut.waterIndexCount;
+            result.sections.push_back(std::move(secData));
         }
-
-        // 合并为 [base | overlay | water]，匹配渲染循环的索引划分
-        std::vector<uint32_t> indices;
-        indices.reserve(baseIndices.size() + overlayIndices.size() + waterIndices.size());
-        indices.insert(indices.end(), baseIndices.begin(), baseIndices.end());
-        indices.insert(indices.end(), overlayIndices.begin(), overlayIndices.end());
-        indices.insert(indices.end(), waterIndices.begin(), waterIndices.end());
-
-        // 推入完成队列
-        ChunkMeshResult result;
-        result.chunkKey = item.chunkKey;
-        result.vertices = std::move(vertices);
-        result.indices = std::move(indices);
-        result.overlayIndexCount = totalOverlayIndexCount;
-        result.waterIndexCount = totalWaterIndexCount;
 
         {
             std::lock_guard<std::mutex> lock(resultMutex);
             resultQueue.push(std::move(result));
         }
-        auto block_end = std::chrono::steady_clock::now();
-        auto block_ms = std::chrono::duration_cast<std::chrono::milliseconds>(block_end - block_start).count();
-        LOGI("Chunk (%d,%d) total mesh generation took %lld ms", item.chunkX, item.chunkZ, block_ms);
     }
 
     LOGI("Mesh worker thread stopped");
 }
 
 void GLRenderer::processCompletedWork() {
-    // 取出所有已完成的网格结果，上传到 GPU
-    std::queue<ChunkMeshResult> localResults;
+    // 将新完成的结果追加到待处理队列
     {
         std::lock_guard<std::mutex> lock(resultMutex);
-        localResults.swap(resultQueue);
+        while (!resultQueue.empty()) {
+            pendingResults.push(std::move(resultQueue.front()));
+            resultQueue.pop();
+        }
     }
 
-    while (!localResults.empty()) {
-        auto& result = localResults.front();
+    // 每帧最多处理 MAX_CHUNKS_PER_FRAME 个 chunk（但每个 chunk 整批上传，避免闪光）
+    int chunksProcessed = 0;
 
-        // 找到对应的缓存条目，上传数据
+    while (!pendingResults.empty() && chunksProcessed < MAX_CHUNKS_PER_FRAME) {
+        auto& result = pendingResults.front();
+        bool processed = false;
+
         {
             std::lock_guard<std::mutex> lock(cacheMutex);
             auto it = chunkRenderCache.find(result.chunkKey);
             if (it != chunkRenderCache.end()) {
+                processed = true;
                 auto& renderData = it->second;
 
-                glBindBuffer(GL_ARRAY_BUFFER, renderData.vbo);
-                glBufferData(GL_ARRAY_BUFFER, result.vertices.size() * sizeof(Vertex),
-                            result.vertices.data(), GL_STATIC_DRAW);
+                // 删除旧的 section 资源（替换为新几何体）
+                for (auto& sec : renderData.sections) {
+                    if (sec.vao) glDeleteVertexArrays(1, &sec.vao);
+                    if (sec.vbo) glDeleteBuffers(1, &sec.vbo);
+                    if (sec.ebo) glDeleteBuffers(1, &sec.ebo);
+                }
+                renderData.sections.clear();
+                renderData.sections.reserve(result.sections.size());
 
-                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderData.ebo);
-                glBufferData(GL_ELEMENT_ARRAY_BUFFER, result.indices.size() * sizeof(uint32_t),
-                            result.indices.data(), GL_STATIC_DRAW);
+                // 整批上传所有 section（同一帧内完成，保证视觉连续性）
+                for (auto& secData : result.sections) {
+                    SectionRenderData sec;
+                    sec.sectionY = secData.sectionY;
+                    sec.visibilityData = secData.visibilityData;
 
-                // 创建并配置该 chunk 的 VAO（捕获 attrib 格式 + VBO/EBO 绑定）
-                if (renderData.vao == 0) glGenVertexArrays(1, &renderData.vao);
-                glBindVertexArray(renderData.vao);
-                glBindBuffer(GL_ARRAY_BUFFER, renderData.vbo);
-                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, renderData.ebo);
-                // location 0: Position
-                glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
-                glEnableVertexAttribArray(0);
-                // location 1: UV0
-                glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float)));
-                glEnableVertexAttribArray(1);
-                // location 2: TexIndex
-                glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(5 * sizeof(float)));
-                glEnableVertexAttribArray(2);
-                // location 3: Color
-                glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex), (void*)(offsetof(Vertex, color)));
-                glEnableVertexAttribArray(3);
-                // location 4: Normal
-                glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(offsetof(Vertex, normal)));
-                glEnableVertexAttribArray(4);
-                // location 5: UV2
-                glVertexAttribPointer(5, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(offsetof(Vertex, uv2)));
-                glEnableVertexAttribArray(5);
-                glBindVertexArray(0);
+                    // 上传工作线程已压缩好的 VBO
+                    glGenBuffers(1, &sec.vbo);
+                    glBindBuffer(GL_ARRAY_BUFFER, sec.vbo);
+                    glBufferData(GL_ARRAY_BUFFER,
+                                secData.packedVertices.size() * sizeof(PackedVertex),
+                                secData.packedVertices.data(), GL_STATIC_DRAW);
 
-                renderData.vertexCount = static_cast<uint32_t>(result.vertices.size());
-                renderData.indexCount = static_cast<uint32_t>(result.indices.size());
-                renderData.overlayIndexCount = result.overlayIndexCount;
-                renderData.waterIndexCount = result.waterIndexCount;
+                    // 合并索引
+                    std::vector<uint32_t> merged;
+                    merged.reserve(secData.baseIndices.size() + secData.overlayIndices.size() + secData.waterIndices.size());
+                    merged.insert(merged.end(), secData.baseIndices.begin(), secData.baseIndices.end());
+                    merged.insert(merged.end(), secData.overlayIndices.begin(), secData.overlayIndices.end());
+                    merged.insert(merged.end(), secData.waterIndices.begin(), secData.waterIndices.end());
+
+                    sec.overlayIndexCount = static_cast<uint32_t>(secData.overlayIndices.size());
+                    sec.waterIndexCount = static_cast<uint32_t>(secData.waterIndices.size());
+                    sec.indexCount = static_cast<uint32_t>(merged.size());
+
+                    // 创建 EBO
+                    glGenBuffers(1, &sec.ebo);
+                    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sec.ebo);
+                    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                                merged.size() * sizeof(uint32_t),
+                                merged.data(), GL_STATIC_DRAW);
+
+                    // 创建并配置 VAO
+                    glGenVertexArrays(1, &sec.vao);
+                    glBindVertexArray(sec.vao);
+                    glBindBuffer(GL_ARRAY_BUFFER, sec.vbo);
+                    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sec.ebo);
+                    // location 0: Position (GL_FLOAT, 3分量)
+                    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PackedVertex),
+                        (void*)offsetof(PackedVertex, pos));
+                    glEnableVertexAttribArray(0);
+                    // location 1: UV0 (GL_UNSIGNED_SHORT, 归一化)
+                    glVertexAttribPointer(1, 2, GL_UNSIGNED_SHORT, GL_TRUE, sizeof(PackedVertex),
+                        (void*)offsetof(PackedVertex, uv));
+                    glEnableVertexAttribArray(1);
+                    // location 2: TexIndex (GL_FLOAT)
+                    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(PackedVertex),
+                        (void*)offsetof(PackedVertex, texIndex));
+                    glEnableVertexAttribArray(2);
+                    // location 3: Color (GL_UNSIGNED_BYTE, 归一化)
+                    glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(PackedVertex),
+                        (void*)offsetof(PackedVertex, color));
+                    glEnableVertexAttribArray(3);
+                    // location 4: Normal (GL_BYTE, 归一化, 4分量→第4个未用)
+                    glVertexAttribPointer(4, 4, GL_BYTE, GL_TRUE, sizeof(PackedVertex),
+                        (void*)offsetof(PackedVertex, normal));
+                    glEnableVertexAttribArray(4);
+                    // location 5: UV2 (GL_UNSIGNED_SHORT, 归一化)
+                    glVertexAttribPointer(5, 2, GL_UNSIGNED_SHORT, GL_TRUE, sizeof(PackedVertex),
+                        (void*)offsetof(PackedVertex, uv2));
+                    glEnableVertexAttribArray(5);
+                    glBindVertexArray(0);
+
+                    renderData.sections.push_back(std::move(sec));
+                }
+
                 renderData.needsUpdate = false;
                 renderData.pending = false;
             }
         }
 
-        // 从 pending 集合中移除
-        {
+        // chunk 成功处理 → 从 pending 清除
+        if (processed) {
             std::lock_guard<std::mutex> lock(pendingMutex);
             pendingChunks.erase(result.chunkKey);
         }
-
-        localResults.pop();
+        pendingResults.pop();
+        chunksProcessed++;
     }
 }
 
@@ -1317,56 +1421,132 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+    // ===== BFS 遮挡剔除（Sodium 风格）=====
+    // 用预计算的 visibilityData 做连通性 BFS，标记可达 section
+    {
+        for (auto& [key, rd] : chunkRenderCache)
+            for (auto& sec : rd.sections)
+                sec.isVisible = false;
+
+        auto secKey = [](int cx, int sy, int cz) {
+            return ((uint64_t)(int16_t)cx << 48) | ((uint64_t)(uint16_t)(sy + 64) << 32) | (uint16_t)(int16_t)cz;
+        };
+        std::unordered_map<uint64_t, SectionRenderData*> slm;
+        for (auto& [key, rd] : chunkRenderCache) {
+            int cx = (int)(rd.position.x / 16.0f);
+            int cz = (int)(rd.position.z / 16.0f);
+            for (auto& sec : rd.sections)
+                slm[secKey(cx, sec.sectionY, cz)] = &sec;
+        }
+
+        int camCX = (int)floorf(lastCameraX / 16.0f);
+        int camCY = (int)floorf((lastCameraY - worldMinY) / 16.0f) * 16 + (int)worldMinY;
+        int camCZ = (int)floorf(lastCameraZ / 16.0f);
+
+        static const int DD[6][3] = {{0,-16,0},{0,16,0},{0,0,-1},{0,0,1},{-1,0,0},{1,0,0}};
+        static const int OPP_DIR[6] = {1, 0, 3, 2, 5, 4};
+        struct BFSN { int cx,sy,cz,entryDir; };
+        std::queue<BFSN> bfs;
+        bfs.push({camCX,camCY,camCZ,-1});
+
+        while (!bfs.empty()) {
+            auto [cx,sy,cz,entryDir] = bfs.front(); bfs.pop();
+            uint64_t sk = secKey(cx,sy,cz);
+            auto it = slm.find(sk);
+            if (it == slm.end()) continue;
+            auto* sec = it->second;
+            if (sec->isVisible) continue;
+            sec->isVisible = true;
+
+            uint64_t vis = sec->visibilityData;
+            for (int d = 0; d < 6; d++) {
+                // 检查能否从 entry 面到达 d 面
+                bool canExit = false;
+                if (entryDir < 0) {
+                    // 起始 section（相机内部）：只要 d 面有任何入口可达即可
+                    canExit = (vis & (0x010101010101ULL << d)) != 0;
+                } else {
+                    // 从 entryDir 的对面进入后，能否从 d 面出去
+                    int inDir = OPP_DIR[entryDir];
+                    canExit = (vis >> (inDir * 8)) & (1ULL << d);
+                }
+                if (!canExit) continue;
+
+                // 对面 section 的入口是否开放？check neighbor's opposite face
+                int nx = cx + DD[d][0], ny = sy + DD[d][1], nz = cz + DD[d][2];
+                uint64_t nk = secKey(nx,ny,nz);
+                auto nit = slm.find(nk);
+                if (nit == slm.end()) continue;
+                uint64_t nvis = nit->second->visibilityData;
+                int opp = OPP_DIR[d];
+                // neighbor 的 opp 面必须有至少一条通路
+                if ((nvis & (0x010101010101ULL << opp)) == 0) continue;
+
+                bfs.push({nx,ny,nz,d});
+            }
+        }
+    }
+
     // ---- Phase 1a: 基体几何（纯深度测试，写深度）----
     for (auto& [chunkKey, renderData] : chunkRenderCache) {
-        if (!renderData.visible || renderData.indexCount == 0) continue;
-
-        float chunkCenterX = renderData.position.x + 8.0f;
-        float chunkCenterZ = renderData.position.z + 8.0f;
-        float dx = chunkCenterX - lastCameraX;
-        float dz = chunkCenterZ - lastCameraZ;
-        if (dx * dx + dz * dz > farPlane * farPlane) continue;
+        if (!renderData.visible || renderData.sections.empty()) continue;
 
         float minX = renderData.position.x;
         float maxX = minX + 16.0f;
         float minZ = renderData.position.z;
         float maxZ = minZ + 16.0f;
-        if (!isAABBInFrustum(minX, worldMinY, minZ, maxX, worldMaxY, maxZ)) continue;
 
-        glBindVertexArray(renderData.vao);
+        for (auto& sec : renderData.sections) {
+            // Section 级视锥裁剪
+            float secMinY = (float)sec.sectionY;
+            float secMaxY = secMinY + 16.0f;
+            if (!sec.isVisible || !isAABBInFrustum(minX, secMinY, minZ, maxX, secMaxY, maxZ)) continue;
 
-        uint32_t baseEnd = renderData.indexCount - renderData.overlayIndexCount - renderData.waterIndexCount;
-        if (baseEnd > 0) {
+            uint32_t baseEnd = sec.indexCount - sec.overlayIndexCount - sec.waterIndexCount;
+            if (baseEnd == 0) continue;
+
+            glBindVertexArray(sec.vao);
             glDrawElements(GL_TRIANGLES, baseEnd, GL_UNSIGNED_INT, 0);
-        }
 
-        chunksRendered++;
-        totalTriangles += baseEnd / 3;
+            totalTriangles += baseEnd / 3;
+        }
+        if (!renderData.sections.empty()) chunksRendered++;
     }
 
     // ---- Phase 1b: 覆盖层（LEQUAL depth，不写深度）----
-    // 注：覆盖层已确保在 Phase 1a 中通过了视锥检测
     {
         bool blendEnabled = false;
         for (auto& [chunkKey, renderData] : chunkRenderCache) {
-            if (!renderData.visible || renderData.overlayIndexCount == 0) continue;
-            if (!blendEnabled) {
-                glEnable(GL_BLEND);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                blendEnabled = true;
+            if (!renderData.visible) continue;
+            float minX = renderData.position.x;
+            float maxX = minX + 16.0f;
+            float minZ = renderData.position.z;
+            float maxZ = minZ + 16.0f;
+
+            for (auto& sec : renderData.sections) {
+                if (!sec.isVisible || sec.overlayIndexCount == 0) continue;
+                float secMinY = (float)sec.sectionY;
+                float secMaxY = secMinY + 16.0f;
+                if (!isAABBInFrustum(minX, secMinY, minZ, maxX, secMaxY, maxZ)) continue;
+
+                if (!blendEnabled) {
+                    glEnable(GL_BLEND);
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                    blendEnabled = true;
+                }
+
+                glBindVertexArray(sec.vao);
+                uint32_t baseEnd = sec.indexCount - sec.overlayIndexCount - sec.waterIndexCount;
+
+                glDepthFunc(GL_LEQUAL);
+                glDepthMask(GL_FALSE);
+                glDrawElements(GL_TRIANGLES, sec.overlayIndexCount, GL_UNSIGNED_INT,
+                               (const GLvoid*)(uintptr_t)(baseEnd * sizeof(uint32_t)));
+                glDepthMask(GL_TRUE);
+                glDepthFunc(GL_LESS);
+
+                totalTriangles += sec.overlayIndexCount / 3;
             }
-
-            glBindVertexArray(renderData.vao);
-            uint32_t baseEnd = renderData.indexCount - renderData.overlayIndexCount - renderData.waterIndexCount;
-
-            glDepthFunc(GL_LEQUAL);
-            glDepthMask(GL_FALSE);
-            glDrawElements(GL_TRIANGLES, renderData.overlayIndexCount, GL_UNSIGNED_INT,
-                           (const GLvoid*)(uintptr_t)(baseEnd * sizeof(uint32_t)));
-            glDepthMask(GL_TRUE);
-            glDepthFunc(GL_LESS);
-
-            totalTriangles += renderData.overlayIndexCount / 3;
         }
         if (blendEnabled) glDisable(GL_BLEND);
     }
@@ -1375,56 +1555,53 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     if (shaderTranslucent.program != 0) {
         bool waterStateSet = false;
         for (auto& [chunkKey, renderData] : chunkRenderCache) {
-            if (!renderData.visible || renderData.indexCount == 0) continue;
-            if (renderData.waterIndexCount == 0) continue;
-
-            // 距离剔除
-            float cx = renderData.position.x + 8.0f;
-            float cz = renderData.position.z + 8.0f;
-            float dx2 = cx - lastCameraX, dz2 = cz - lastCameraZ;
-            if (dx2 * dx2 + dz2 * dz2 > farPlane * farPlane) continue;
-
+            if (!renderData.visible) continue;
             float minX = renderData.position.x;
             float maxX = minX + 16.0f;
             float minZ = renderData.position.z;
             float maxZ = minZ + 16.0f;
-            if (!isAABBInFrustum(minX, worldMinY, minZ, maxX, worldMaxY, maxZ)) continue;
 
-            if (!waterStateSet) {
-                glUseProgram(shaderTranslucent.program);
+            for (auto& sec : renderData.sections) {
+                if (!sec.isVisible || sec.waterIndexCount == 0) continue;
+                float secMinY = (float)sec.sectionY;
+                float secMaxY = secMinY + 16.0f;
+                if (!isAABBInFrustum(minX, secMinY, minZ, maxX, secMaxY, maxZ)) continue;
 
-                if (shaderTranslucent.uModelViewMat != -1)
-                    glUniformMatrix4fv(shaderTranslucent.uModelViewMat, 1, GL_FALSE, glm::value_ptr(modelViewMat));
-                if (shaderTranslucent.uProjMat != -1)
-                    glUniformMatrix4fv(shaderTranslucent.uProjMat, 1, GL_FALSE, glm::value_ptr(projMatrix));
-                if (shaderTranslucent.uChunkOffset != -1)
-                    glUniform3f(shaderTranslucent.uChunkOffset, 0.0f, 0.0f, 0.0f);
-                if (shaderTranslucent.uColorModulator != -1)
-                    glUniform4f(shaderTranslucent.uColorModulator, 1.0f, 1.0f, 1.0f, 1.0f);
-                if (shaderTranslucent.uFogShape != -1)
-                    glUniform1i(shaderTranslucent.uFogShape, 0);
-                if (shaderTranslucent.uTextureMatrix != -1)
-                    glUniformMatrix4fv(shaderTranslucent.uTextureMatrix, 1, GL_FALSE, glm::value_ptr(glm::mat4(1.0f)));
-                if (shaderTranslucent.uFogStart != -1) glUniform1f(shaderTranslucent.uFogStart, fogStart);
-                if (shaderTranslucent.uFogEnd != -1) glUniform1f(shaderTranslucent.uFogEnd, fogEnd);
-                if (shaderTranslucent.uFogColor != -1)
-                    glUniform4f(shaderTranslucent.uFogColor, 0.53f, 0.81f, 0.92f, 1.0f);
-                if (shaderTranslucent.uSampler0 != -1) glUniform1i(shaderTranslucent.uSampler0, 0);
-                if (shaderTranslucent.uSampler2 != -1) glUniform1i(shaderTranslucent.uSampler2, 2);
+                if (!waterStateSet) {
+                    glUseProgram(shaderTranslucent.program);
 
-                // 水渲染状态
-                glEnable(GL_BLEND);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                glDepthFunc(GL_LEQUAL);
-                glDepthMask(GL_FALSE);
-                waterStateSet = true;
+                    if (shaderTranslucent.uModelViewMat != -1)
+                        glUniformMatrix4fv(shaderTranslucent.uModelViewMat, 1, GL_FALSE, glm::value_ptr(modelViewMat));
+                    if (shaderTranslucent.uProjMat != -1)
+                        glUniformMatrix4fv(shaderTranslucent.uProjMat, 1, GL_FALSE, glm::value_ptr(projMatrix));
+                    if (shaderTranslucent.uChunkOffset != -1)
+                        glUniform3f(shaderTranslucent.uChunkOffset, 0.0f, 0.0f, 0.0f);
+                    if (shaderTranslucent.uColorModulator != -1)
+                        glUniform4f(shaderTranslucent.uColorModulator, 1.0f, 1.0f, 1.0f, 1.0f);
+                    if (shaderTranslucent.uFogShape != -1)
+                        glUniform1i(shaderTranslucent.uFogShape, 0);
+                    if (shaderTranslucent.uTextureMatrix != -1)
+                        glUniformMatrix4fv(shaderTranslucent.uTextureMatrix, 1, GL_FALSE, glm::value_ptr(glm::mat4(1.0f)));
+                    if (shaderTranslucent.uFogStart != -1) glUniform1f(shaderTranslucent.uFogStart, fogStart);
+                    if (shaderTranslucent.uFogEnd != -1) glUniform1f(shaderTranslucent.uFogEnd, fogEnd);
+                    if (shaderTranslucent.uFogColor != -1)
+                        glUniform4f(shaderTranslucent.uFogColor, 0.53f, 0.81f, 0.92f, 1.0f);
+                    if (shaderTranslucent.uSampler0 != -1) glUniform1i(shaderTranslucent.uSampler0, 0);
+                    if (shaderTranslucent.uSampler2 != -1) glUniform1i(shaderTranslucent.uSampler2, 2);
+
+                    glEnable(GL_BLEND);
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                    glDepthFunc(GL_LEQUAL);
+                    glDepthMask(GL_FALSE);
+                    waterStateSet = true;
+                }
+
+                glBindVertexArray(sec.vao);
+                uint32_t baseEnd = sec.indexCount - sec.overlayIndexCount - sec.waterIndexCount;
+                uint32_t overlayEnd = baseEnd + sec.overlayIndexCount;
+                glDrawElements(GL_TRIANGLES, sec.waterIndexCount, GL_UNSIGNED_INT,
+                               (const GLvoid*)(uintptr_t)(overlayEnd * sizeof(uint32_t)));
             }
-
-            glBindVertexArray(renderData.vao);
-            uint32_t baseEnd = renderData.indexCount - renderData.overlayIndexCount - renderData.waterIndexCount;
-            uint32_t grassEnd = baseEnd + renderData.overlayIndexCount;
-            glDrawElements(GL_TRIANGLES, renderData.waterIndexCount, GL_UNSIGNED_INT,
-                           (const GLvoid*)(uintptr_t)(grassEnd * sizeof(uint32_t)));
         }
 
         if (waterStateSet) {
@@ -1527,14 +1704,16 @@ void GLRenderer::cleanup() {
     
     // 清理所有区块的渲染数据
     for (auto& [chunkKey, renderData] : chunkRenderCache) {
-        if (renderData.vao != 0) {
-            glDeleteVertexArrays(1, &renderData.vao);
-        }
-        if (renderData.vbo != 0) {
-            glDeleteBuffers(1, &renderData.vbo);
-        }
-        if (renderData.ebo != 0) {
-            glDeleteBuffers(1, &renderData.ebo);
+        for (auto& sec : renderData.sections) {
+            if (sec.vao != 0) {
+                glDeleteVertexArrays(1, &sec.vao);
+            }
+            if (sec.vbo != 0) {
+                glDeleteBuffers(1, &sec.vbo);
+            }
+            if (sec.ebo != 0) {
+                glDeleteBuffers(1, &sec.ebo);
+            }
         }
     }
     chunkRenderCache.clear();
