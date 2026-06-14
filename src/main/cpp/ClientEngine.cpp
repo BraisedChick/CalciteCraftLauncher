@@ -731,16 +731,6 @@ void ClientEngine::chunkWorkerFunc() {
                     } else if (emptySkyMask & (1ULL << lightBit)) {
                         section->skyLight.assign(2048, 0);
                     }
-                    // DIAG: chunk (-57,14) section 7 打印原始数据
-                    if (chunkX == -57 && chunkZ == 14 && i == 7 && (skyMask & (1ULL << lightBit))) {
-                        const auto& rd = skyUpdates[skyIdx - 1];
-                        char rh[256]; int rp = 0;
-                        for (int rb = 0; rb < 32 && rb < (int)rd.size(); rb++) {
-                            rp += snprintf(rh + rp, sizeof(rh)-rp, "%02x ", (unsigned char)rd[rb]);
-                        }
-                        LOGI("LIGHT_RAW: section[%d](Y=%d) raw skyUpdates[%d][0..31]: %s",
-                             i, section->y, skyIdx-1, rh);
-                    }
 
                     if (blockMask & (1ULL << lightBit)) {
                         if (blockIdx < (int)blockUpdates.size()) {
@@ -752,39 +742,6 @@ void ClientEngine::chunkWorkerFunc() {
                         blockIdx++;
                     } else if (emptyBlockMask & (1ULL << lightBit)) {
                         section->blockLight.assign(2048, 0);
-                    }
-                }
-            }
-
-            // 针对 chunk (-57, 14) 打印 skyMask 映射和方块 (-912, 63, 234) 的光照
-            if (chunkX == -57 && chunkZ == 14) {
-                auto diagChunk = chunkManager->getChunk(chunkX, chunkZ);
-                if (diagChunk) {
-                    int si = 7;
-                    auto& sec = diagChunk->sections[si];
-                    if (sec) {
-                        int lx = 0, ly = 15, lz = 10;
-                        int idx = (ly * 16 + lz) * 16 + lx;
-                        int byteIdx = idx / 2;
-                        int shift = (idx & 1) * 4;
-                        int skyNib = (sec->skyLight.size() >= 2048)
-                            ? ((sec->skyLight[byteIdx] >> shift) & 0xF) : -1;
-                        int blkNib = (sec->blockLight.size() >= 2048)
-                            ? ((sec->blockLight[byteIdx] >> shift) & 0xF) : -1;
-                        LOGI("LIGHT_MAP: section[%d](Y=%d) local(0,15,10) -> world(-912,63,234) skyN=%d blkN=%d skySz=%zu",
-                             si, sec->y, skyNib, blkNib, sec->skyLight.size());
-                        // 打印每个 Y 层在 (0,0) 的光照值
-                        char yDump[512]; int yp = 0;
-                        for (int yy = 0; yy < 16; yy++) {
-                            int nidx = (yy * 16 + 0) * 16 + 0;
-                            int nbyte = nidx / 2;
-                            int nshift = (nidx & 1) * 4;
-                            int nib = (sec->skyLight.size() >= (size_t)(nbyte+1))
-                                ? ((sec->skyLight[nbyte] >> nshift) & 0xF) : -1;
-                            yp += snprintf(yDump + yp, sizeof(yDump)-yp, "Y%d=%d ", yy, nib);
-                        }
-                        LOGI("LIGHT_MAP:   skyPerY[at (0,0)]: %s", yDump);
-                        // 打印原始 skyUpdates 数据不可达（此处无 skyUpdates 引用）
                     }
                 }
             }
@@ -1140,8 +1097,15 @@ void ClientEngine::handlePlayPacket(int packetId,
                     auto chunk = chunkManager->getChunk(chunkX, chunkZ);
                     if (chunk) {
                         chunk->setBlockState(localX, blockY, localZ, blockState);
+                        // 客户端方块光重算（服务器不发 LightUpdate）
+                        Light::getInstance().recalcBlockLight(chunkManager.get(), blockX, blockY, blockZ);
                         if (glRenderer) {
-                            glRenderer->markChunkForUpdate(chunkX, chunkZ);
+                            // 光照变化可跨越最多 2 个 chunk，标记邻近区块一起更新
+                            for (int dx = -2; dx <= 2; dx++) {
+                                for (int dz = -2; dz <= 2; dz++) {
+                                    glRenderer->markChunkForUpdate(chunkX + dx, chunkZ + dz);
+                                }
+                            }
                         }
                     } else {
                         LOGW("BlockUpdate: chunk (%d, %d) not loaded", chunkX, chunkZ);
@@ -1150,7 +1114,7 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x0F: { // Light Update
+            case 0x25: { // Light Update
                 try {
                     ProtocolCraft::ClientboundLightUpdatePacket lightPacket;
                     std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
@@ -1159,7 +1123,6 @@ void ClientEngine::handlePlayPacket(int packetId,
                     lightPacket.Read(subIter, subLen);
                     int lx = lightPacket.GetX();
                     int lz = lightPacket.GetZ();
-                    LOGI("LightUpdate: chunk (%d, %d)", lx, lz);
                     if (chunkManager) {
                         auto chunk = chunkManager->getChunk(lx, lz);
                         if (chunk) {

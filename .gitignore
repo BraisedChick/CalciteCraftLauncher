@@ -12,3 +12,4 @@ local.properties
 /.idea
 # Exclude example folders
 /release/
+/tools/
