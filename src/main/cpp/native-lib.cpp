@@ -437,6 +437,13 @@ Java_com_calcite_MainActivity_initRenderer(
             }
         });
 
+        // 设置 Mipmap 更新回调
+        GameUI::getInstance().setMipmapCallback([](bool enabled) {
+            if (g_glRenderer) {
+                g_glRenderer->setMipmapEnabled(enabled);
+            }
+        });
+
         // 设置退出游戏回调（返回 Java 启动器）
         GameUI::getInstance().setExitCallback([]() {
             JNIEnv* env;

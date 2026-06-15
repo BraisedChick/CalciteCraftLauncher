@@ -89,6 +89,9 @@ public:
     void setRenderDistance(int chunks);
     int getRenderDistance() const { return static_cast<int>(farPlane / 16.0f); }
 
+    // Mipmap 开关
+    void setMipmapEnabled(bool enabled);
+
     // 纹理数组初始化是否已完成（渲染线程延迟初始化）
     bool isTextureInitComplete() const { return !textureInitPending; }
 

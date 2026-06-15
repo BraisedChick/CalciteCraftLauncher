@@ -12,6 +12,7 @@
 #include "BiomeColorManager.h"
 #include "MinecraftVersion.h"
 #include "Light.h"
+#include "GameUI.h"
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
 
@@ -147,7 +148,7 @@ bool GLRenderer::finishTextureInit() {
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
         textureNextBatch = 0;
@@ -190,6 +191,11 @@ bool GLRenderer::finishTextureInit() {
 
     if (textureNextBatch >= textureTotalCount) {
         LOGI("All %d textures uploaded", textureTotalCount);
+        // 根据设置生成 mipmap
+        if (GameUI::getInstance().isMipmapEnabled()) {
+            glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+            LOGI("Mipmaps generated for texture array");
+        }
         textureInitPending = false;
         LOGI("=== finishTextureInit COMPLETE ===");
         preRenderBlockIcons();
@@ -1636,6 +1642,20 @@ void GLRenderer::setFov(float degrees) {
 
 void GLRenderer::setRenderDistance(int chunks) {
     farPlane = chunks * 16.0f;
+}
+
+void GLRenderer::setMipmapEnabled(bool enabled) {
+    if (textureArrayID == 0) return;
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayID);
+
+    if (enabled) {
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+        glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+    } else {
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    }
 }
 
 void GLRenderer::recreateSurface(int width, int height) {

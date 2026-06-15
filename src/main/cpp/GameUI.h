@@ -63,6 +63,7 @@ public:
     bool isVideoSettingsOpen() const { return videoSettingsOpen; }
     int getRenderDistance() const { return renderDistance; }
     bool isSmoothLightingEnabled() const { return smoothLightingEnabled; }
+    bool isMipmapEnabled() const { return mipmapEnabled; }
 
     // FOV 更新回调
     using FovCallback = std::function<void(float)>;
@@ -73,6 +74,12 @@ public:
     using RenderDistanceCallback = std::function<void(int)>;
     void setRenderDistanceCallback(RenderDistanceCallback cb) { renderDistanceCallback = cb; }
     RenderDistanceCallback renderDistanceCallback;
+
+    // Mipmap 回调
+    using MipmapCallback = std::function<void(bool)>;
+    void setMipmapCallback(MipmapCallback cb) { mipmapCallback = cb; }
+    MipmapCallback getMipmapCallback() const { return mipmapCallback; }
+    MipmapCallback mipmapCallback;
 
     // F3 调试信息
     void toggleDebugInfo() { showDebugInfo = !showDebugInfo; }
@@ -180,6 +187,7 @@ private:
     bool videoSettingsOpen = false;
     int renderDistance = 10;
     bool smoothLightingEnabled = true;
+    bool mipmapEnabled = true;
 
     // 游戏内 UI 状态
     struct {
