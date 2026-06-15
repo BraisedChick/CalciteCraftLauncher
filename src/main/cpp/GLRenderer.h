@@ -42,20 +42,6 @@
 
 #include "ResourcepackManager.h"
 
-struct BlockPosition {
-    int x, y, z;
-
-    bool operator<(const BlockPosition& other) const {
-        if (x != other.x) return x < other.x;
-        if (y != other.y) return y < other.y;
-        return z < other.z;
-    }
-
-    bool operator==(const BlockPosition& other) const {
-        return x == other.x && y == other.y && z == other.z;
-    }
-};
-
 class GLRenderer {
 public:
     GLRenderer();
@@ -73,10 +59,6 @@ public:
     // ImGui 菜单
     bool initImGui();
     void renderUI();
-
-    // 方块操作
-    void addBlock(int x, int y, int z);
-    void removeBlock(int x, int y, int z);
 
     // 设置 ChunkManager 引用
     void setChunkManager(ChunkManager* manager);
@@ -231,9 +213,6 @@ private:
     std::unordered_set<uint64_t> dirtyChunks;  // 由 cacheMutex 保护
     size_t lastChunkCount = 0;                  // 上次已知区块数，用于发现新区块
 
-    // 手动放置的方块
-    std::map<BlockPosition, bool> blocks;
-    
     // 帧计数器
     uint32_t frameCount = 0;
 

@@ -893,29 +893,3 @@ Java_com_calcite_MainActivity_addImGuiCharacter(
 
     GameUI::getInstance().addInputCharacter((unsigned int)c);
 }
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_calcite_MainActivity_addBlock(
-        JNIEnv* env,
-        jobject thiz,
-        jint x,
-        jint y,
-        jint z) {
-
-    if (g_glRenderer) {
-        g_glRenderer->addBlock((int)x, (int)y, (int)z);
-    }
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_calcite_MainActivity_removeBlock(
-        JNIEnv* env,
-        jobject thiz,
-        jint x,
-        jint y,
-        jint z) {
-
-    if (g_glRenderer) {
-        g_glRenderer->removeBlock((int)x, (int)y, (int)z);
-    }
-}

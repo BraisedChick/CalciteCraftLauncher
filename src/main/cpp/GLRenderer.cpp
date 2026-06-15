@@ -1154,23 +1154,6 @@ void GLRenderer::addBlockToMesh(std::vector<Vertex>& vertices,
     }
 }
 
-void GLRenderer::addBlock(int x, int y, int z) {
-    BlockPosition pos = {x, y, z};
-    blocks[pos] = true;
-    needRebuildMesh = true;
-    LOGI("Added block at (%d, %d, %d)", x, y, z);
-}
-
-void GLRenderer::removeBlock(int x, int y, int z) {
-    BlockPosition pos = {x, y, z};
-    auto it = blocks.find(pos);
-    if (it != blocks.end()) {
-        blocks.erase(it);
-        needRebuildMesh = true;
-        LOGI("Removed block at (%d, %d, %d)", x, y, z);
-    }
-}
-
 void GLRenderer::updateCamera(float cx, float cy, float cz, float pitch, float yaw) {
     // ===== 使用 Botcraft + GLM 的 Camera 算法 =====
 
