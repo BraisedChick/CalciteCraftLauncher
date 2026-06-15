@@ -1155,29 +1155,28 @@ void GLRenderer::addBlockToMesh(std::vector<Vertex>& vertices,
 }
 
 void GLRenderer::updateCamera(float cx, float cy, float cz, float pitch, float yaw) {
-    // ===== 使用 Botcraft + GLM 的 Camera 算法 =====
 
     // 1. 加眼睛高度偏移（玩家脚部 → 眼睛，原版 1.62 格）
     cy += 1.62f;
 
-    // 2. 限制俯仰角（Botcraft: -89° 到 +89°）
+    // 2. 限制俯仰角
     const float maxPitch = glm::radians(89.0f);
     if (pitch > maxPitch) pitch = maxPitch;
     if (pitch < -maxPitch) pitch = -maxPitch;
 
-    // 2. 计算前方向量（Botcraft Camera.cpp 第 108-110 行）
+    // 2. 计算前方向量
     glm::vec3 front;
     front.x = -sinf(yaw) * cosf(pitch);
     front.y = -sinf(pitch);
     front.z = cosf(yaw) * cosf(pitch);
     front = glm::normalize(front);
 
-    // 3. 计算右向量和上向量（Botcraft 第 114-115 行）
+    // 3. 计算右向量和上向量
     glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
     glm::vec3 right = glm::normalize(glm::cross(front, worldUp));
     glm::vec3 up = glm::normalize(glm::cross(right, front));
 
-    // 4. 构建视图矩阵（Botcraft 第 117 行：glm::lookAt(position, position + front, up)）
+    // 4. 构建视图矩阵
     glm::vec3 position(cx, cy, cz);
     glm::vec3 target = position + front;
     glm::mat4 viewMatrix = glm::lookAt(position, target, up);
@@ -1185,7 +1184,7 @@ void GLRenderer::updateCamera(float cx, float cy, float cz, float pitch, float y
     // 将 GLM 矩阵复制到数组（列主序）
     memcpy(cameraMatrix, glm::value_ptr(viewMatrix), sizeof(float) * 16);
 
-    // 5. 透视投影矩阵（与 Botcraft 相同）
+    // 5. 透视投影矩阵
     float aspect = (float)screenWidth / screenHeight;
     float fovRad = glm::radians(fov);  // 使用可调节的 fov 成员
     float nearP = 0.1f;
