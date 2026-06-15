@@ -1195,15 +1195,10 @@ void ClientEngine::handlePlayPacket(int packetId,
                     auto chunk = chunkManager->getChunk(chunkX, chunkZ);
                     if (chunk) {
                         chunk->setBlockState(localX, blockY, localZ, blockState);
-                        // 客户端方块光重算（服务器不发 LightUpdate）
-                        Light::getInstance().recalcBlockLight(chunkManager.get(), blockX, blockY, blockZ);
+                        // 异步入队方块光重算（不阻塞网络线程）
+                        Light::getInstance().queueBlockLightRecalc(blockX, blockY, blockZ);
                         if (glRenderer) {
-                            // 光照变化可跨越最多 2 个 chunk，标记邻近区块一起更新
-                            for (int dx = -2; dx <= 2; dx++) {
-                                for (int dz = -2; dz <= 2; dz++) {
-                                    glRenderer->markChunkForUpdate(chunkX + dx, chunkZ + dz);
-                                }
-                            }
+                            glRenderer->markChunkForUpdate(chunkX, chunkZ);
                         }
                     } else {
                         LOGW("BlockUpdate: chunk (%d, %d) not loaded", chunkX, chunkZ);

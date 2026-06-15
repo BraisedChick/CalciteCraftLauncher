@@ -183,6 +183,69 @@ int Light::getBlockEmission(const char* name) {
 
 // ===== 客户端方块光 BFS 传播 =====
 
+Light::Light() {
+    startWorkerThread();
+}
+
+Light::~Light() {
+    workerRunning.store(false);
+    inputCV.notify_all();
+    if (workerThread.joinable()) {
+        workerThread.join();
+    }
+}
+
+void Light::startWorkerThread() {
+    workerRunning.store(true);
+    workerThread = std::thread(&Light::workerLoop, this);
+}
+
+void Light::workerLoop() {
+    while (workerRunning.load()) {
+        int wx, wy, wz;
+        {
+            std::unique_lock<std::mutex> lock(inputMutex);
+            inputCV.wait(lock, [this] { return hasInput || !workerRunning.load(); });
+            if (!workerRunning.load()) break;
+            wx = pendingLightX;
+            wy = pendingLightY;
+            wz = pendingLightZ;
+            hasInput = false;
+        }
+
+        // 在工作线程上执行 BFS（不阻塞任何线程）
+        if (chunkManagerRef) {
+            recalcBlockLight(chunkManagerRef, wx, wy, wz);
+
+            // 结果入队，渲染线程 poll
+            std::lock_guard<std::mutex> lock(outputMutex);
+            completedX = wx;
+            completedY = wy;
+            completedZ = wz;
+            hasOutput = true;
+        }
+    }
+}
+
+void Light::queueBlockLightRecalc(int worldX, int worldY, int worldZ) {
+    std::lock_guard<std::mutex> lock(inputMutex);
+    pendingLightX = worldX;
+    pendingLightY = worldY;
+    pendingLightZ = worldZ;
+    hasInput = true;
+    inputCV.notify_one();
+}
+
+bool Light::pollCompletedLightRecalc(int* outX, int* outY, int* outZ) {
+    std::lock_guard<std::mutex> lock(outputMutex);
+    if (!hasOutput) return false;
+    if (outX) *outX = completedX;
+    if (outY) *outY = completedY;
+    if (outZ) *outZ = completedZ;
+    hasOutput = false;
+    return true;
+}
+
 void Light::recalcBlockLight(ChunkManager* chunkMgr, int wx, int wy, int wz) {
     if (!chunkMgr) return;
 

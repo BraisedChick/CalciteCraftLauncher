@@ -16,6 +16,7 @@
 #include "BlockRegistry.h"
 #include "CameraController.h"
 #include "Collision.h"
+#include "Light.h"
 #include "GameUI.h"
 #include "imgui.h"
 
@@ -132,12 +133,15 @@ static void renderLoop() {
         float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
         lastTime = currentTime;
 
-        // 确保 PlayerController 持有 ChunkManager 引用
-        if (g_engine && !Collision::getInstance().hasChunkManager()) {
+        // 确保 PlayerController 和 Light 持有 ChunkManager 引用
+        if (g_engine) {
             auto* cm = g_engine->getChunkManager();
             if (cm) {
-                Collision::getInstance().setChunkManager(cm);
-                JNI_LOGI("PlayerController: ChunkManager acquired from engine");
+                if (!Collision::getInstance().hasChunkManager()) {
+                    Collision::getInstance().setChunkManager(cm);
+                    JNI_LOGI("PlayerController: ChunkManager acquired from engine");
+                }
+                Light::getInstance().setChunkManager(cm);
             }
         }
 
@@ -171,6 +175,22 @@ static void renderLoop() {
         float yaw = CameraController::getInstance().getYaw();
 
         if (g_glRenderer) {
+            // 检查是否有已完成的光照重算，标记邻近 chunk
+            {
+                int lx, ly, lz;
+                if (Light::getInstance().pollCompletedLightRecalc(&lx, &ly, &lz)) {
+                    if (g_glRenderer) {
+                        int cx = lx >> 4;
+                        int cz = lz >> 4;
+                        for (int dx = -2; dx <= 2; dx++) {
+                            for (int dz = -2; dz <= 2; dz++) {
+                                g_glRenderer->markChunkForUpdate(cx + dx, cz + dz);
+                            }
+                        }
+                    }
+                }
+            }
+
             g_glRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
 
             // 每帧检查 ImGui 是否需要键盘输入
@@ -317,6 +337,7 @@ Java_com_calcite_MainActivity_initRenderer(
         if (g_engine) {
             g_glRenderer->setChunkManager(g_engine->getChunkManager());
             Collision::getInstance().setChunkManager(g_engine->getChunkManager());
+            Light::getInstance().setChunkManager(g_engine->getChunkManager());
             g_engine->setRenderer(g_glRenderer);
             JNI_LOGI("ChunkManager and renderer linked");
 
@@ -373,6 +394,7 @@ Java_com_calcite_MainActivity_initRenderer(
                 if (g_glRenderer) {
                     g_glRenderer->setChunkManager(g_engine->getChunkManager());
                     Collision::getInstance().setChunkManager(g_engine->getChunkManager());
+                    Light::getInstance().setChunkManager(g_engine->getChunkManager());
                     g_engine->setRenderer(g_glRenderer);
                     JNI_LOGI("Engine and renderer linked");
                 }
