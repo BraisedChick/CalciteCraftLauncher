@@ -29,6 +29,7 @@
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundMovePlayerPacketStatusOnly.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundClientInformationPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundSetCarriedItemPacket.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundSetCarriedItemPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundUseItemOnPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundPlayerActionPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundClientCommandPacket.hpp"
@@ -1397,6 +1398,19 @@ void ClientEngine::handlePlayPacket(int packetId,
                 size_t len = pktData.size();
                 timePacket.Read(iter, len);
                 Light::getInstance().setWorldDayTime(timePacket.GetDayTime());
+                break;
+            }
+
+            case 0x48: { // Set Carried Item（服务器同步手持槽位）
+                ProtocolCraft::ClientboundSetCarriedItemPacket carriedPacket;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t len = pktData.size();
+                carriedPacket.Read(iter, len);
+                int slot = (int)carriedPacket.GetSlot();
+                if (slot >= 0 && slot <= 8) {
+                    PlayerInventory::getInstance().setSelectedSlot(slot);
+                }
                 break;
             }
 
