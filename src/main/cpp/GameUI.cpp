@@ -752,7 +752,7 @@ void GameUI::renderInGameUI() {
             int foodVal = engine->getFood();
             const float ICON_SIZE = 20.0f;
             const float GAP = 1.0f;
-            const float HUD_Y = h - 61.0f - ICON_SIZE - 8.0f;  // 快捷栏上方
+            const float HUD_Y = h - 61.0f - ICON_SIZE - 18.0f;  // 快捷栏上方
 
             // 延迟加载 HUD 纹理（首次渲染时）
             if (!hudTexturesLoaded) {
@@ -763,6 +763,8 @@ void GameUI::renderInGameUI() {
                 texFoodEmpty = rm.getHudTexture("food_empty");
                 texFoodFull = rm.getHudTexture("food_full");
                 texFoodHalf = rm.getHudTexture("food_half");
+                texExpBarBg = rm.getHudTexture("experience_bar_background");
+                texExpBarProgress = rm.getHudTexture("experience_bar_progress");
                 hudTexturesLoaded = true;
             }
 
@@ -805,6 +807,55 @@ void GameUI::renderInGameUI() {
                     ImGui::GetWindowDrawList()->AddImage(
                         (ImTextureID)(intptr_t)texFoodHalf,
                         ImVec2(fx, HUD_Y), ImVec2(fx + ICON_SIZE, HUD_Y + ICON_SIZE));
+                }
+            }
+
+            // ===== 经验条 =====
+            if (texExpBarBg && texExpBarProgress) {
+                float expBarH = 14.0f;
+                float expBarW = totalW;  // 与快捷栏同宽
+                float expBarX = hotbarX;
+                float expBarY = HOTBAR_Y - expBarH - 4.0f;
+
+                // 背景
+                ImGui::GetWindowDrawList()->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
+                    glBindSampler(0, 0);
+                }, nullptr);
+                ImGui::GetWindowDrawList()->AddImage(
+                    (ImTextureID)(intptr_t)texExpBarBg,
+                    ImVec2(expBarX, expBarY),
+                    ImVec2(expBarX + expBarW, expBarY + expBarH),
+                    ImVec2(0, 0), ImVec2(1, 1));
+
+                // 进度（UV裁剪）
+                auto* engine2 = ClientEngine::getInstance();
+                if (engine2) {
+                    float progress = engine2->getExperienceProgress();
+                    if (progress > 0.0f && progress <= 1.0f) {
+                        ImGui::GetWindowDrawList()->AddImage(
+                            (ImTextureID)(intptr_t)texExpBarProgress,
+                            ImVec2(expBarX, expBarY),
+                            ImVec2(expBarX + expBarW * progress, expBarY + expBarH),
+                            ImVec2(0, 0), ImVec2(progress, 1));
+                    }
+
+                    // 等级文字（居中，绿色）
+                    int level = engine2->getExperienceLevel();
+                    if (level > 0) {
+                        char levelStr[16];
+                        snprintf(levelStr, sizeof(levelStr), "%d", level);
+                        ImVec2 textSize = ImGui::CalcTextSize(levelStr);
+                        float textX = expBarX + (expBarW - textSize.x) * 0.5f;
+                        float textY = expBarY + (expBarH - textSize.y) * 0.5f - 12.0f;
+                        // 黑色描边 + 绿色填充
+                        ImU32 greenCol = IM_COL32(128, 255, 32, 255);
+                        ImU32 shadowCol = IM_COL32(0, 0, 0, 255);
+                        ImGui::GetWindowDrawList()->AddText(ImVec2(textX - 1, textY), shadowCol, levelStr);
+                        ImGui::GetWindowDrawList()->AddText(ImVec2(textX + 1, textY), shadowCol, levelStr);
+                        ImGui::GetWindowDrawList()->AddText(ImVec2(textX, textY - 1), shadowCol, levelStr);
+                        ImGui::GetWindowDrawList()->AddText(ImVec2(textX, textY + 1), shadowCol, levelStr);
+                        ImGui::GetWindowDrawList()->AddText(ImVec2(textX, textY), greenCol, levelStr);
+                    }
                 }
             }
         }

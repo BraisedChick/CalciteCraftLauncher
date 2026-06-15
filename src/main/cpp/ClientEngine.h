@@ -78,6 +78,11 @@ public:
     float getFoodSaturation() const { return foodSaturation; }
     int getGameMode() const { return gameMode; }
 
+    // 经验值
+    float getExperienceProgress() const { return experienceProgress; }
+    int getExperienceLevel() const { return experienceLevel; }
+    int getTotalExperience() const { return totalExperience; }
+
     // 死亡消息（来自服务端 CombatKill 包）
     std::string getDeathMessage() const { return deathMessage; }
     void clearDeathMessage() { deathMessage.clear(); }
@@ -161,6 +166,9 @@ private:
     float health = 20.0f;
     int food = 20;
     float foodSaturation = 5.0f;
+    float experienceProgress = 0.0f;  // 0.0 ~ 1.0 当前等级进度
+    int experienceLevel = 0;
+    int totalExperience = 0;
 
     // 游戏模式
     int gameMode = 0;

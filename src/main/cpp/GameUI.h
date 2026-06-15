@@ -211,6 +211,8 @@ private:
     GLuint texFoodEmpty = 0;
     GLuint texFoodFull = 0;
     GLuint texFoodHalf = 0;
+    GLuint texExpBarBg = 0;
+    GLuint texExpBarProgress = 0;
     bool hudTexturesLoaded = false;
 
     // 死亡界面状态

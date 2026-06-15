@@ -30,6 +30,7 @@
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundClientInformationPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundSetCarriedItemPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundContainerClickPacket.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundSetExperiencePacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundSetCarriedItemPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundUseItemOnPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundPlayerActionPacket.hpp"
@@ -1457,6 +1458,18 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
+
+            case 0x51: { // Set Experience（经验值更新）
+                ProtocolCraft::ClientboundSetExperiencePacket expPacket;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t len = pktData.size();
+                expPacket.Read(iter, len);
+                experienceProgress = expPacket.GetExperienceProgress();
+                experienceLevel = expPacket.GetExperienceLevel();
+                totalExperience = expPacket.GetTotalExperience();
+                break;
+            }
 
             case 0x52: { // Set Health（玩家生命/饥饿值更新）
                 ProtocolCraft::ClientboundSetHealthPacket healthPacket;
