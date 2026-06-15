@@ -29,6 +29,7 @@
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundMovePlayerPacketStatusOnly.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundClientInformationPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundSetCarriedItemPacket.hpp"
+#include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundContainerClickPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Clientbound/ClientboundSetCarriedItemPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundUseItemOnPacket.hpp"
 #include "protocolCraft/include/protocolCraft/Packets/Game/Serverbound/ServerboundPlayerActionPacket.hpp"
@@ -608,6 +609,101 @@ void ClientEngine::sendRespawn() {
     cmdPacket.Write(writeData);
     net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
     LOGI("Sent respawn request (ClientCommand PERFORM_RESPAWN)");
+}
+
+void ClientEngine::sendContainerClick(int slotNum, int button) {
+    std::lock_guard<std::mutex> lock(netMutex);
+    if (!net || !net->isConnected()) return;
+
+    auto& inv = PlayerInventory::getInstance();
+    InvSlot cursor = inv.getCursorItem();
+    InvSlot clicked = inv.getSlot(slotNum);
+
+    // 构建点击后的光标和槽位状态（客户端预测）
+    InvSlot newCursor = cursor;
+    InvSlot newClicked = clicked;
+
+    if (button == 0) {  // 左键：拿取/放下/交换
+        if (!cursor.present && clicked.present) {
+            // 光标空，槽位有物品 → 拿起
+            newCursor = clicked;
+            newClicked = InvSlot{};
+        } else if (cursor.present && !clicked.present) {
+            // 光标有物品，槽位空 → 放下
+            newClicked = cursor;
+            newCursor = InvSlot{};
+        } else if (cursor.present && clicked.present && cursor.itemId == clicked.itemId) {
+            // 同类物品合并
+            int total = cursor.count + clicked.count;
+            int maxStack = 64;
+            if (total <= maxStack) {
+                newClicked.count = (int8_t)total;
+                newCursor = InvSlot{};
+            } else {
+                newClicked.count = (int8_t)maxStack;
+                newCursor.count = (int8_t)(total - maxStack);
+            }
+        } else if (cursor.present && clicked.present) {
+            // 不同物品 → 交换
+            newCursor = clicked;
+            newClicked = cursor;
+        }
+    } else if (button == 1) {  // 右键：放一个/拿一半
+        if (cursor.present && !clicked.present) {
+            newClicked.present = true;
+            newClicked.itemId = cursor.itemId;
+            newClicked.count = 1;
+            if (cursor.count > 1) {
+                newCursor.count = cursor.count - 1;
+            } else {
+                newCursor = InvSlot{};
+            }
+        } else if (!cursor.present && clicked.present) {
+            int half = clicked.count / 2;
+            int remain = clicked.count - half;
+            newCursor.present = true;
+            newCursor.itemId = clicked.itemId;
+            newCursor.count = (int8_t)half;
+            if (remain > 0) {
+                newClicked.count = (int8_t)remain;
+            } else {
+                newClicked = InvSlot{};
+            }
+        }
+    }
+
+    // 更新本地状态
+    inv.setCursorItem(newCursor);
+    inv.setLocalSlot(slotNum, newClicked);
+
+    // 构建 ProtocolCraft Slot 对象
+    auto toSlot = [](const InvSlot& is) -> ProtocolCraft::Slot {
+        ProtocolCraft::Slot s;
+        if (is.present && is.itemId > 0) {
+            s.SetPresent(true);
+            s.SetItemId(is.itemId);
+            s.SetItemCount(is.count);
+        }
+        return s;
+    };
+
+    ProtocolCraft::ServerboundContainerClickPacket clickPacket;
+    clickPacket.SetContainerId(0);  // 0 = 玩家背包
+    clickPacket.SetStateId(inv.getStateId());
+    clickPacket.SetSlotNum((short)slotNum);
+    clickPacket.SetButtonNum((char)button);
+    clickPacket.SetClickType(0);  // PICKUP
+
+    // ChangedSlots: 告知服务器点击后槽位的新状态
+    std::map<short, ProtocolCraft::Slot> changed;
+    changed[(short)slotNum] = toSlot(newClicked);
+    clickPacket.SetChangedSlots(changed);
+
+    clickPacket.SetCarriedItem(toSlot(newCursor));
+
+    ProtocolCraft::WriteContainer writeData;
+    clickPacket.Write(writeData);
+    net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
 }
 
 void ClientEngine::disconnect() {
@@ -1245,8 +1341,20 @@ void ClientEngine::handlePlayPacket(int packetId,
                 }
 
                 PlayerInventory::getInstance().setContent(containerId, invSlots);
-                LOGI("Container Set Content: id=%d, slots=%zu, nonEmpty=%d",
-                     containerId, items.size(), nonEmptyCount);
+                PlayerInventory::getInstance().setStateId(containerPacket.GetStateId());
+
+                // 更新光标物品
+                const auto& carried = containerPacket.GetCarriedItem();
+                InvSlot cursorIs;
+                cursorIs.present = !carried.IsEmptySlot();
+                if (cursorIs.present) {
+                    cursorIs.itemId = carried.GetItemId();
+                    cursorIs.count = carried.GetItemCount();
+                }
+                PlayerInventory::getInstance().setCursorItem(cursorIs);
+
+                LOGI("Container Set Content: id=%d, state=%d, slots=%zu, nonEmpty=%d",
+                     containerId, containerPacket.GetStateId(), items.size(), nonEmptyCount);
                 // 日志：前 3 个非空物品
                 int logged = 0;
                 for (size_t i = 0; i < items.size() && logged < 3; i++) {
@@ -1278,6 +1386,7 @@ void ClientEngine::handlePlayPacket(int packetId,
                 }
 
                 PlayerInventory::getInstance().setSlot(containerId, slotIndex, is);
+                PlayerInventory::getInstance().setStateId(slotPacket.GetStateId());
                 LOGI("Container Set Slot: id=%d, slot=%d, present=%d, itemId=%d, count=%d",
                      containerId, slotIndex, is.present, is.itemId, is.count);
                 break;

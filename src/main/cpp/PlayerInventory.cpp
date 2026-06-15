@@ -100,9 +100,32 @@ const InvSlot& PlayerInventory::getMainSlot(int index) const {
 }
 
 int PlayerInventory::getHotbarStart() const {
-    // 用于 setSlot 中同步 hotbar 的偏移量计算
     if (slots.size() >= 45) return 36;
     if (slots.size() >= 41) return 0;
     if (slots.size() >= 36) return (int)slots.size() - 9;
     return 0;
+}
+
+const InvSlot& PlayerInventory::getSlot(int index) const {
+    static InvSlot empty;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (index < 0 || index >= (int)slots.size()) return empty;
+    return slots[index];
+}
+
+void PlayerInventory::setLocalSlot(int index, const InvSlot& item) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (index >= 0 && index < (int)slots.size()) {
+        slots[index] = item;
+        // 同步快捷栏
+        int hotbarStart = getHotbarStart();
+        if (index >= hotbarStart && index < hotbarStart + 9) {
+            hotbar[index - hotbarStart] = item;
+        }
+    }
+}
+
+void PlayerInventory::setCursorItem(const InvSlot& item) {
+    std::lock_guard<std::mutex> lock(mutex);
+    cursorItem = item;
 }

@@ -890,7 +890,7 @@ void GameUI::renderInventory() {
     float containerX = (w - containerW) * 0.5f;
     float containerY = h * 0.5f - containerH * 0.5f;
 
-    // 格子的起始坐标（由纹理位置决定）
+    // 格子的起始坐标
     float gridX = containerX + TEX_LEFT * S;
     float gridY = containerY + TEX_TOP * S;
     float hotbarY = containerY + TEX_HOTBAR * S;
@@ -926,7 +926,7 @@ void GameUI::renderInventory() {
     InvSlot hotbar[9];
     inv.getHotbarSlots(hotbar);
 
-    // 渲染格子中的物品（纹理自带格子背景，我们只需叠加物品）
+    // 渲染物品
     auto renderItem = [&](float sx, float sy, const InvSlot& slot) {
         if (!slot.present || slot.itemId <= 0) return;
 
@@ -958,19 +958,47 @@ void GameUI::renderInventory() {
         }
     };
 
+    // 使用全屏透明窗口来放置不可见按钮
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::Begin("##InventoryClick", nullptr,
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground |
+        ImGuiWindowFlags_NoNav);
+
+    auto handleSlotClick = [&](float sx, float sy, int containerSlot, const char* id) {
+        ImGui::SetCursorScreenPos(ImVec2(sx, sy));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.1f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.2f));
+        char btnId[32];
+        snprintf(btnId, sizeof(btnId), "##%s", id);
+        if (ImGui::Button(btnId, ImVec2(INV_SLOT, INV_SLOT))) {
+            auto* engine = ClientEngine::getInstance();
+            if (engine) engine->sendContainerClick(containerSlot, 0);
+        }
+        ImGui::PopStyleColor(3);
+    };
+
     // 主背包格（3行 x 9列）
     for (int row = 0; row < 3; row++) {
         float rowY = gridY + row * INV_SLOT;
         for (int col = 0; col < 9; col++) {
             float sx = gridX + col * INV_SLOT;
-            int slotIndex = row * 9 + col;
-            renderItem(sx, rowY, inv.getMainSlot(slotIndex));
+            int displayIndex = row * 9 + col;
+            int containerSlot = 9 + displayIndex;  // 背包格从 slot 9 开始
+            renderItem(sx, rowY, inv.getMainSlot(displayIndex));
+            char id[16];
+            snprintf(id, sizeof(id), "main_%d", displayIndex);
+            handleSlotClick(sx, rowY, containerSlot, id);
         }
     }
 
     // 快捷栏（1行 x 9列）
     for (int i = 0; i < 9; i++) {
         float sx = gridX + i * INV_SLOT;
+        int containerSlot = 36 + i;  // 快捷栏从 slot 36 开始
 
         // 选中高亮
         if (i == inv.getSelectedSlot()) {
@@ -981,7 +1009,20 @@ void GameUI::renderInventory() {
         }
 
         renderItem(sx, hotbarY, hotbar[i]);
+        char id[16];
+        snprintf(id, sizeof(id), "hot_%d", i);
+        handleSlotClick(sx, hotbarY, containerSlot, id);
     }
+
+    // 渲染光标上持有的物品
+    const InvSlot& cursor = inv.getCursorItem();
+    if (cursor.present && cursor.itemId > 0) {
+        float mx = io.MousePos.x - INV_SLOT * 0.5f;
+        float my = io.MousePos.y - INV_SLOT * 0.5f;
+        renderItem(mx, my, cursor);
+    }
+
+    ImGui::End();
 }
 
 void GameUI::renderDeathScreen() {

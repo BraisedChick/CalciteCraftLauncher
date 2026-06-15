@@ -35,6 +35,19 @@ public:
     const InvSlot& getMainSlot(int index) const;
     int getMainSlotCount() const { return 27; }
 
+    // 完整 slots 访问（用于背包交互）
+    const InvSlot& getSlot(int index) const;
+    void setLocalSlot(int index, const InvSlot& item);
+    int getSlotCount() const { return (int)slots.size(); }
+
+    // 容器状态 ID（服务器每次 SetContent/SetSlot 递增）
+    void setStateId(int id) { stateId = id; }
+    int getStateId() const { return stateId; }
+
+    // 光标上持有的物品（鼠标拿着的）
+    void setCursorItem(const InvSlot& item);
+    const InvSlot& getCursorItem() const { return cursorItem; }
+
 private:
     PlayerInventory();
 
@@ -43,5 +56,7 @@ private:
     std::vector<InvSlot> slots;       // 完整物品栏（容器 0 的全部格）
     std::array<InvSlot, 9> hotbar;    // 快捷栏专用（独立于 slots 布局）
     int selectedSlot = 0;
+    int stateId = 0;
+    InvSlot cursorItem;
     mutable std::mutex mutex;
 };

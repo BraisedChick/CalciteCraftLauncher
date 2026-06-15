@@ -65,6 +65,10 @@ public:
     // 发送重生请求
     void sendRespawn();
 
+    // 发送背包点击（左键拿取/放下）
+    // slotNum: 槽位号（0-45 玩家背包），button: 0=左键 1=右键
+    void sendContainerClick(int slotNum, int button);
+
     // 断开连接（线程安全）
     void disconnect();
 
