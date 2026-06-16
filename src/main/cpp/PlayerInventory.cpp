@@ -21,13 +21,11 @@ void PlayerInventory::setContent(int containerId, const std::vector<InvSlot>& it
         for (int i = 0; i < 9 && (36 + i) < (int)slots.size(); i++) {
             hotbar[i] = slots[36 + i];
         }
-        LOGI("Inventory updated: %zu slots (vanilla layout, hotbar from slots[36-44])", slots.size());
     } else if (slots.size() >= 41) {
         // 41-slot 布局（无合成格）：快捷栏在 0-8
         for (int i = 0; i < 9; i++) {
             hotbar[i] = slots[i];
         }
-        LOGI("Inventory updated: %zu slots (compact layout, hotbar from slots[0-8])", slots.size());
     } else if (slots.size() >= 36) {
         // 36-slot 布局（只有主背包 + 快捷栏）：快捷栏在最后 9 格
         int start = (int)slots.size() - 9;
@@ -41,7 +39,6 @@ void PlayerInventory::setContent(int containerId, const std::vector<InvSlot>& it
         for (int i = 0; i < 9 && i < (int)slots.size(); i++) {
             hotbar[i] = slots[slots.size() - 1 - i];
         }
-        LOGI("Inventory updated: %zu slots (unknown layout)", slots.size());
     }
 }
 
