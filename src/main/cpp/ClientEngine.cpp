@@ -707,6 +707,59 @@ void ClientEngine::sendContainerClick(int slotNum, int button) {
     net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
 }
 
+void ClientEngine::sendContainerQuickCraft(int phase, int slotNum, int button) {
+    // 原版MC QUICK_CRAFT 协议：
+    // phase 0 = 开始拖拽（buttonNum = type<<2 | 0）
+    // phase 1 = 拖过槽位（buttonNum = type<<2 | 1）
+    // phase 2 = 结束拖拽（buttonNum = type<<2 | 2）
+    // type: 0=均分(CHARITABLE), 1=每格1个(GREEDY), 2=复制(CLONE,创造模式)
+    std::lock_guard<std::mutex> lock(netMutex);
+    if (!net || !net->isConnected()) return;
+
+    auto& inv = PlayerInventory::getInstance();
+
+    // 计算 buttonNum: (type << 2) | phase
+    // type 0=左键均分, type 1=右键每格1个
+    int type = (button == 0) ? 0 : 1;
+    int buttonNum = (type << 2) | phase;
+
+    ProtocolCraft::ServerboundContainerClickPacket clickPacket;
+    clickPacket.SetContainerId(0);  // 0 = 玩家背包
+    clickPacket.SetStateId(inv.getStateId());
+
+    if (phase == 0 || phase == 2) {
+        // 开始/结束：slotNum 为 -999（表示点击在背包外）
+        clickPacket.SetSlotNum(-999);
+    } else {
+        // 拖过槽位：使用实际槽位号
+        clickPacket.SetSlotNum((short)slotNum);
+    }
+
+    clickPacket.SetButtonNum((char)buttonNum);
+    clickPacket.SetClickType(5);  // QUICK_CRAFT = 5
+
+    // ChangedSlots: 拖拽操作由服务器处理，客户端只发送状态
+    std::map<short, ProtocolCraft::Slot> changed;
+    clickPacket.SetChangedSlots(changed);
+
+    // 光标物品
+    InvSlot cursor = inv.getCursorItem();
+    ProtocolCraft::Slot carriedSlot;
+    if (cursor.present && cursor.itemId > 0) {
+        carriedSlot.SetPresent(true);
+        carriedSlot.SetItemId(cursor.itemId);
+        carriedSlot.SetItemCount(cursor.count);
+    }
+    clickPacket.SetCarriedItem(carriedSlot);
+
+    ProtocolCraft::WriteContainer writeData;
+    clickPacket.Write(writeData);
+    net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+
+    LOGI("sendContainerQuickCraft: phase=%d, slot=%d, button=%d, buttonNum=%d",
+         phase, slotNum, button, buttonNum);
+}
+
 void ClientEngine::disconnect() {
     std::lock_guard<std::mutex> lock(netMutex);
     if (net) {

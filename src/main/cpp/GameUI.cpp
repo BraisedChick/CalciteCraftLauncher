@@ -1009,6 +1009,77 @@ void GameUI::renderInventory() {
         }
     };
 
+    // 获取鼠标当前所在的槽位号（-1 表示不在任何槽位上）
+    auto getSlotAtMouse = [&]() -> int {
+        float mx = io.MousePos.x;
+        float my = io.MousePos.y;
+        // 检查主背包格 (3x9)
+        for (int row = 0; row < 3; row++) {
+            float rowY = gridY + row * INV_SLOT;
+            for (int col = 0; col < 9; col++) {
+                float sx = gridX + col * INV_SLOT;
+                if (mx >= sx && mx < sx + INV_SLOT && my >= rowY && my < rowY + INV_SLOT) {
+                    return 9 + row * 9 + col;
+                }
+            }
+        }
+        // 检查快捷栏 (1x9)
+        for (int i = 0; i < 9; i++) {
+            float sx = gridX + i * INV_SLOT;
+            if (mx >= sx && mx < sx + INV_SLOT && my >= hotbarY && my < hotbarY + INV_SLOT) {
+                return 36 + i;
+            }
+        }
+        return -1;
+    };
+
+    // ===== 全局拖拽检测（在槽位按钮循环之外运行） =====
+    // 参照原版MC：拖拽过程中只是记录经过的槽位，释放时才一次性发送所有包
+    auto* engine = ClientEngine::getInstance();
+    if (engine) {
+        // 拖拽中：鼠标按住并移动时，检测经过的槽位
+        if (isDraggingSlot && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            int hoveredSlot = getSlotAtMouse();
+            if (hoveredSlot >= 0) {
+                // 去重：检查是否已添加
+                bool alreadyAdded = false;
+                for (int s : quickcraftSlots) {
+                    if (s == hoveredSlot) { alreadyAdded = true; break; }
+                }
+                if (!alreadyAdded) {
+                    quickcraftSlots.push_back(hoveredSlot);
+                    LOGI("Drag over slot %d, total slots=%zu", hoveredSlot, quickcraftSlots.size());
+                }
+            }
+        }
+
+        // 鼠标释放：处理拖拽结束或普通点击
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && isDraggingSlot) {
+            if (quickcraftSlots.size() > 1) {
+                // 拖拽多个槽位：一次性发送所有 QUICK_CRAFT 包（原版MC的做法）
+                // Phase 0: 开始
+                engine->sendContainerQuickCraft(0, -999, 0);
+                // Phase 1: 每个拖过的槽位
+                for (int slot : quickcraftSlots) {
+                    engine->sendContainerQuickCraft(1, slot, 0);
+                }
+                // Phase 2: 结束（服务器执行分发）
+                engine->sendContainerQuickCraft(2, -999, 0);
+                LOGI("Drag complete: distributed to %zu slots", quickcraftSlots.size());
+            } else {
+                // 只有 0 或 1 个槽位 → 普通点击
+                if (quickcraftStartSlot >= 0) {
+                    engine->sendContainerClick(quickcraftStartSlot, 0);
+                    LOGI("Single click at slot %d", quickcraftStartSlot);
+                }
+            }
+            isDraggingSlot = false;
+            quickcraftStatus = 0;
+            quickcraftSlots.clear();
+            quickcraftStartSlot = -1;
+        }
+    }
+
     // 使用全屏透明窗口来放置不可见按钮
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(io.DisplaySize);
@@ -1018,6 +1089,7 @@ void GameUI::renderInventory() {
         ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground |
         ImGuiWindowFlags_NoNav);
 
+    // 处理槽位点击（检测按下事件，拖拽由全局检测处理）
     auto handleSlotClick = [&](float sx, float sy, int containerSlot, const char* id) {
         ImGui::SetCursorScreenPos(ImVec2(sx, sy));
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
@@ -1025,10 +1097,32 @@ void GameUI::renderInventory() {
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.2f));
         char btnId[32];
         snprintf(btnId, sizeof(btnId), "##%s", id);
-        if (ImGui::Button(btnId, ImVec2(INV_SLOT, INV_SLOT))) {
-            auto* engine = ClientEngine::getInstance();
-            if (engine) engine->sendContainerClick(containerSlot, 0);
+
+        // 使用 InvisibleButton 来支持按下检测
+        ImGui::InvisibleButton(btnId, ImVec2(INV_SLOT, INV_SLOT));
+
+        auto* eng = ClientEngine::getInstance();
+        if (!eng) {
+            ImGui::PopStyleColor(3);
+            return;
         }
+
+        // 检测鼠标按下（IsItemClicked 在按下时返回 true，不是释放时）
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+            const InvSlot& cursor = inv.getCursorItem();
+            if (cursor.present && cursor.count > 1) {
+                // 光标有物品且数量 > 1 → 进入拖拽候选模式
+                isDraggingSlot = true;
+                quickcraftStartSlot = containerSlot;
+                quickcraftStatus = 0;
+                quickcraftSlots.clear();
+                LOGI("Drag candidate: slot %d, cursor count=%d", containerSlot, cursor.count);
+            } else {
+                // 普通点击（立即发送，不等释放）
+                eng->sendContainerClick(containerSlot, 0);
+            }
+        }
+
         ImGui::PopStyleColor(3);
     };
 
@@ -1063,6 +1157,37 @@ void GameUI::renderInventory() {
         char id[16];
         snprintf(id, sizeof(id), "hot_%d", i);
         handleSlotClick(sx, hotbarY, containerSlot, id);
+    }
+
+    // 拖拽时高亮已选中的槽位
+    if (isDraggingSlot && !quickcraftSlots.empty()) {
+        for (int slot : quickcraftSlots) {
+            float sx, sy;
+            if (slot >= 9 && slot < 36) {
+                // 主背包格
+                int idx = slot - 9;
+                int row = idx / 9;
+                int col = idx % 9;
+                sx = gridX + col * INV_SLOT;
+                sy = gridY + row * INV_SLOT;
+            } else if (slot >= 36 && slot < 45) {
+                // 快捷栏
+                int idx = slot - 36;
+                sx = gridX + idx * INV_SLOT;
+                sy = hotbarY;
+            } else {
+                continue;
+            }
+            // 画半透明黄色高亮
+            ImGui::GetForegroundDrawList()->AddRectFilled(
+                ImVec2(sx, sy),
+                ImVec2(sx + INV_SLOT, sy + INV_SLOT),
+                IM_COL32(255, 255, 0, 80));
+            ImGui::GetForegroundDrawList()->AddRect(
+                ImVec2(sx, sy),
+                ImVec2(sx + INV_SLOT, sy + INV_SLOT),
+                IM_COL32(255, 255, 0, 200), 0.0f, 0, 2.0f);
+        }
     }
 
     // 渲染光标上持有的物品

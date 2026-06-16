@@ -230,4 +230,12 @@ private:
 
     // 背包界面
     bool inventoryOpen = false;
+
+    // 背包拖拽（Quick Craft）状态
+    // 原版MC的拖拽流程：按住鼠标拖过多个格子 → 松开时均分物品
+    // status: 0=未开始, 1=拖拽中, 2=结束（分发）
+    int quickcraftStatus = 0;
+    std::vector<int> quickcraftSlots;  // 拖拽经过的槽位索引列表
+    int quickcraftStartSlot = -1;      // 拖拽起始槽位
+    bool isDraggingSlot = false;       // 是否正在拖拽
 };

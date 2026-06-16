@@ -69,6 +69,12 @@ public:
     // slotNum: 槽位号（0-45 玩家背包），button: 0=左键 1=右键
     void sendContainerClick(int slotNum, int button);
 
+    // 发送背包拖拽（Quick Craft）操作
+    // 原版MC拖拽流程：按住鼠标拖过多个格子 → 松开时均分物品
+    // phase: 0=开始, 1=拖过槽位, 2=结束（分发）
+    // button: 0=左键均分, 1=右键每格1个
+    void sendContainerQuickCraft(int phase, int slotNum, int button);
+
     // 断开连接（线程安全）
     void disconnect();
 
