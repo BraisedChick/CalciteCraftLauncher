@@ -74,7 +74,7 @@ set(APP_SOURCES
     ResourcepackManager.cpp
     PlayerInventory.cpp
     Raycast.cpp
-    miniz.c
+    3rdparty/miniz.c
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_draw.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_widgets.cpp
@@ -94,6 +94,7 @@ foreach(PVER ${SUPPORTED_VERSIONS})
         ${CMAKE_CURRENT_SOURCE_DIR}/protocolCraft/include
         ${CMAKE_CURRENT_SOURCE_DIR}/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends
+        ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty
     )
 
     # 仅为 AESEncrypter_armv8.cpp 启用 ARMv8 Crypto Extensions
