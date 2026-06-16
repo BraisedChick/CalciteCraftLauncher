@@ -60,19 +60,22 @@ void Light::update() {
     float skyDarken = getSkyDarken();
     float skyBright = 1.0f - skyDarken;
 
-    // 天空/雾效颜色插值：白天蓝 → 夜晚深蓝黑
+    // 天空/雾效颜色插值：白天蓝 → 夜晚深蓝黑（每帧更新，开销极小）
     skyR = 0.53f * skyBright + 0.02f * skyDarken;
     skyG = 0.81f * skyBright + 0.02f * skyDarken;
     skyB = 0.92f * skyBright + 0.08f * skyDarken;
 
-    // 更新光照贴图纹理
-    if (lightmapTextureID != 0) {
+    // 光照贴图：仅在天空亮度变化超过阈值时更新（避免每帧上传）
+    float skyBrightDiff = fabsf(skyBright - lastUploadedSkyBright);
+    if (skyBrightDiff > 0.001f && lightmapTextureID != 0) {
         uint8_t pixels[16 * 16 * 4];
         generateLightmapPixels(skyBright, pixels);
 
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D, lightmapTextureID);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 16, 16, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+
+        lastUploadedSkyBright = skyBright;
     }
 }
 

@@ -54,6 +54,7 @@ private:
     GLuint lightmapTextureID = 0;
     long long worldDayTime = 6000;
     float skyR = 0.53f, skyG = 0.81f, skyB = 0.92f;
+    float lastUploadedSkyBright = -1.0f;  // 上次上传光照贴图时的天空亮度
     void generateLightmapPixels(float skyBright, uint8_t* pixels);
 
     // 异步光照重算
