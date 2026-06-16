@@ -9,6 +9,44 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
+// 辅助函数：提取匹配的 JSON 对象（处理嵌套大括号）
+static size_t findMatchingBrace(const std::string& json, size_t start) {
+    if (start >= json.size() || json[start] != '{') return std::string::npos;
+    int depth = 0;
+    bool inStr = false;
+    for (size_t i = start; i < json.size(); i++) {
+        char c = json[i];
+        if (inStr) {
+            if (c == '\\' && i + 1 < json.size()) { i++; continue; }
+            if (c == '"') inStr = false;
+            continue;
+        }
+        if (c == '"') { inStr = true; continue; }
+        if (c == '{') depth++;
+        if (c == '}') { depth--; if (depth == 0) return i; }
+    }
+    return std::string::npos;
+}
+
+// 辅助函数：提取匹配的 JSON 数组（处理嵌套方括号）
+static size_t findMatchingBracket(const std::string& json, size_t start) {
+    if (start >= json.size() || json[start] != '[') return std::string::npos;
+    int depth = 0;
+    bool inStr = false;
+    for (size_t i = start; i < json.size(); i++) {
+        char c = json[i];
+        if (inStr) {
+            if (c == '\\' && i + 1 < json.size()) { i++; continue; }
+            if (c == '"') inStr = false;
+            continue;
+        }
+        if (c == '"') { inStr = true; continue; }
+        if (c == '[') depth++;
+        if (c == ']') { depth--; if (depth == 0) return i; }
+    }
+    return std::string::npos;
+}
+
 bool BlockRegistry::loadFromJson(const std::string& json) {
     LOGI("Loading blocks from JSON string (%zu bytes)", json.size());
 
@@ -23,7 +61,7 @@ bool BlockRegistry::loadFromJson(const std::string& json) {
     int blockCount = 0;
 
     while ((pos = json.find("{", pos)) != std::string::npos) {
-        size_t endPos = json.find("}", pos);
+        size_t endPos = findMatchingBrace(json, pos);
         if (endPos == std::string::npos) break;
 
         std::string blockJson = json.substr(pos, endPos - pos + 1);
@@ -43,6 +81,67 @@ bool BlockRegistry::loadFromJson(const std::string& json) {
         info.minStateId = extractInt(blockJson, "\"minStateId\"");
         info.maxStateId = extractInt(blockJson, "\"maxStateId\"");
         info.defaultState = extractInt(blockJson, "\"defaultState\"");
+
+        // 解析 states 数组（属性定义顺序，用于正确计算 state ID offset）
+        size_t statesPos = blockJson.find("\"states\"");
+        if (statesPos != std::string::npos) {
+            size_t arrStart = blockJson.find('[', statesPos);
+            if (arrStart != std::string::npos) {
+                size_t arrEnd = findMatchingBracket(blockJson, arrStart);
+                if (arrEnd != std::string::npos) {
+                    std::string statesJson = blockJson.substr(arrStart + 1, arrEnd - arrStart - 1);
+                    
+                    // 解析每个 state property
+                    size_t statePos = 0;
+                    while ((statePos = statesJson.find("{", statePos)) != std::string::npos) {
+                        size_t stateEnd = findMatchingBrace(statesJson, statePos);
+                        if (stateEnd == std::string::npos) break;
+                        
+                        std::string stateJson = statesJson.substr(statePos, stateEnd - statePos + 1);
+                        BlockInfo::StateProperty prop;
+                        prop.name = extractString(stateJson, "\"name\"");
+                        prop.type = extractString(stateJson, "\"type\"");
+                        
+                        // 解析 values 数组（如果有）
+                        size_t valuesPos = stateJson.find("\"values\"");
+                        if (valuesPos != std::string::npos) {
+                            size_t valArrStart = stateJson.find('[', valuesPos);
+                            if (valArrStart != std::string::npos) {
+                                size_t valArrEnd = findMatchingBracket(stateJson, valArrStart);
+                                if (valArrEnd != std::string::npos) {
+                                    std::string valuesJson = stateJson.substr(valArrStart + 1, valArrEnd - valArrStart - 1);
+                                    // 提取每个值
+                                    size_t valPos = 0;
+                                    while ((valPos = valuesJson.find("\"", valPos)) != std::string::npos) {
+                                        size_t valEnd = valuesJson.find("\"", valPos + 1);
+                                        if (valEnd == std::string::npos) break;
+                                        prop.values.push_back(valuesJson.substr(valPos + 1, valEnd - valPos - 1));
+                                        valPos = valEnd + 1;
+                                    }
+                                }
+                            }
+                        } else if (prop.type == "bool") {
+                            // 布尔属性默认值顺序：true, false
+                            prop.values = {"true", "false"};
+                        } else if (prop.type == "int") {
+                            // int 属性：从 0 到 num_values-1
+                            int numValues = extractInt(stateJson, "\"num_values\"");
+                            if (numValues > 0) {
+                                for (int i = 0; i < numValues; i++) {
+                                    prop.values.push_back(std::to_string(i));
+                                }
+                            }
+                        }
+                        
+                        if (!prop.name.empty()) {
+                            info.stateProperties.push_back(std::move(prop));
+                        }
+                        
+                        statePos = stateEnd + 1;
+                    }
+                }
+            }
+        }
 
         // 验证数据有效性
         if (info.name.empty() || info.minStateId < 0) {

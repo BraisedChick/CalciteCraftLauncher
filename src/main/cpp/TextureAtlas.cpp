@@ -1282,7 +1282,7 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
                             entry.props.emplace_back("powered", "false");
                         }
                     }
-                    // 重新按属性名排序
+                    // 按字母序排序（Minecraft 协议使用 ImmutableSortedMap）
                     for (auto& entry : entries) {
                         std::sort(entry.props.begin(), entry.props.end(),
                             [](const auto& a, const auto& b) { return a.first < b.first; });
@@ -1292,6 +1292,9 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
         }
     }
     // ===== END 布尔属性检测 =====
+
+    // 注意：Minecraft 协议使用字母序（ImmutableSortedMap）排列属性
+    // 不需要特殊处理，保持原有字母序逻辑即可
 
     // 第二遍：用实际值列表计算 offset
     int maxOffset = -1;
@@ -1455,6 +1458,38 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const std::strin
             // when 可能是对象 {key:val,...} 或数组 [{...},{...}]
             size_t whenVal = entryJson.find_first_of("{[", whenPos + 6);
             if (whenVal != std::string::npos) {
+                // 辅助函数：解析单个 when 对象
+                auto parseWhenObject = [](const std::string& whenObj) -> MultipartWhen {
+                    MultipartWhen mw;
+                    size_t kp = 0;
+                    while ((kp = whenObj.find('"', kp)) != std::string::npos) {
+                        size_t ke = whenObj.find('"', kp + 1);
+                        if (ke == std::string::npos) break;
+                        std::string key = whenObj.substr(kp + 1, ke - kp - 1);
+                        size_t col2 = whenObj.find(':', ke);
+                        if (col2 == std::string::npos) break;
+                        size_t vs = col2 + 1;
+                        while (vs < whenObj.size() && (whenObj[vs] == ' ' || whenObj[vs] == '\t')) vs++;
+                        if (vs >= whenObj.size()) break;
+                        std::string val;
+                        if (whenObj[vs] == '"') {
+                            vs++;
+                            size_t ve = whenObj.find('"', vs);
+                            if (ve == std::string::npos) break;
+                            val = whenObj.substr(vs, ve - vs);
+                        } else {
+                            size_t ve = whenObj.find_first_of(",}", vs);
+                            if (ve == std::string::npos) ve = whenObj.size();
+                            val = whenObj.substr(vs, ve - vs);
+                            while (!val.empty() && (val.back() == ' ' || val.back() == '\t')) val.pop_back();
+                        }
+                        if (!key.empty() && !val.empty()) mw.andProps.emplace_back(key, val);
+                        kp = (whenObj[vs == col2 + 1 ? vs : 0] == '"') ? whenObj.find('"', vs + val.size()) : whenObj.find_first_of(",}", vs);
+                        if (kp == std::string::npos) break;
+                    }
+                    return mw;
+                };
+                
                 if (entryJson[whenVal] == '[') {
                     // OR 条件数组
                     size_t arrEnd2 = whenVal;
@@ -1467,7 +1502,6 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const std::strin
                         if (c == ']') { depth--; if (depth == 0) break; }
                     }
                     if (depth == 0) {
-                        // 解析数组中的每个对象
                         size_t ap = whenVal + 1;
                         while (ap < arrEnd2) {
                             size_t ob = entryJson.find('{', ap);
@@ -1475,69 +1509,59 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const std::strin
                             size_t oe = entryJson.find('}', ob);
                             if (oe == std::string::npos || oe >= arrEnd2) break;
                             std::string whenObj = entryJson.substr(ob, oe - ob + 1);
-                            MultipartWhen mw;
-                            // 提取所有 key:value 对
-                            size_t kp = 0;
-                            while ((kp = whenObj.find('"', kp)) != std::string::npos) {
-                                size_t ke = whenObj.find('"', kp + 1);
-                                if (ke == std::string::npos) break;
-                                std::string key = whenObj.substr(kp + 1, ke - kp - 1);
-                                size_t col2 = whenObj.find(':', ke);
-                                if (col2 == std::string::npos) break;
-                                size_t vs = col2 + 1;
-                                while (vs < whenObj.size() && (whenObj[vs] == ' ' || whenObj[vs] == '\t')) vs++;
-                                if (vs >= whenObj.size()) break;
-                                std::string val;
-                                if (whenObj[vs] == '"') {
-                                    vs++;
-                                    size_t ve = whenObj.find('"', vs);
-                                    if (ve == std::string::npos) break;
-                                    val = whenObj.substr(vs, ve - vs);
-                                } else {
-                                    size_t ve = whenObj.find_first_of(",}", vs);
-                                    if (ve == std::string::npos) ve = whenObj.size();
-                                    val = whenObj.substr(vs, ve - vs);
-                                    while (!val.empty() && (val.back() == ' ' || val.back() == '\t')) val.pop_back();
-                                }
-                                if (!key.empty() && !val.empty()) mw.andProps.emplace_back(key, val);
-                                kp = (whenObj[vs == col2 + 1 ? vs : 0] == '"') ? whenObj.find('"', vs + val.size()) : whenObj.find_first_of(",}", vs);
-                                if (kp == std::string::npos) break;
-                            }
+                            MultipartWhen mw = parseWhenObject(whenObj);
                             if (!mw.andProps.empty()) entry.whenOrs.push_back(std::move(mw));
                             ap = oe + 1;
                         }
                     }
                 } else {
-                    // 单个条件对象
-                    size_t oe = entryJson.find('}', whenVal);
-                    if (oe != std::string::npos) {
-                        std::string whenObj = entryJson.substr(whenVal, oe - whenVal + 1);
-                        MultipartWhen mw;
-                        size_t kp = 0;
-                        while ((kp = whenObj.find('"', kp)) != std::string::npos) {
-                            size_t ke = whenObj.find('"', kp + 1);
-                            if (ke == std::string::npos) break;
-                            std::string key = whenObj.substr(kp + 1, ke - kp - 1);
-                            size_t col2 = whenObj.find(':', ke);
-                            if (col2 == std::string::npos) break;
-                            size_t vs = col2 + 1;
-                            while (vs < whenObj.size() && (whenObj[vs] == ' ' || whenObj[vs] == '\t')) vs++;
-                            if (vs >= whenObj.size()) break;
-                            std::string val;
-                            if (whenObj[vs] == '"') {
-                                vs++; size_t ve = whenObj.find('"', vs);
-                                if (ve == std::string::npos) break;
-                                val = whenObj.substr(vs, ve - vs);
-                            } else {
-                                size_t ve = whenObj.find_first_of(",}", vs);
-                                if (ve == std::string::npos) ve = whenObj.size();
-                                val = whenObj.substr(vs, ve - vs);
-                                while (!val.empty() && (val.back() == ' ' || val.back() == '\t')) val.pop_back();
+                    // 单个条件对象，但可能包含 "OR" 键
+                    // 先找到匹配的 }（处理嵌套）
+                    size_t objEnd = whenVal;
+                    depth = 0; inStr = false;
+                    for (; objEnd < entryJson.size(); objEnd++) {
+                        char c = entryJson[objEnd];
+                        if (inStr) { if (c == '\\') { objEnd++; continue; } if (c == '"') inStr = false; continue; }
+                        if (c == '"') { inStr = true; continue; }
+                        if (c == '{') depth++;
+                        if (c == '}') { depth--; if (depth == 0) break; }
+                    }
+                    
+                    std::string whenObj = entryJson.substr(whenVal, objEnd - whenVal + 1);
+                    
+                    // 检查是否包含 "OR" 键
+                    size_t orPos = whenObj.find("\"OR\"");
+                    if (orPos != std::string::npos) {
+                        // 找到 OR 后面的数组
+                        size_t orArrStart = whenObj.find('[', orPos);
+                        if (orArrStart != std::string::npos) {
+                            size_t orArrEnd = orArrStart;
+                            depth = 0; inStr = false;
+                            for (; orArrEnd < whenObj.size(); orArrEnd++) {
+                                char c = whenObj[orArrEnd];
+                                if (inStr) { if (c == '\\') { orArrEnd++; continue; } if (c == '"') inStr = false; continue; }
+                                if (c == '"') { inStr = true; continue; }
+                                if (c == '[') depth++;
+                                if (c == ']') { depth--; if (depth == 0) break; }
                             }
-                            if (!key.empty()) mw.andProps.emplace_back(key, val);
-                            kp = whenObj.find('"', ke + 1);
-                            if (kp == std::string::npos) break;
+                            if (depth == 0) {
+                                // 解析 OR 数组中的每个对象
+                                size_t ap = orArrStart + 1;
+                                while (ap < orArrEnd) {
+                                    size_t ob = whenObj.find('{', ap);
+                                    if (ob == std::string::npos || ob >= orArrEnd) break;
+                                    size_t oe = whenObj.find('}', ob);
+                                    if (oe == std::string::npos || oe >= orArrEnd) break;
+                                    std::string orObj = whenObj.substr(ob, oe - ob + 1);
+                                    MultipartWhen mw = parseWhenObject(orObj);
+                                    if (!mw.andProps.empty()) entry.whenOrs.push_back(std::move(mw));
+                                    ap = oe + 1;
+                                }
+                            }
                         }
+                    } else {
+                        // 普通条件对象
+                        MultipartWhen mw = parseWhenObject(whenObj);
                         if (!mw.andProps.empty()) entry.whenOrs.push_back(std::move(mw));
                     }
                 }
@@ -1557,16 +1581,38 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const std::strin
         if (entry.whenOrs.empty()) { hasUnconditional = true; continue; }
         for (const auto& when : entry.whenOrs) {
             for (const auto& [prop, val] : when.andProps) {
-                propValueSet[prop].insert(val);
+                // 处理 "side|up" 这样的 OR 语法
+                size_t pipePos = 0;
+                while (pipePos < val.size()) {
+                    size_t nextPipe = val.find('|', pipePos);
+                    std::string option = (nextPipe == std::string::npos) 
+                        ? val.substr(pipePos) 
+                        : val.substr(pipePos, nextPipe - pipePos);
+                    propValueSet[prop].insert(option);
+                    if (nextPipe == std::string::npos) break;
+                    pipePos = nextPipe + 1;
+                }
             }
         }
     }
 
-    // ===== 3. 构建属性值列表 =====
-    // 所有属性都视为布尔（multipart 方块的实际属性总是布尔）
-    // 如果条件中只出现 "true"，补上 "false"
+    // ===== 3. 构建属性值列表（必须包含所有属性，使用 blocks.json 定义）=====
+    const auto& registry = BlockRegistry::getInstance();
+    const auto* blockInfo = registry.getBlockInfoByName(blockName);
+    
     std::map<std::string, std::vector<std::string>> propValueList;
+    
+    // 必须包含 blocks.json 中定义的所有属性（包括 when 条件中未出现的）
+    if (blockInfo && !blockInfo->stateProperties.empty()) {
+        for (const auto& sp : blockInfo->stateProperties) {
+            propValueList[sp.name] = sp.values;
+        }
+    }
+    
+    // 对于 when 条件中有但 blocks.json 中没有的属性，使用字母序
     for (const auto& [prop, collected] : propValueSet) {
+        if (propValueList.find(prop) != propValueList.end()) continue;  // 已处理
+        
         if (collected.size() == 1 && collected.find("true") != collected.end()) {
             propValueList[prop] = {"true", "false"};
         } else if (collected.size() == 2 &&
@@ -1574,7 +1620,6 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const std::strin
                    collected.find("false") != collected.end()) {
             propValueList[prop] = {"true", "false"};
         } else {
-            // 非布尔属性：字母序
             std::vector<std::string> sorted(collected.begin(), collected.end());
             std::sort(sorted.begin(), sorted.end());
             propValueList[prop] = std::move(sorted);
@@ -1582,8 +1627,7 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const std::strin
     }
 
     // ===== 4. 计算总状态数，检测 waterlogged =====
-    const auto& registry = BlockRegistry::getInstance();
-    const auto* blockInfo = registry.getBlockInfoByName(blockName);
+    // registry 和 blockInfo 已在 section 3 中声明
     int totalStates = 1;
     for (const auto& [prop, values] : propValueList) {
         totalStates *= (int)values.size();
@@ -1648,7 +1692,27 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const std::strin
                 bool andMatch = true;
                 for (const auto& [prop, reqVal] : when.andProps) {
                     auto pmIt = propMap.find(prop);
-                    if (pmIt == propMap.end() || pmIt->second != reqVal) {
+                    if (pmIt == propMap.end()) {
+                        andMatch = false;
+                        break;
+                    }
+                    // 处理 "side|up" 这样的 OR 语法
+                    const std::string& actualVal = pmIt->second;
+                    bool valMatch = false;
+                    size_t pipePos = 0;
+                    while (pipePos < reqVal.size()) {
+                        size_t nextPipe = reqVal.find('|', pipePos);
+                        std::string option = (nextPipe == std::string::npos) 
+                            ? reqVal.substr(pipePos) 
+                            : reqVal.substr(pipePos, nextPipe - pipePos);
+                        if (actualVal == option) {
+                            valMatch = true;
+                            break;
+                        }
+                        if (nextPipe == std::string::npos) break;
+                        pipePos = nextPipe + 1;
+                    }
+                    if (!valMatch) {
                         andMatch = false;
                         break;
                     }

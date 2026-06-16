@@ -14,6 +14,15 @@ struct BlockInfo {
     int32_t minStateId;            // 最小 blockState ID
     int32_t maxStateId;            // 最大 blockState ID
     int32_t defaultState;          // 默认 blockState ID
+    
+    // 属性定义顺序（从 blocks.json 的 states 数组提取）
+    // 用于正确计算 state ID offset
+    struct StateProperty {
+        std::string name;          // 属性名（如 "facing"）
+        std::string type;          // 属性类型（"bool", "enum", "int"）
+        std::vector<std::string> values;  // 属性值列表（按协议顺序）
+    };
+    std::vector<StateProperty> stateProperties;
 };
 
 // 预计算的方块元数据（避免每次循环调用 getBlockName + 字符串比较）

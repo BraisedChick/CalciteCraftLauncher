@@ -635,6 +635,24 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     } else {
                         BiomeColorManager::getInstance().getFoliageColor(biomeId, tintR, tintG, tintB);
                     }
+                } else if (blockMeta.name == "redstone_wire") {
+                    // 红石粉颜色：根据 power 值从暗红到亮红
+                    // power 0: #4B0000 (暗红) → power 15: #FF0000 (亮红)
+                    // 从 blockState 提取 power 值
+                    int power = 0;
+                    const auto* blockInfo = registry.getBlockInfo(blockState);
+                    if (blockInfo && !blockInfo->stateProperties.empty()) {
+                        // 计算 power 属性在 state ID 中的位置
+                        int offset = blockState - blockInfo->minStateId;
+                        // redstone_wire 属性顺序: east(3), north(3), power(16), south(3), west(3)
+                        // power 在位置 2，stride = 3*3 = 9
+                        power = (offset / 9) % 16;
+                    }
+                    // 颜色插值：power 0 → #4B0000, power 15 → #FF0000
+                    float t = power / 15.0f;
+                    tintR = (uint8_t)(0x4B + (0xFF - 0x4B) * t);
+                    tintG = 0;
+                    tintB = 0;
                 }
 
                 BlockTextureConfig tex{blockMeta.texTop, blockMeta.texSide, blockMeta.texBottom};
