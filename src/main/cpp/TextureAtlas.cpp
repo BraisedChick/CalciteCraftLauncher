@@ -547,20 +547,6 @@ void TextureAtlas::jsonExtractElement(std::vector<ModelElementData>& elements,
     }
 }
 
-// 判断模型是否为简单完整立方体（1 element, from[0,0,0]-to[16,16,16], 无旋转, 6面全部cullface）
-static bool checkIsSimpleCube(const std::vector<ModelElementData>& elements) {
-    if (elements.size() != 1) return false;
-    const auto& elem = elements[0];
-    for (int i = 0; i < 3; i++) {
-        if (elem.from[i] > 0.001f || elem.to[i] < 15.999f) return false;
-    }
-    if (elem.rotation.angle != 0.0f) return false;
-    for (int i = 0; i < 6; i++) {
-        if (!elem.hasFaces[i] || elem.faces[i].cullface < 0) return false;
-    }
-    return true;
-}
-
 bool TextureAtlas::resolveBlockModelElements(
     const std::string& blockName,
     const std::string& jsonContent,
@@ -833,17 +819,6 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
             if (!model.elements.empty()) elemCount++;
         }
         LOGI("Resolved %d block models with geometry elements", elemCount);
-    }
-
-    // 预计算所有模型的 isSimpleCube 标志
-    {
-        int simpleCubeCount = 0;
-        for (auto& [name, model] : blockModelCache) {
-            model.isSimpleCube = checkIsSimpleCube(model.elements);
-            if (model.isSimpleCube) simpleCubeCount++;
-        }
-        LOGI("Precomputed isSimpleCube: %d/%zu models are simple cubes",
-             simpleCubeCount, blockModelCache.size());
     }
 
     // 4.5 加载 blockstate JSON，解析变体映射

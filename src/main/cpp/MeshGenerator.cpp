@@ -682,56 +682,12 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     n[BACK]   = getLocalBlockState(x, localY, z - 1);
                 }
 
-                // ===== 模型驱动渲染（优先，适用于所有有模型数据的方块） =====
+                // ===== 模型驱动渲染（适用于所有有模型数据的方块） =====
                 // 跳过水：水使用独立的渲染管道（alpha blend + 动画纹理）
                 bool isSnowCovered2 = (blockMeta.isGrassBlock && n[TOP] != 0 &&
                                       BlockRegistry::getInstance().getBlockMetadata(n[TOP]).isSnow);
 
                 if (!blockMeta.isWater) {
-                    // ---- 快速路径：完整简单立方体，跳过模型解析直接用 addCubicFace ----
-                    if (blockMeta.isFullBlock) {
-                        const auto* cubeModel = getModel(blockMeta.name);
-                        if (cubeModel && cubeModel->isSimpleCube) {
-                            bool renderTop = (n[TOP] == 0 || !isSolid(n[TOP]));
-                            bool renderBottom = (blockMeta.height >= 1.0f) && (n[BOTTOM] == 0 || !isSolid(n[BOTTOM]));
-                            bool isSnowCov = (blockMeta.isGrassBlock && n[TOP] != 0 &&
-                                              BlockRegistry::getInstance().getBlockMetadata(n[TOP]).isSnow);
-                            bool isGrassSide = blockMeta.isGrassBlock && !isSnowCov;
-
-                            if (renderTop) {
-                                float topTex = isSnowCov ? grassSnowLayer : static_cast<float>(tex.top);
-                                addCubicFace(baseVertices, baseIndices, TOP,
-                                             posX, posY, posZ, 1.0f, topTex, tintR, tintG, tintB, 255);
-                            }
-                            if (renderBottom) {
-                                addCubicFace(baseVertices, baseIndices, BOTTOM,
-                                             posX, posY, posZ, 1.0f, static_cast<float>(tex.bottom), tintR, tintG, tintB, 255);
-                            }
-                            for (int sf : {FRONT, BACK, RIGHT, LEFT}) {
-                                if (n[sf] != 0 && isSolid(n[sf])) continue;
-                                float sideTex;
-                                uint8_t sr = 255, sg = 255, sb = 255;
-                                if (isGrassSide) {
-                                    sideTex = grassSideLayer;
-                                    addCubicFace(baseVertices, baseIndices, sf,
-                                                 posX, posY, posZ, 1.0f, sideTex, sr, sg, sb, 255);
-                                    addCubicFace(overlayVertices, overlayIndices, sf,
-                                                 posX, posY, posZ, 1.0f, grassOverlayLayer, tintR, tintG, tintB, 255);
-                                } else if (isSnowCov) {
-                                    sideTex = grassSnowLayer;
-                                    addCubicFace(baseVertices, baseIndices, sf,
-                                                 posX, posY, posZ, 1.0f, sideTex, sr, sg, sb, 255);
-                                } else {
-                                    sideTex = static_cast<float>(tex.side);
-                                    addCubicFace(baseVertices, baseIndices, sf,
-                                                 posX, posY, posZ, 1.0f, sideTex, tintR, tintG, tintB, 255);
-                                }
-                            }
-                            countCubic++;
-                            continue;
-                        }
-                    }
-
                     // Blockstate 变体查找（获取朝向对应的模型和旋转）
                     const BlockStateVariant* variant = atlas.getBlockStateVariant(
                         blockMeta.name, blockState, blockMeta.minStateId);
