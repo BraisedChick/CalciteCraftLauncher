@@ -64,6 +64,7 @@ public:
     int getRenderDistance() const { return renderDistance; }
     bool isSmoothLightingEnabled() const { return smoothLightingEnabled; }
     bool isMipmapEnabled() const { return mipmapEnabled; }
+    int getMaxFps() const { return maxFps; }
 
     // FOV 更新回调
     using FovCallback = std::function<void(float)>;
@@ -80,6 +81,11 @@ public:
     void setMipmapCallback(MipmapCallback cb) { mipmapCallback = cb; }
     MipmapCallback getMipmapCallback() const { return mipmapCallback; }
     MipmapCallback mipmapCallback;
+
+    // 最大帧率回调（0=垂直同步, 1-255=fps值, 256=无限制）
+    using MaxFpsCallback = std::function<void(int)>;
+    void setMaxFpsCallback(MaxFpsCallback cb) { maxFpsCallback = cb; }
+    MaxFpsCallback maxFpsCallback;
 
     // F3 调试信息
     void toggleDebugInfo() { showDebugInfo = !showDebugInfo; }
@@ -188,6 +194,7 @@ private:
     int renderDistance = 10;
     bool smoothLightingEnabled = true;
     bool mipmapEnabled = true;
+    int maxFps = 0;  // 0=垂直同步, 1-255=fps值, 256=无限制
 
     // 游戏内 UI 状态
     struct {

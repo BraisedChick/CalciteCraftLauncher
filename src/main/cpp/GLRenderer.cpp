@@ -1287,6 +1287,9 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         return;
     }
 
+    // 记录帧开始时间（用于帧率限制）
+    frameStartTime = std::chrono::high_resolution_clock::now();
+
     // 保存当前帧的相机位置（供 rebuildMeshFromChunks 等使用）
     lastCameraX = cx;
     lastCameraY = cy;
@@ -1300,6 +1303,20 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         glClear(GL_COLOR_BUFFER_BIT);
         renderUI();
         eglSwapBuffers(display, surface);
+        // 帧率限制（菜单状态也需要）
+        if (maxFps > 0 && maxFps < 256) {
+            auto frameEnd = std::chrono::high_resolution_clock::now();
+            double elapsedMs = std::chrono::duration<double, std::milli>(frameEnd - frameStartTime).count();
+            double targetMs = 1000.0 / maxFps;
+            if (elapsedMs < targetMs) {
+                double sleepMs = targetMs - elapsedMs;
+                if (sleepMs > 1.0) {
+                    std::this_thread::sleep_for(std::chrono::microseconds((int64_t)(sleepMs * 1000)));
+                }
+                auto sleepEnd = frameStartTime + std::chrono::microseconds((int64_t)(targetMs * 1000));
+                while (std::chrono::high_resolution_clock::now() < sleepEnd) {}
+            }
+        }
         return;
     }
 
@@ -1342,6 +1359,19 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     if (shaderCutout.program == 0) {
         renderUI();
         eglSwapBuffers(display, surface);
+        if (maxFps > 0 && maxFps < 256) {
+            auto frameEnd = std::chrono::high_resolution_clock::now();
+            double elapsedMs = std::chrono::duration<double, std::milli>(frameEnd - frameStartTime).count();
+            double targetMs = 1000.0 / maxFps;
+            if (elapsedMs < targetMs) {
+                double sleepMs = targetMs - elapsedMs;
+                if (sleepMs > 1.0) {
+                    std::this_thread::sleep_for(std::chrono::microseconds((int64_t)(sleepMs * 1000)));
+                }
+                auto sleepEnd = frameStartTime + std::chrono::microseconds((int64_t)(targetMs * 1000));
+                while (std::chrono::high_resolution_clock::now() < sleepEnd) {}
+            }
+        }
         return;
     }
 
@@ -1542,6 +1572,25 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     renderUI();
 
     eglSwapBuffers(display, surface);
+
+    // 帧率限制（maxFps: 0=VSync, 1-255=指定fps, 256=无限制）
+    if (maxFps > 0 && maxFps < 256) {
+        auto frameEnd = std::chrono::high_resolution_clock::now();
+        double elapsedMs = std::chrono::duration<double, std::milli>(frameEnd - frameStartTime).count();
+        double targetMs = 1000.0 / maxFps;
+        if (elapsedMs < targetMs) {
+            double sleepMs = targetMs - elapsedMs;
+            // 粗略 sleep（毫秒级）
+            if (sleepMs > 1.0) {
+                std::this_thread::sleep_for(std::chrono::microseconds((int64_t)(sleepMs * 1000)));
+            }
+            // 精确 spin（剩余微秒级）
+            auto sleepEnd = frameStartTime + std::chrono::microseconds((int64_t)(targetMs * 1000));
+            while (std::chrono::high_resolution_clock::now() < sleepEnd) {
+                // busy wait for precision
+            }
+        }
+    }
 }
 
 bool GLRenderer::initImGui() {
@@ -1571,6 +1620,24 @@ void GLRenderer::setMipmapEnabled(bool enabled) {
         glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
     } else {
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    }
+}
+
+void GLRenderer::setMaxFps(int fps) {
+    maxFps = fps;
+    // 根据设置调整 eglSwapInterval
+    int newInterval;
+    if (fps == 0) {
+        newInterval = 1;  // VSync
+    } else {
+        newInterval = 0;  // 关闭 VSync，由 CPU 控制帧率
+    }
+    if (newInterval != currentSwapInterval) {
+        if (display != EGL_NO_DISPLAY) {
+            eglSwapInterval(display, newInterval);
+        }
+        currentSwapInterval = newInterval;
+        LOGI("MaxFps changed to %d, swapInterval=%d", fps, newInterval);
     }
 }
 

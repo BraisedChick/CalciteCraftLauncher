@@ -74,6 +74,10 @@ public:
     // Mipmap 开关
     void setMipmapEnabled(bool enabled);
 
+    // 最大帧率控制（0=垂直同步, 1-255=fps值, 256=无限制）
+    void setMaxFps(int fps);
+    int getMaxFps() const { return maxFps; }
+
     // 纹理数组初始化是否已完成（渲染线程延迟初始化）
     bool isTextureInitComplete() const { return !textureInitPending; }
 
@@ -215,6 +219,11 @@ private:
 
     // 帧计数器
     uint32_t frameCount = 0;
+
+    // 帧率限制（0=垂直同步, 1-255=fps值, 256=无限制）
+    int maxFps = 0;
+    int currentSwapInterval = 1;  // 当前 eglSwapInterval 值
+    std::chrono::high_resolution_clock::time_point frameStartTime;
 
     // ===== 区块合批渲染优化 =====
     struct SectionRenderData {

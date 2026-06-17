@@ -444,6 +444,13 @@ Java_com_calcite_MainActivity_initRenderer(
             }
         });
 
+        // 设置最大帧率回调
+        GameUI::getInstance().setMaxFpsCallback([](int fps) {
+            if (g_glRenderer) {
+                g_glRenderer->setMaxFps(fps);
+            }
+        });
+
         // 设置退出游戏回调（返回 Java 启动器）
         GameUI::getInstance().setExitCallback([]() {
             JNIEnv* env;

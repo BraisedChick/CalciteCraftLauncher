@@ -1597,7 +1597,7 @@ void GameUI::renderVideoSettings() {
         ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground);
 
     const float PANEL_W = 300.0f;
-    const float PANEL_H = 310.0f;
+    const float PANEL_H = 360.0f;
     float panelX = w * 0.5f - PANEL_W * 0.5f;
     float panelY = h * 0.5f - PANEL_H * 0.5f;
 
@@ -1647,6 +1647,38 @@ void GameUI::renderVideoSettings() {
         }
     }
     ImGui::PopStyleColor();
+
+    // 最大帧率滑块
+    ImGui::SetCursorPos(ImVec2(panelX + 20, panelY + 170));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(60, 60, 70, 200));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrab, IM_COL32(120, 180, 255, 220));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, IM_COL32(150, 200, 255, 255));
+    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
+
+    // 动态显示标签
+    char fpsLabel[64];
+    if (maxFps == 0) {
+        snprintf(fpsLabel, sizeof(fpsLabel), "最大帧率: 垂直同步");
+    } else if (maxFps >= 256) {
+        snprintf(fpsLabel, sizeof(fpsLabel), "最大帧率: 无限制");
+    } else {
+        snprintf(fpsLabel, sizeof(fpsLabel), "最大帧率: %d fps", maxFps);
+    }
+
+    ImGui::SetNextItemWidth(PANEL_W - 40);
+    int fpsSlider = maxFps;
+    if (ImGui::SliderInt("##maxFps", &fpsSlider, 0, 256, "")) {
+        maxFps = fpsSlider;
+        if (maxFpsCallback) maxFpsCallback(maxFps);
+    }
+    // 在滑块左侧显示标签
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(panelX + 20);
+    ImGui::Text("%s", fpsLabel);
+
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar();
 
     // 完成按钮
     ImGui::SetCursorPos(ImVec2(panelX + PANEL_W * 0.5f - 60.0f, panelY + PANEL_H - 55));
