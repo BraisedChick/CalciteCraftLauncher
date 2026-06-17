@@ -1046,9 +1046,11 @@ void GameUI::renderInventory() {
                 for (int s : quickcraftSlots) {
                     if (s == hoveredSlot) { alreadyAdded = true; break; }
                 }
-                if (!alreadyAdded) {
+                // 原版MC检查：只有当物品数量 >= 槽位数量时才添加新槽位
+                const InvSlot& cursorItem = inv.getCursorItem();
+                if (!alreadyAdded && (int)quickcraftSlots.size() < cursorItem.count) {
                     quickcraftSlots.push_back(hoveredSlot);
-                    LOGI("Drag over slot %d, total slots=%zu", hoveredSlot, quickcraftSlots.size());
+                    LOGI("Drag over slot %d, total slots=%zu, items=%d", hoveredSlot, quickcraftSlots.size(), cursorItem.count);
                 }
             }
         }
@@ -1066,6 +1068,49 @@ void GameUI::renderInventory() {
                 // Phase 2: 结束（服务器执行分发）
                 engine->sendContainerQuickCraft(2, -999, 0);
                 LOGI("Drag complete: distributed to %zu slots", quickcraftSlots.size());
+
+                // 本地预测：更新光标物品数量
+                // 原版MC算法：每个槽位 = floor(totalCount / numSlots)，余数留在光标
+                const InvSlot& cursorItem = inv.getCursorItem();
+                int totalItems = cursorItem.count;
+                int numSlots = (int)quickcraftSlots.size();
+                const int MAX_STACK = 64;
+                
+                // 每个槽位分配量（向下取整，余数留在光标）
+                int perSlot = totalItems / numSlots;
+                
+                // 计算实际分配量（考虑堆叠上限）
+                int distributed = 0;
+                for (int i = 0; i < numSlots; i++) {
+                    int slot = quickcraftSlots[i];
+                    const InvSlot& slotItem = inv.getSlot(slot);
+                    
+                    // 计算可用空间
+                    int availableSpace = MAX_STACK;
+                    if (slotItem.present && slotItem.itemId > 0) {
+                        if (slotItem.itemId == cursorItem.itemId) {
+                            availableSpace = MAX_STACK - slotItem.count;
+                        } else {
+                            availableSpace = 0;  // 不同物品不能放入
+                        }
+                    }
+                    
+                    // 实际放入量 = min(应分配, 可用空间)
+                    int actualPut = std::min(perSlot, availableSpace);
+                    distributed += actualPut;
+                }
+                
+                int remaining = totalItems - distributed;
+                
+                InvSlot updatedCursor = cursorItem;
+                if (remaining > 0) {
+                    updatedCursor.count = (int8_t)remaining;
+                } else {
+                    updatedCursor.present = false;
+                    updatedCursor.itemId = 0;
+                    updatedCursor.count = 0;
+                }
+                inv.setCursorItem(updatedCursor);
             } else {
                 // 只有 0 或 1 个槽位 → 普通点击
                 if (quickcraftStartSlot >= 0) {
@@ -1159,25 +1204,46 @@ void GameUI::renderInventory() {
         handleSlotClick(sx, hotbarY, containerSlot, id);
     }
 
-    // 拖拽时高亮已选中的槽位
+    // 拖拽时显示预测效果：高亮槽位 + 物品预览 + 光标数量减少
     if (isDraggingSlot && !quickcraftSlots.empty()) {
-        for (int slot : quickcraftSlots) {
+        const InvSlot& cursorItem = inv.getCursorItem();
+        int totalItems = cursorItem.count;
+        int numSlots = (int)quickcraftSlots.size();
+        const int MAX_STACK = 64;
+        
+        // 每个槽位分配量（向下取整，余数留在光标）
+        int perSlot = totalItems / numSlots;
+        int distributedItems = 0;
+
+        for (int i = 0; i < numSlots; i++) {
+            int slot = quickcraftSlots[i];
             float sx, sy;
             if (slot >= 9 && slot < 36) {
-                // 主背包格
                 int idx = slot - 9;
                 int row = idx / 9;
                 int col = idx % 9;
                 sx = gridX + col * INV_SLOT;
                 sy = gridY + row * INV_SLOT;
             } else if (slot >= 36 && slot < 45) {
-                // 快捷栏
                 int idx = slot - 36;
                 sx = gridX + idx * INV_SLOT;
                 sy = hotbarY;
             } else {
                 continue;
             }
+
+            // 计算此槽位实际能放入的数量
+            const InvSlot& slotItem = inv.getSlot(slot);
+            int availableSpace = MAX_STACK;
+            if (slotItem.present && slotItem.itemId > 0) {
+                if (slotItem.itemId == cursorItem.itemId) {
+                    availableSpace = MAX_STACK - slotItem.count;
+                } else {
+                    availableSpace = 0;
+                }
+            }
+            int countForThisSlot = std::min(perSlot, availableSpace);
+
             // 画半透明黄色高亮
             ImGui::GetForegroundDrawList()->AddRectFilled(
                 ImVec2(sx, sy),
@@ -1187,15 +1253,56 @@ void GameUI::renderInventory() {
                 ImVec2(sx, sy),
                 ImVec2(sx + INV_SLOT, sy + INV_SLOT),
                 IM_COL32(255, 255, 0, 200), 0.0f, 0, 2.0f);
-        }
-    }
 
-    // 渲染光标上持有的物品
-    const InvSlot& cursor = inv.getCursorItem();
-    if (cursor.present && cursor.itemId > 0) {
-        float mx = io.MousePos.x - INV_SLOT * 0.5f;
-        float my = io.MousePos.y - INV_SLOT * 0.5f;
-        renderItem(mx, my, cursor);
+            // 显示物品预览（带预测数量）
+            if (cursorItem.present && cursorItem.itemId > 0 && countForThisSlot > 0) {
+                std::string itemName = BlockRegistry::getInstance().getItemName(cursorItem.itemId);
+                GLuint tex = ResourcepackManager::getInstance().getItemTexture(itemName);
+                if (tex != 0) {
+                    float pad = 5.0f;
+                    float iconSize = INV_SLOT - pad * 2;
+                    ImGui::GetForegroundDrawList()->AddImage(
+                        (ImTextureID)(intptr_t)tex,
+                        ImVec2(sx + pad, sy + pad),
+                        ImVec2(sx + pad + iconSize, sy + pad + iconSize),
+                        ImVec2(0, 0), ImVec2(1, 1),
+                        IM_COL32(255, 255, 255, 160));
+
+                    // 显示最终数量（已有 + 新增）
+                    int finalCount = slotItem.count + countForThisSlot;
+                    if (finalCount > 1) {
+                        char countStr[8];
+                        snprintf(countStr, sizeof(countStr), "%d", finalCount);
+                        ImVec2 textSize = ImGui::CalcTextSize(countStr);
+                        ImGui::GetForegroundDrawList()->AddText(
+                            ImVec2(sx + INV_SLOT - textSize.x - 3,
+                                   sy + INV_SLOT - textSize.y - 2),
+                            IM_COL32(255, 255, 0, 255), countStr);
+                    }
+                    distributedItems += countForThisSlot;
+                }
+            }
+        }
+
+        // 渲染光标上的物品（数量减少）
+        if (cursorItem.present && cursorItem.itemId > 0) {
+            int remainingItems = totalItems - distributedItems;
+            if (remainingItems > 0) {
+                float mx = io.MousePos.x - INV_SLOT * 0.5f;
+                float my = io.MousePos.y - INV_SLOT * 0.5f;
+                InvSlot tempCursor = cursorItem;
+                tempCursor.count = (int8_t)remainingItems;
+                renderItem(mx, my, tempCursor);
+            }
+        }
+    } else {
+        // 非拖拽状态：正常渲染光标上的物品
+        const InvSlot& cursor = inv.getCursorItem();
+        if (cursor.present && cursor.itemId > 0) {
+            float mx = io.MousePos.x - INV_SLOT * 0.5f;
+            float my = io.MousePos.y - INV_SLOT * 0.5f;
+            renderItem(mx, my, cursor);
+        }
     }
 
     ImGui::End();
