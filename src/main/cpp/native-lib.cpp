@@ -451,6 +451,15 @@ Java_com_calcite_MainActivity_initRenderer(
             }
         });
 
+        // 应用已加载的设置到渲染器
+        if (g_glRenderer) {
+            auto& ui = GameUI::getInstance();
+            g_glRenderer->setFov(ui.getOptionsFov());
+            g_glRenderer->setRenderDistance(ui.getRenderDistance());
+            g_glRenderer->setMipmapEnabled(ui.isMipmapEnabled());
+            g_glRenderer->setMaxFps(ui.getMaxFps());
+        }
+
         // 设置退出游戏回调（返回 Java 启动器）
         GameUI::getInstance().setExitCallback([]() {
             JNIEnv* env;

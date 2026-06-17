@@ -37,6 +37,9 @@
 // 服务器列表文件路径
 #define SERVERS_FILE_PATH "/data/data/com.calcite/servers.txt"
 
+// 视频设置文件路径
+#define OPTIONS_FILE_PATH "/data/data/com.calcite/options.txt"
+
 // 游戏内 UI 布局常量
 #define JOYSTICK_CENTER_X  220.0f
 #define JOYSTICK_CENTER_Y_OFFSET 210.0f  // 距屏幕底部
@@ -109,6 +112,7 @@ bool GameUI::init() {
     LOGI("ImGui initialized successfully");
 
     loadServerList();
+    loadSettings();
     LOGI("Loaded %zu servers", servers.size());
     return true;
 }
@@ -118,6 +122,7 @@ void GameUI::shutdown() {
     LOGI("Shutting down ImGui...");
 
     saveServerList();
+    saveSettings();
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui::DestroyContext();
@@ -493,6 +498,49 @@ void GameUI::saveServerList() {
     }
     file.close();
     LOGI("Saved %zu servers", servers.size());
+}
+
+void GameUI::loadSettings() {
+    std::ifstream file(OPTIONS_FILE_PATH);
+    if (!file.is_open()) {
+        LOGI("No options file found, using defaults");
+        return;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        auto colonPos = line.find(':');
+        if (colonPos == std::string::npos) continue;
+        std::string key = line.substr(0, colonPos);
+        std::string value = line.substr(colonPos + 1);
+        try {
+            if (key == "renderDistance") renderDistance = std::stoi(value);
+            else if (key == "smoothLighting") smoothLightingEnabled = (value == "true");
+            else if (key == "mipmap") mipmapEnabled = (value == "true");
+            else if (key == "maxFps") maxFps = std::stoi(value);
+            else if (key == "fov") optionsFov = std::stof(value);
+        } catch (...) {
+            // 忽略解析错误，使用默认值
+        }
+    }
+    file.close();
+    LOGI("Settings loaded: renderDistance=%d, smoothLighting=%d, mipmap=%d, maxFps=%d, fov=%.1f",
+         renderDistance, smoothLightingEnabled, mipmapEnabled, maxFps, optionsFov);
+}
+
+void GameUI::saveSettings() {
+    std::ofstream file(OPTIONS_FILE_PATH, std::ios::trunc);
+    if (!file.is_open()) {
+        LOGE("Failed to save options");
+        return;
+    }
+    file << "renderDistance:" << renderDistance << '\n';
+    file << "smoothLighting:" << (smoothLightingEnabled ? "true" : "false") << '\n';
+    file << "mipmap:" << (mipmapEnabled ? "true" : "false") << '\n';
+    file << "maxFps:" << maxFps << '\n';
+    file << "fov:" << optionsFov << '\n';
+    file.close();
+    LOGI("Settings saved");
 }
 
 void GameUI::renderConnecting() {
@@ -1572,6 +1620,7 @@ void GameUI::renderGameOptions() {
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(80, 80, 80, 240));
     if (ImGui::Button("完成", ImVec2(120, 40))) {
         optionsOpen = false;
+        saveSettings();
     }
     ImGui::PopStyleColor(2);
     ImGui::PopStyleVar();
@@ -1687,6 +1736,7 @@ void GameUI::renderVideoSettings() {
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(80, 80, 80, 240));
     if (ImGui::Button("完成", ImVec2(120, 40))) {
         videoSettingsOpen = false;
+        saveSettings();
     }
     ImGui::PopStyleColor(2);
     ImGui::PopStyleVar();

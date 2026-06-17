@@ -128,6 +128,8 @@ private:
 
     void loadServerList();
     void saveServerList();
+    void loadSettings();
+    void saveSettings();
     void connectToServer(const ServerInfo& server);
 
     // 多点触控
