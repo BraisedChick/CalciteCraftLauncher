@@ -1406,72 +1406,6 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // ===== BFS 遮挡剔除（Sodium 风格）=====
-    // 用预计算的 visibilityData 做连通性 BFS，标记可达 section
-    {
-        for (auto& [key, rd] : chunkRenderCache)
-            for (auto& sec : rd.sections)
-                sec.isVisible = false;
-
-        auto secKey = [](int cx, int sy, int cz) {
-            return ((uint64_t)(int16_t)cx << 48) | ((uint64_t)(uint16_t)(sy + 64) << 32) | (uint16_t)(int16_t)cz;
-        };
-        std::unordered_map<uint64_t, SectionRenderData*> slm;
-        for (auto& [key, rd] : chunkRenderCache) {
-            int cx = (int)(rd.position.x / 16.0f);
-            int cz = (int)(rd.position.z / 16.0f);
-            for (auto& sec : rd.sections)
-                slm[secKey(cx, sec.sectionY, cz)] = &sec;
-        }
-
-        int camCX = (int)floorf(lastCameraX / 16.0f);
-        int camCY = (int)floorf((lastCameraY - worldMinY) / 16.0f) * 16 + (int)worldMinY;
-        int camCZ = (int)floorf(lastCameraZ / 16.0f);
-
-        static const int DD[6][3] = {{0,-16,0},{0,16,0},{0,0,-1},{0,0,1},{-1,0,0},{1,0,0}};
-        static const int OPP_DIR[6] = {1, 0, 3, 2, 5, 4};
-        struct BFSN { int cx,sy,cz,entryDir; };
-        std::queue<BFSN> bfs;
-        bfs.push({camCX,camCY,camCZ,-1});
-
-        while (!bfs.empty()) {
-            auto [cx,sy,cz,entryDir] = bfs.front(); bfs.pop();
-            uint64_t sk = secKey(cx,sy,cz);
-            auto it = slm.find(sk);
-            if (it == slm.end()) continue;
-            auto* sec = it->second;
-            if (sec->isVisible) continue;
-            sec->isVisible = true;
-
-            uint64_t vis = sec->visibilityData;
-            for (int d = 0; d < 6; d++) {
-                // 检查能否从 entry 面到达 d 面
-                bool canExit = false;
-                if (entryDir < 0) {
-                    // 起始 section（相机内部）：只要 d 面有任何入口可达即可
-                    canExit = (vis & (0x010101010101ULL << d)) != 0;
-                } else {
-                    // 从 entryDir 的对面进入后，能否从 d 面出去
-                    int inDir = OPP_DIR[entryDir];
-                    canExit = (vis >> (inDir * 8)) & (1ULL << d);
-                }
-                if (!canExit) continue;
-
-                // 对面 section 的入口是否开放？check neighbor's opposite face
-                int nx = cx + DD[d][0], ny = sy + DD[d][1], nz = cz + DD[d][2];
-                uint64_t nk = secKey(nx,ny,nz);
-                auto nit = slm.find(nk);
-                if (nit == slm.end()) continue;
-                uint64_t nvis = nit->second->visibilityData;
-                int opp = OPP_DIR[d];
-                // neighbor 的 opp 面必须有至少一条通路
-                if ((nvis & (0x010101010101ULL << opp)) == 0) continue;
-
-                bfs.push({nx,ny,nz,d});
-            }
-        }
-    }
-
     // ---- Phase 1a: 基体几何（纯深度测试，写深度）----
     for (auto& [chunkKey, renderData] : chunkRenderCache) {
         if (!renderData.visible || renderData.sections.empty()) continue;
@@ -1485,7 +1419,7 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
             // Section 级视锥裁剪
             float secMinY = (float)sec.sectionY;
             float secMaxY = secMinY + 16.0f;
-            if (!sec.isVisible || !isAABBInFrustum(minX, secMinY, minZ, maxX, secMaxY, maxZ)) continue;
+            if (!isAABBInFrustum(minX, secMinY, minZ, maxX, secMaxY, maxZ)) continue;
 
             uint32_t baseEnd = sec.indexCount - sec.overlayIndexCount - sec.waterIndexCount;
             if (baseEnd == 0) continue;
@@ -1509,7 +1443,7 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
             float maxZ = minZ + 16.0f;
 
             for (auto& sec : renderData.sections) {
-                if (!sec.isVisible || sec.overlayIndexCount == 0) continue;
+                if (sec.overlayIndexCount == 0) continue;
                 float secMinY = (float)sec.sectionY;
                 float secMaxY = secMinY + 16.0f;
                 if (!isAABBInFrustum(minX, secMinY, minZ, maxX, secMaxY, maxZ)) continue;
@@ -1547,7 +1481,7 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
             float maxZ = minZ + 16.0f;
 
             for (auto& sec : renderData.sections) {
-                if (!sec.isVisible || sec.waterIndexCount == 0) continue;
+                if (sec.waterIndexCount == 0) continue;
                 float secMinY = (float)sec.sectionY;
                 float secMaxY = secMinY + 16.0f;
                 if (!isAABBInFrustum(minX, secMinY, minZ, maxX, secMaxY, maxZ)) continue;
