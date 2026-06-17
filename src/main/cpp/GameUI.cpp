@@ -1070,19 +1070,26 @@ void GameUI::renderInventory() {
                 LOGI("Drag complete: distributed to %zu slots", quickcraftSlots.size());
 
                 // 本地预测：更新光标物品数量
-                // 原版MC算法：每个槽位 = floor(totalCount / numSlots)，余数留在光标
+                // 参考原版MC：先计算有效槽位数，再均分
                 const InvSlot& cursorItem = inv.getCursorItem();
                 int totalItems = cursorItem.count;
-                int numSlots = (int)quickcraftSlots.size();
                 const int MAX_STACK = 64;
                 
-                // 每个槽位分配量（向下取整，余数留在光标）
-                int perSlot = totalItems / numSlots;
+                // 先计算有效槽位数（空槽或相同物品）
+                int validSlotCount = 0;
+                for (int slot : quickcraftSlots) {
+                    const InvSlot& slotItem = inv.getSlot(slot);
+                    if (!slotItem.present || slotItem.itemId <= 0 || slotItem.itemId == cursorItem.itemId) {
+                        validSlotCount++;
+                    }
+                }
+                
+                // 每个有效槽位分配量（向下取整，余数留在光标）
+                int perSlot = (validSlotCount > 0) ? (totalItems / validSlotCount) : 0;
                 
                 // 计算实际分配量（考虑堆叠上限）
                 int distributed = 0;
-                for (int i = 0; i < numSlots; i++) {
-                    int slot = quickcraftSlots[i];
+                for (int slot : quickcraftSlots) {
                     const InvSlot& slotItem = inv.getSlot(slot);
                     
                     // 计算可用空间
@@ -1208,14 +1215,22 @@ void GameUI::renderInventory() {
     if (isDraggingSlot && !quickcraftSlots.empty()) {
         const InvSlot& cursorItem = inv.getCursorItem();
         int totalItems = cursorItem.count;
-        int numSlots = (int)quickcraftSlots.size();
         const int MAX_STACK = 64;
         
-        // 每个槽位分配量（向下取整，余数留在光标）
-        int perSlot = totalItems / numSlots;
+        // 先计算有效槽位数（空槽或相同物品）
+        int validSlotCount = 0;
+        for (int slot : quickcraftSlots) {
+            const InvSlot& slotItem = inv.getSlot(slot);
+            if (!slotItem.present || slotItem.itemId <= 0 || slotItem.itemId == cursorItem.itemId) {
+                validSlotCount++;
+            }
+        }
+        
+        // 每个有效槽位分配量（向下取整，余数留在光标）
+        int perSlot = (validSlotCount > 0) ? (totalItems / validSlotCount) : 0;
         int distributedItems = 0;
 
-        for (int i = 0; i < numSlots; i++) {
+        for (int i = 0; i < (int)quickcraftSlots.size(); i++) {
             int slot = quickcraftSlots[i];
             float sx, sy;
             if (slot >= 9 && slot < 36) {
