@@ -107,9 +107,9 @@ GLuint ResourcepackManager::getItemTexture(const std::string& itemName) {
         glTex = loadAndUploadTexture(path);
     }
 
-    // 3) 回退到 blocks/ 目录的 2D 纹理
+    // 3) 回退到 block/ 目录的 2D 纹理
     if (glTex == 0) {
-        std::string fallbackPath = "blocks/" + itemName + ".png";
+        std::string fallbackPath = "block/" + itemName + ".png";
         glTex = loadAndUploadTexture(fallbackPath);
     }
 

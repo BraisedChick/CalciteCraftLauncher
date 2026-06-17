@@ -85,11 +85,11 @@ TextureData TextureLoader::loadFromZip(const std::string& filename) {
 
     // 新结构：所有贴图在 textures/ 下
     // 已带路径如 "colormap/grass.png" → "textures/colormap/grass.png"
-    // 无路径如 "stone.png"         → "textures/blocks/stone.png"
+    // 无路径如 "stone.png"         → "textures/block/stone.png"
     {
         std::string prefix = "textures/";
         if (filename.find('/') == std::string::npos) {
-            prefix += "blocks/";
+            prefix += "block/";
         }
         fileIndex = mz_zip_reader_locate_file(zip, (prefix + filename).c_str(), nullptr, 0);
     }
