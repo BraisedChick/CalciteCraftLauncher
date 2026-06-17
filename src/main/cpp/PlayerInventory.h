@@ -40,6 +40,12 @@ public:
     void setLocalSlot(int index, const InvSlot& item);
     int getSlotCount() const { return (int)slots.size(); }
 
+    // 合成格子访问（2x2 合成格：slots 1-4，结果槽：slot 0）
+    const InvSlot& getCraftSlot(int index) const;  // index 0-3 对应 slots 1-4
+    const InvSlot& getCraftResult() const;          // slot 0
+    void setCraftSlot(int index, const InvSlot& item);  // index 0-3 对应 slots 1-4
+    void setCraftResult(const InvSlot& item);       // slot 0
+
     // 容器状态 ID（服务器每次 SetContent/SetSlot 递增）
     void setStateId(int id) { stateId = id; }
     int getStateId() const { return stateId; }

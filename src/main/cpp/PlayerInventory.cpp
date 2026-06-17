@@ -5,8 +5,9 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
 PlayerInventory::PlayerInventory() {
-    // 预初始化 41 个空槽（对应无合成格的玩家物品栏布局）
-    slots.resize(41);
+    // 预初始化 46 个空槽（对应完整玩家物品栏布局，包含合成格）
+    // 布局：Slot 0=合成结果, Slots 1-4=合成格, Slots 5-8=装备, Slots 9-35=主背包, Slots 36-44=快捷栏, Slot 45=副手
+    slots.resize(46);
     for (auto& hb : hotbar) hb = InvSlot{};
 }
 
@@ -125,4 +126,42 @@ void PlayerInventory::setLocalSlot(int index, const InvSlot& item) {
 void PlayerInventory::setCursorItem(const InvSlot& item) {
     std::lock_guard<std::mutex> lock(mutex);
     cursorItem = item;
+}
+
+// 合成格子访问方法
+const InvSlot& PlayerInventory::getCraftSlot(int index) const {
+    static InvSlot empty;
+    if (index < 0 || index >= 4) return empty;
+    std::lock_guard<std::mutex> lock(mutex);
+    int slotIdx = 1 + index;  // slots 1-4 对应合成格 0-3
+    if (slotIdx < (int)slots.size()) {
+        return slots[slotIdx];
+    }
+    return empty;
+}
+
+const InvSlot& PlayerInventory::getCraftResult() const {
+    static InvSlot empty;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (0 < (int)slots.size()) {
+        return slots[0];
+    }
+    return empty;
+}
+
+void PlayerInventory::setCraftSlot(int index, const InvSlot& item) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (index >= 0 && index < 4) {
+        int slotIdx = 1 + index;  // slots 1-4 对应合成格 0-3
+        if (slotIdx < (int)slots.size()) {
+            slots[slotIdx] = item;
+        }
+    }
+}
+
+void PlayerInventory::setCraftResult(const InvSlot& item) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (0 < (int)slots.size()) {
+        slots[0] = item;
+    }
 }

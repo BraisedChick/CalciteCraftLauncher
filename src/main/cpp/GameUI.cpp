@@ -935,6 +935,13 @@ void GameUI::renderInventory() {
     const float TEX_CONTAINER_H = 166.0f;
     float S = INV_SLOT / TEX_SLOT;
 
+    // 合成格子纹理坐标（2x2 合成格 + 结果槽）
+    // 原版 MC inventory.png 中合成格位于 (98, 18)，结果槽位于 (154, 28)
+    const float TEX_CRAFT_LEFT = 98.0f;    // 合成格左上角 X
+    const float TEX_CRAFT_TOP = 18.0f;     // 合成格左上角 Y
+    const float TEX_RESULT_LEFT = 154.0f;  // 结果槽 X
+    const float TEX_RESULT_TOP = 28.0f;    // 结果槽 Y
+
     // 容器居中
     float containerW = TEX_CONTAINER_W * S;
     float containerH = TEX_CONTAINER_H * S;
@@ -1013,6 +1020,24 @@ void GameUI::renderInventory() {
     auto getSlotAtMouse = [&]() -> int {
         float mx = io.MousePos.x;
         float my = io.MousePos.y;
+        // 检查合成格 (2x2, slots 1-4)
+        float craftX = containerX + TEX_CRAFT_LEFT * S;
+        float craftY = containerY + TEX_CRAFT_TOP * S;
+        for (int row = 0; row < 2; row++) {
+            for (int col = 0; col < 2; col++) {
+                float sx = craftX + col * INV_SLOT;
+                float sy = craftY + row * INV_SLOT;
+                if (mx >= sx && mx < sx + INV_SLOT && my >= sy && my < sy + INV_SLOT) {
+                    return 1 + row * 2 + col;  // slots 1-4
+                }
+            }
+        }
+        // 检查合成结果槽 (slot 0)
+        float resultX = containerX + TEX_RESULT_LEFT * S;
+        float resultY = containerY + TEX_RESULT_TOP * S;
+        if (mx >= resultX && mx < resultX + INV_SLOT && my >= resultY && my < resultY + INV_SLOT) {
+            return 0;
+        }
         // 检查主背包格 (3x9)
         for (int row = 0; row < 3; row++) {
             float rowY = gridY + row * INV_SLOT;
@@ -1211,6 +1236,28 @@ void GameUI::renderInventory() {
         handleSlotClick(sx, hotbarY, containerSlot, id);
     }
 
+    // 合成格子（2x2, slots 1-4）
+    float craftX = containerX + TEX_CRAFT_LEFT * S - 3.0f;  // 往左移3像素
+    float craftY = containerY + TEX_CRAFT_TOP * S - 2.0f;   // 往上移2像素
+    for (int row = 0; row < 2; row++) {
+        for (int col = 0; col < 2; col++) {
+            float sx = craftX + col * INV_SLOT;
+            float sy = craftY + row * INV_SLOT;
+            int craftIdx = row * 2 + col;
+            int containerSlot = 1 + craftIdx;  // slots 1-4
+            renderItem(sx, sy, inv.getCraftSlot(craftIdx));
+            char id[16];
+            snprintf(id, sizeof(id), "craft_%d", craftIdx);
+            handleSlotClick(sx, sy, containerSlot, id);
+        }
+    }
+
+    // 合成结果槽（slot 0）
+    float resultX = containerX + TEX_RESULT_LEFT * S;
+    float resultY = containerY + TEX_RESULT_TOP * S;
+    renderItem(resultX, resultY, inv.getCraftResult());
+    handleSlotClick(resultX, resultY, 0, "craft_result");
+
     // 拖拽时显示预测效果：高亮槽位 + 物品预览 + 光标数量减少
     if (isDraggingSlot && !quickcraftSlots.empty()) {
         const InvSlot& cursorItem = inv.getCursorItem();
@@ -1233,7 +1280,14 @@ void GameUI::renderInventory() {
         for (int i = 0; i < (int)quickcraftSlots.size(); i++) {
             int slot = quickcraftSlots[i];
             float sx, sy;
-            if (slot >= 9 && slot < 36) {
+            if (slot >= 1 && slot <= 4) {
+                // 合成格 (2x2, slots 1-4)
+                int craftIdx = slot - 1;
+                int row = craftIdx / 2;
+                int col = craftIdx % 2;
+                sx = craftX + col * INV_SLOT;
+                sy = craftY + row * INV_SLOT;
+            } else if (slot >= 9 && slot < 36) {
                 int idx = slot - 9;
                 int row = idx / 9;
                 int col = idx % 9;
