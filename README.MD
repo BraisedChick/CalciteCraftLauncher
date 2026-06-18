@@ -20,3 +20,4 @@
 
 使用的第三方库
 - [Botcraft](https://github.com/adepierre/Botcraft)
+- [FoldCraftLauncher](https://github.com/FCL-Team/FoldCraftLauncher)
