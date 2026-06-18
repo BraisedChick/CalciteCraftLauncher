@@ -71,6 +71,7 @@ set(APP_SOURCES
     TextureAtlas.cpp
     BiomeColorManager.cpp
     GameUI.cpp
+    ServerList.cpp
     ResourcepackManager.cpp
     PlayerInventory.cpp
     Raycast.cpp

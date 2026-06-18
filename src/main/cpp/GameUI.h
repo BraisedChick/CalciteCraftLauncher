@@ -124,6 +124,14 @@ private:
         std::string name;
         std::string ip;
         int port = 25565;
+        // Server List Ping 结果
+        std::string motd;           // 服务器 MOTD
+        int onlinePlayers = -1;     // 在线人数，-1=未知
+        int maxPlayers = -1;        // 最大人数
+        int latencyMs = -1;         // 延迟（毫秒）
+        GLuint iconTextureID = 0;   // 服务器图标 GL 纹理
+        bool pinged = false;        // 是否已 ping 过
+        bool pinging = false;       // 是否正在 ping
     };
 
     void renderMainMenu();
@@ -143,6 +151,10 @@ private:
     void loadSettings();
     void saveSettings();
     void connectToServer(const ServerInfo& server);
+
+    // Server List Ping
+    void pingAllServers();           // 异步 ping 所有服务器
+    void pingServer(int index);      // ping 单个服务器
 
     // 多点触控
     struct TouchPoint {

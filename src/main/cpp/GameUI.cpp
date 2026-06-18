@@ -21,6 +21,8 @@
 #include "Raycast.h"
 #include "ChunkManager.h"
 #include "TextureLoader.h"
+#include "ServerList.h"
+#include "MinecraftVersion.h"
 
 #define LOG_TAG "GameUI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -281,6 +283,7 @@ void GameUI::renderMainMenu() {
     ImGui::SetCursorPos(ImVec2(w * 0.5f - btnW * 0.5f, startY));
     if (ImGui::Button("多人游戏", ImVec2(btnW, btnH))) {
         currentState = UIState::MULTIPLAYER;
+        pingAllServers();  // 进入多人游戏时 ping 所有服务器
     }
 
     ImGui::SetCursorPos(ImVec2(w * 0.5f - btnW * 0.5f, startY + (btnH + spacing) * 1));
@@ -335,19 +338,43 @@ void GameUI::renderMultiplayer() {
             ImGui::TableSetupColumn("info", ImGuiTableColumnFlags_WidthStretch);
 
             for (size_t i = 0; i < servers.size(); i++) {
-                ImGui::TableNextRow(ImGuiTableRowFlags_None, 56.0f);
-
-                // 服务器信息列（可点击选择 / 双击连接）
+                ImGui::TableNextRow(ImGuiTableRowFlags_None, 80.0f);
                 ImGui::TableNextColumn();
                 ImGui::PushID((int)i);
 
-                char label[96];
-                snprintf(label, sizeof(label), "%s", servers[i].name.c_str());
-
                 bool isSelected = (selectedServer == (int)i);
-                if (ImGui::Selectable(label, isSelected,
+
+                // 第一行：服务器名称
+                std::string line1 = servers[i].name;
+                // 第二行：MOTD + 人数 + 延迟
+                std::string line2;
+                if (servers[i].pinging) {
+                    line2 = "(正在获取信息...)";
+                } else if (servers[i].pinged) {
+                    if (!servers[i].motd.empty()) {
+                        line2 = servers[i].motd;
+                    }
+                    char info[128];
+                    if (servers[i].latencyMs >= 0) {
+                        snprintf(info, sizeof(info), " [%d/%d] %dms",
+                                 servers[i].onlinePlayers, servers[i].maxPlayers,
+                                 servers[i].latencyMs);
+                    } else {
+                        snprintf(info, sizeof(info), " [%d/%d]",
+                                 servers[i].onlinePlayers, servers[i].maxPlayers);
+                    }
+                    line2 += info;
+                } else {
+                    line2 = servers[i].ip + ":" + std::to_string(servers[i].port);
+                }
+
+                // 记录 Selectable 起始位置
+                ImVec2 startPos = ImGui::GetCursorPos();
+
+                // 绘制 Selectable（占满整行，处理点击和离亮）
+                if (ImGui::Selectable("##sel", isSelected,
                     ImGuiSelectableFlags_AllowDoubleClick,
-                    ImVec2(0, 50.0f)))
+                    ImVec2(0, 74.0f)))
                 {
                     if (ImGui::IsMouseDoubleClicked(0)) {
                         connectToServer(servers[i]);
@@ -355,6 +382,12 @@ void GameUI::renderMultiplayer() {
                         selectedServer = (int)i;
                     }
                 }
+
+                // 回到 Selectable 位置，覆盖文本
+                ImGui::SetCursorPos(ImVec2(startPos.x + 4, startPos.y + 4));
+                ImGui::Text("%s", line1.c_str());
+                ImGui::SetCursorPos(ImVec2(startPos.x + 4, startPos.y + 28));
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", line2.c_str());
 
                 ImGui::PopID();
             }
@@ -514,6 +547,45 @@ void GameUI::connectToServer(const ServerInfo& server) {
         connectingAddress = server.ip + ":" + std::to_string(server.port);
         currentState = UIState::CONNECTING;
         connectCallback(server.ip, server.port);
+    }
+}
+
+void GameUI::pingServer(int index) {
+    if (index < 0 || index >= (int)servers.size()) return;
+    if (servers[index].pinging) return;
+
+    servers[index].pinging = true;
+    std::string ip = servers[index].ip;
+    int port = servers[index].port;
+    int protocolVersion = VersionManager::getInstance().getProtocolVersion();
+    if (protocolVersion == 0) protocolVersion = 758;  // 默认 1.18.2
+
+    std::thread([this, index, ip, port, protocolVersion]() {
+        PingResult result = ServerList::ping(ip, port, protocolVersion);
+
+        if (index < (int)servers.size()) {
+            servers[index].pinging = false;
+            if (result.success) {
+                servers[index].motd = result.motd;
+                servers[index].onlinePlayers = result.onlinePlayers;
+                servers[index].maxPlayers = result.maxPlayers;
+                servers[index].latencyMs = result.latencyMs;
+                servers[index].pinged = true;
+                LOGI("Server %d pinged: %s (%d/%d) %dms",
+                     index, result.motd.c_str(),
+                     result.onlinePlayers, result.maxPlayers, result.latencyMs);
+            } else {
+                servers[index].pinged = false;
+                servers[index].latencyMs = -1;
+                LOGI("Server %d ping failed", index);
+            }
+        }
+    }).detach();
+}
+
+void GameUI::pingAllServers() {
+    for (int i = 0; i < (int)servers.size(); i++) {
+        pingServer(i);
     }
 }
 
