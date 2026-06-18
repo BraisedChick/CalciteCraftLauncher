@@ -184,6 +184,9 @@ private:
 
     bool initialized = false;
     GLuint panoramaTextureID = 0;  // 全景背景纹理（由 GLRenderer 传入）
+    GLuint titleTextureID = 0;     // 主菜单标题纹理（minecraft.png）
+    GLuint editionTextureID = 0;  // 主菜单副标题纹理（edition.png）
+    float editionTexW = 0, editionTexH = 0;  // edition.png 原始尺寸
 
     struct TouchEvent {
         float x, y;

@@ -20,6 +20,7 @@
 #include "BlockRegistry.h"
 #include "Raycast.h"
 #include "ChunkManager.h"
+#include "TextureLoader.h"
 
 #define LOG_TAG "GameUI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -221,8 +222,56 @@ void GameUI::renderMainMenu() {
                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
                  ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground);
 
-    ImGui::SetCursorPos(ImVec2(w * 0.5f - 120.0f, h * 0.12f));
-    ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "MINECRAFT");
+    // 标题图片（懒加载 minecraft.png）
+    if (titleTextureID == 0) {
+        TextureData tex = TextureLoader::loadPNG("gui/title/minecraft.png");
+        if (tex.data && tex.width > 0 && tex.height > 0) {
+            glGenTextures(1, &titleTextureID);
+            glBindTexture(GL_TEXTURE_2D, titleTextureID);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex.width, tex.height,
+                         0, GL_RGBA, GL_UNSIGNED_BYTE, tex.data);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            LOGI("Title texture loaded: %dx%d", tex.width, tex.height);
+        }
+    }
+
+    // 副标题图片（懒加载 edition.png）
+    if (editionTextureID == 0) {
+        TextureData tex = TextureLoader::loadPNG("gui/title/edition.png");
+        if (tex.data && tex.width > 0 && tex.height > 0) {
+            glGenTextures(1, &editionTextureID);
+            glBindTexture(GL_TEXTURE_2D, editionTextureID);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex.width, tex.height,
+                         0, GL_RGBA, GL_UNSIGNED_BYTE, tex.data);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            editionTexW = (float)tex.width;
+            editionTexH = (float)tex.height;
+            LOGI("Edition texture loaded: %dx%d", tex.width, tex.height);
+        }
+    }
+
+    if (titleTextureID != 0) {
+        // 标题图片居中显示
+        float titleW = 600.0f;
+        float titleH = titleW * 0.27f;
+        ImGui::SetCursorPos(ImVec2(w * 0.5f - titleW * 0.5f, h * 0.10f));
+        ImGui::Image((ImTextureID)(intptr_t)titleTextureID, ImVec2(titleW, titleH));
+
+        // 副标题显示在标题下方（原图尺寸缩小一半，上移与标题重叠）
+        if (editionTextureID != 0 && editionTexW > 0) {
+            float editionDisplayW = editionTexW * 0.5f;
+            float editionDisplayH = editionTexH * 0.5f;
+            float editionY = h * 0.10f + titleH - editionDisplayH - 33.0f;
+            ImGui::SetCursorPos(ImVec2(w * 0.5f - editionDisplayW * 0.5f, editionY));
+            ImGui::Image((ImTextureID)(intptr_t)editionTextureID, ImVec2(editionDisplayW, editionDisplayH));
+        }
+    } else {
+        // 回退到文字
+        ImGui::SetCursorPos(ImVec2(w * 0.5f - 120.0f, h * 0.12f));
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "MINECRAFT");
+    }
 
     float btnW = 280.0f;
     float btnH = 50.0f;
