@@ -1297,10 +1297,15 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
 
     auto& ui = GameUI::getInstance();
 
-    // 菜单状态：只渲染 ImGui，不渲染 3D 场景
+    // 菜单状态：渲染全景背景 + ImGui
     if (ui.getState() != UIState::IN_GAME) {
         glClearColor(0.08f, 0.08f, 0.12f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // 渲染旋转全景到默认帧缓冲（在 ImGui 之前）
+        initPanorama();
+        renderPanoramaToFBO();
+
         renderUI();
         eglSwapBuffers(display, surface);
         // 帧率限制（菜单状态也需要）
@@ -1651,6 +1656,262 @@ void GLRenderer::recreateSurface(int width, int height) {
     io.DisplaySize = ImVec2((float)width, (float)height);
 }
 
+// ===== 全景背景（主菜单旋转 cubemap）=====
+
+void GLRenderer::initPanorama() {
+    if (panoramaLoaded) return;
+    panoramaLoaded = true;  // 防止重复尝试
+
+    // 检查 GL 状态
+    GLenum err = glGetError();
+    if (err != GL_NO_ERROR) {
+        LOGW("GL error before panorama init: 0x%x", err);
+    }
+
+    // 1. 创建 cubemap 纹理
+    glGenTextures(1, &panoramaCubemap);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, panoramaCubemap);
+
+    // panorama_N.png → cubemap 面映射（Minecraft 全景图约定）
+    // 0: south (-Z), 1: west (-X), 2: north (+Z), 3: east (+X), 4: up (+Y), 5: down (-Y)
+    // OpenGL cubemap 顺序: POSITIVE_X, NEGATIVE_X, POSITIVE_Y, NEGATIVE_Y, POSITIVE_Z, NEGATIVE_Z
+    const char* faces[] = {
+        "gui/title/background/panorama_3.png",  // POSITIVE_X = east
+        "gui/title/background/panorama_1.png",  // NEGATIVE_X = west
+        "gui/title/background/panorama_4.png",  // POSITIVE_Y = up (sky)
+        "gui/title/background/panorama_5.png",  // NEGATIVE_Y = down (ground)
+        "gui/title/background/panorama_0.png",  // POSITIVE_Z = north
+        "gui/title/background/panorama_2.png"   // NEGATIVE_Z = south
+    };
+
+    int loadedCount = 0;
+    for (int i = 0; i < 6; i++) {
+        TextureData tex = TextureLoader::loadImage(faces[i]);
+        if (tex.data && tex.width > 0 && tex.height > 0) {
+            // 水平翻转全景图（Minecraft 全景图方向与 OpenGL cubemap 相反）
+            int rowBytes = tex.width * 4;
+            std::vector<uint8_t> flipped(rowBytes * tex.height);
+            for (int y = 0; y < tex.height; y++) {
+                for (int x = 0; x < tex.width; x++) {
+                    int srcIdx = (y * tex.width + x) * 4;
+                    int dstIdx = (y * tex.width + (tex.width - 1 - x)) * 4;
+                    flipped[dstIdx + 0] = tex.data[srcIdx + 0];
+                    flipped[dstIdx + 1] = tex.data[srcIdx + 1];
+                    flipped[dstIdx + 2] = tex.data[srcIdx + 2];
+                    flipped[dstIdx + 3] = tex.data[srcIdx + 3];
+                }
+            }
+            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGBA,
+                         tex.width, tex.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, flipped.data());
+            LOGI("Panorama face %d loaded: %s (%dx%d)", i, faces[i], tex.width, tex.height);
+            loadedCount++;
+        } else {
+            LOGE("Failed to load panorama face %d: %s", i, faces[i]);
+            // 用蓝色填充缺失面
+            std::vector<uint8_t> fill(16 * 16 * 4);
+            for (int p = 0; p < 16 * 16; p++) {
+                fill[p*4+0] = 30 + i * 20;
+                fill[p*4+1] = 30 + i * 20;
+                fill[p*4+2] = 80 + i * 20;
+                fill[p*4+3] = 255;
+            }
+            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGBA,
+                         16, 16, 0, GL_RGBA, GL_UNSIGNED_BYTE, fill.data());
+        }
+    }
+
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+
+    err = glGetError();
+    if (err != GL_NO_ERROR) {
+        LOGE("GL error after cubemap upload: 0x%x", err);
+    }
+
+    LOGI("Panorama cubemap: loaded %d/6 faces, texture ID=%d", loadedCount, panoramaCubemap);
+
+    // 2. 编译着色器
+    const char* vsrc = R"(
+#version 300 es
+layout(location=0) in vec3 aPos;
+out vec3 vDir;
+uniform mat4 uMVP;
+void main() {
+    vDir = aPos;
+    gl_Position = uMVP * vec4(aPos, 1.0);
+}
+)";
+
+    const char* fsrc = R"(
+#version 300 es
+precision mediump float;
+in vec3 vDir;
+out vec4 FragColor;
+uniform samplerCube uCubemap;
+void main() {
+    FragColor = texture(uCubemap, vDir);
+}
+)";
+
+    auto compileShader = [](GLenum type, const char* src) -> GLuint {
+        GLuint s = glCreateShader(type);
+        glShaderSource(s, 1, &src, nullptr);
+        glCompileShader(s);
+        GLint ok;
+        glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+        if (!ok) {
+            char log[512];
+            glGetShaderInfoLog(s, 512, nullptr, log);
+            LOGE("Panorama shader compile error: %s", log);
+            glDeleteShader(s);
+            return 0;
+        }
+        return s;
+    };
+
+    GLuint vs = compileShader(GL_VERTEX_SHADER, vsrc);
+    GLuint fs = compileShader(GL_FRAGMENT_SHADER, fsrc);
+    if (!vs || !fs) {
+        LOGE("Panorama shader compilation failed (vs=%d, fs=%d)", vs, fs);
+        if (vs) glDeleteShader(vs);
+        if (fs) glDeleteShader(fs);
+        glDeleteTextures(1, &panoramaCubemap);
+        panoramaCubemap = 0;
+        return;
+    }
+
+    panoramaProgram = glCreateProgram();
+    glAttachShader(panoramaProgram, vs);
+    glAttachShader(panoramaProgram, fs);
+    glLinkProgram(panoramaProgram);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+
+    GLint linkOk;
+    glGetProgramiv(panoramaProgram, GL_LINK_STATUS, &linkOk);
+    if (!linkOk) {
+        char log[512];
+        glGetProgramInfoLog(panoramaProgram, 512, nullptr, log);
+        LOGE("Panorama program link error: %s", log);
+        glDeleteProgram(panoramaProgram);
+        glDeleteTextures(1, &panoramaCubemap);
+        panoramaProgram = 0;
+        panoramaCubemap = 0;
+        return;
+    }
+
+    LOGI("Panorama shaders compiled, program ID=%d", panoramaProgram);
+
+    // 3. 创建立方体 VAO/VBO/EBO
+    static const float cubeVerts[] = {
+        -1,-1,-1,  1,-1,-1,  1, 1,-1, -1, 1,-1,
+        -1,-1, 1,  1,-1, 1,  1, 1, 1, -1, 1, 1,
+    };
+    static const uint16_t cubeIdx[] = {
+        0,1,2, 2,3,0,  4,6,5, 6,4,7,
+        0,4,5, 5,1,0,  2,6,7, 7,3,2,
+        0,3,7, 7,4,0,  1,5,6, 6,2,1,
+    };
+
+    glGenVertexArrays(1, &panoramaVAO);
+    glGenBuffers(1, &panoramaVBO);
+    glGenBuffers(1, &panoramaEBO);
+
+    glBindVertexArray(panoramaVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, panoramaVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVerts), cubeVerts, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, panoramaEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubeIdx), cubeIdx, GL_STATIC_DRAW);
+
+    glBindVertexArray(0);
+
+    err = glGetError();
+    if (err != GL_NO_ERROR) {
+        LOGE("GL error after VAO setup: 0x%x", err);
+    }
+
+    // 4. 创建 FBO + 2D 纹理（将 cubemap 渲染到 2D 纹理，供 ImGui 显示）
+    panoramaFBOWidth = screenWidth > 0 ? screenWidth : 1280;
+    panoramaFBOHeight = screenHeight > 0 ? screenHeight : 720;
+
+    glGenTextures(1, &panoramaFBOTexture);
+    glBindTexture(GL_TEXTURE_2D, panoramaFBOTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, panoramaFBOWidth, panoramaFBOHeight,
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glGenFramebuffers(1, &panoramaFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, panoramaFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           panoramaFBOTexture, 0);
+
+    GLenum fboStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (fboStatus != GL_FRAMEBUFFER_COMPLETE) {
+        LOGE("Panorama FBO incomplete: 0x%x", fboStatus);
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    LOGI("Panorama background initialized OK (cubemap=%d, program=%d, vao=%d, fbo=%d, fboTex=%d, %dx%d)",
+         panoramaCubemap, panoramaProgram, panoramaVAO, panoramaFBO, panoramaFBOTexture,
+         panoramaFBOWidth, panoramaFBOHeight);
+}
+
+void GLRenderer::renderPanoramaToFBO() {
+    if (!panoramaLoaded || panoramaProgram == 0 || panoramaCubemap == 0) {
+        return;
+    }
+
+    // 直接渲染到默认帧缓冲（不用 FBO）
+    glUseProgram(panoramaProgram);
+
+    float aspect = (screenHeight > 0) ? (float)screenWidth / (float)screenHeight : 1.0f;
+    glm::mat4 proj = glm::perspective(glm::radians(70.0f), aspect, 0.1f, 10.0f);
+
+    static auto startTime = std::chrono::high_resolution_clock::now();
+    float elapsed = std::chrono::duration<float>(
+        std::chrono::high_resolution_clock::now() - startTime).count();
+    float angle = elapsed * 0.035f;  // ~2°/s
+
+    glm::mat4 view = glm::mat4(1.0f);
+    view = glm::rotate(view, glm::radians(15.0f), glm::vec3(1, 0, 0));
+    view = glm::rotate(view, angle, glm::vec3(0, 1, 0));
+    glm::mat4 mvp = proj * view;
+
+    GLint uMVP = glGetUniformLocation(panoramaProgram, "uMVP");
+    GLint uCubemap = glGetUniformLocation(panoramaProgram, "uCubemap");
+    glUniformMatrix4fv(uMVP, 1, GL_FALSE, glm::value_ptr(mvp));
+    glUniform1i(uCubemap, 0);
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_CULL_FACE);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, panoramaCubemap);
+    glBindVertexArray(panoramaVAO);
+    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
+
+    // 恢复 GL 状态
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_SCISSOR_TEST);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glFrontFace(GL_CCW);
+}
+
 void GLRenderer::cleanup() {
     // 先停止工作线程
     stopWorker();
@@ -1723,6 +1984,16 @@ void GLRenderer::cleanup() {
         glDeleteTextures(1, &tex);
     }
     blockIconCache.clear();
+
+    // 清理全景背景资源
+    if (panoramaFBO != 0)       { glDeleteFramebuffers(1, &panoramaFBO); panoramaFBO = 0; }
+    if (panoramaFBOTexture != 0){ glDeleteTextures(1, &panoramaFBOTexture); panoramaFBOTexture = 0; }
+    if (panoramaCubemap != 0)   { glDeleteTextures(1, &panoramaCubemap); panoramaCubemap = 0; }
+    if (panoramaProgram != 0)   { glDeleteProgram(panoramaProgram); panoramaProgram = 0; }
+    if (panoramaVAO != 0)       { glDeleteVertexArrays(1, &panoramaVAO); panoramaVAO = 0; }
+    if (panoramaVBO != 0)       { glDeleteBuffers(1, &panoramaVBO); panoramaVBO = 0; }
+    if (panoramaEBO != 0)       { glDeleteBuffers(1, &panoramaEBO); panoramaEBO = 0; }
+    panoramaLoaded = false;
 
     if (display) {
         eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);

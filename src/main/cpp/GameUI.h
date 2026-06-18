@@ -58,6 +58,9 @@ public:
     bool isOptionsOpen() const { return optionsOpen; }
     float getOptionsFov() const { return optionsFov; }
 
+    // 全景背景纹理 ID（由 GLRenderer 每帧设置）
+    void setPanoramaTexture(GLuint texID) { panoramaTextureID = texID; }
+
     // 视频设置
     void setVideoSettingsOpen(bool open) { videoSettingsOpen = open; }
     bool isVideoSettingsOpen() const { return videoSettingsOpen; }
@@ -180,6 +183,7 @@ private:
     char addServerPort[16] = "25565";
 
     bool initialized = false;
+    GLuint panoramaTextureID = 0;  // 全景背景纹理（由 GLRenderer 传入）
 
     struct TouchEvent {
         float x, y;

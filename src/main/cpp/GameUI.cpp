@@ -211,12 +211,15 @@ void GameUI::renderMainMenu() {
     float w = io.DisplaySize.x;
     float h = io.DisplaySize.y;
 
+    // 全景背景由 GLRenderer 直接渲染到默认帧缓冲
+    // ImGui 窗口设为 NoBackground，透过去即可看到全景
+
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(io.DisplaySize);
     ImGui::Begin("MainMenu", nullptr,
                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                 ImGuiWindowFlags_NoBringToFrontOnFocus);
+                 ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground);
 
     ImGui::SetCursorPos(ImVec2(w * 0.5f - 120.0f, h * 0.12f));
     ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "MINECRAFT");

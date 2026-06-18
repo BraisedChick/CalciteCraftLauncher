@@ -99,6 +99,15 @@ public:
     // 返回 GL 纹理 ID，0=失败
     GLuint renderBlockIcon(const std::string& modelName, int iconSize = 32);
 
+    // 初始化全景背景（cubemap 纹理 + 着色器 + VAO + FBO）
+    void initPanorama();
+
+    // 渲染全景到 FBO（在 ImGui::NewFrame 之前调用）
+    void renderPanoramaToFBO();
+
+    // 获取全景 FBO 纹理 ID（供 ImGui 绘制背景用）
+    GLuint getPanoramaTexture() const { return panoramaFBOTexture; }
+
     // 预渲染所有物品对应的方块图标
     void preRenderBlockIcons();
 
@@ -266,4 +275,16 @@ private:
 
     // 方块图标缓存（物品栏3D模型预渲染）
     std::unordered_map<std::string, GLuint> blockIconCache;
+
+    // ===== 全景背景（主菜单旋转 cubemap → FBO → ImGui 背景图）=====
+    GLuint panoramaCubemap = 0;
+    GLuint panoramaProgram = 0;
+    GLuint panoramaVAO = 0;
+    GLuint panoramaVBO = 0;
+    GLuint panoramaEBO = 0;
+    GLuint panoramaFBO = 0;        // FBO 用于将 cubemap 渲染到 2D 纹理
+    GLuint panoramaFBOTexture = 0;  // FBO 颜色附件纹理
+    int panoramaFBOWidth = 0;
+    int panoramaFBOHeight = 0;
+    bool panoramaLoaded = false;
 };
