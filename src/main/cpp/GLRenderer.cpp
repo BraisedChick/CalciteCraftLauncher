@@ -1995,6 +1995,9 @@ void GLRenderer::cleanup() {
     if (panoramaEBO != 0)       { glDeleteBuffers(1, &panoramaEBO); panoramaEBO = 0; }
     panoramaLoaded = false;
 
+    // 重置 GameUI 的 GL 纹理 ID（context 销毁后旧 ID 失效，下次渲染时重新加载）
+    GameUI::getInstance().resetGLResources();
+
     if (display) {
         eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 

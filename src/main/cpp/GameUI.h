@@ -61,6 +61,15 @@ public:
     // 全景背景纹理 ID（由 GLRenderer 每帧设置）
     void setPanoramaTexture(GLuint texID) { panoramaTextureID = texID; }
 
+    // EGL context 丢失时重置 GL 资源（纹理 ID 失效，下次渲染时重新加载）
+    void resetGLResources() {
+        titleTextureID = 0;
+        editionTextureID = 0;
+        editionTexW = 0;
+        editionTexH = 0;
+        panoramaTextureID = 0;
+    }
+
     // 视频设置
     void setVideoSettingsOpen(bool open) { videoSettingsOpen = open; }
     bool isVideoSettingsOpen() const { return videoSettingsOpen; }
