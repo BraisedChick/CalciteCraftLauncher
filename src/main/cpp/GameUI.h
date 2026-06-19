@@ -69,6 +69,8 @@ public:
         editionTexH = 0;
         panoramaTextureID = 0;
         defaultServerIconTexID = 0;
+        for (int i = 0; i < 5; i++) { pingTex[i] = 0; pingingTex[i] = 0; }
+        unreachableTexID = 0;
     }
 
     // 视频设置
@@ -212,6 +214,10 @@ private:
     GLuint editionTextureID = 0;  // 主菜单副标题纹理（edition.png）
     float editionTexW = 0, editionTexH = 0;  // edition.png 原始尺寸
     GLuint defaultServerIconTexID = 0;  // 默认服务器图标纹理
+    // 延迟信号图标（单独纹理，高版本资源包格式）
+    GLuint pingTex[5] = {};        // ping_1~5 (已连接: 1=最好, 5=最差)
+    GLuint pingingTex[5] = {};     // pinging_1~5 (动画帧)
+    GLuint unreachableTexID = 0;   // unreachable (无连接)
 
     struct TouchEvent {
         float x, y;

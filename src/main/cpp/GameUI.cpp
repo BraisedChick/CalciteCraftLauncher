@@ -436,6 +436,29 @@ void GameUI::renderMultiplayer() {
             }
         }
 
+        // 懒加载延迟信号图标（单独纹理，高版本资源包格式）
+        if (pingTex[0] == 0) {
+            auto loadPingTex = [](GLuint& texID, const char* path) {
+                TextureData tex = TextureLoader::loadPNG(path);
+                if (tex.data && tex.width > 0 && tex.height > 0) {
+                    glGenTextures(1, &texID);
+                    glBindTexture(GL_TEXTURE_2D, texID);
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex.width, tex.height,
+                                 0, GL_RGBA, GL_UNSIGNED_BYTE, tex.data);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                }
+            };
+            for (int i = 0; i < 5; i++) {
+                char path[64];
+                snprintf(path, sizeof(path), "gui/sprites/server_list/ping_%d.png", i + 1);
+                loadPingTex(pingTex[i], path);
+                snprintf(path, sizeof(path), "gui/sprites/server_list/pinging_%d.png", i + 1);
+                loadPingTex(pingingTex[i], path);
+            }
+            loadPingTex(unreachableTexID, "gui/sprites/server_list/unreachable.png");
+        }
+
         if (ImGui::BeginTable("servers", 1,
             ImGuiTableFlags_NoBordersInBody | ImGuiTableFlags_RowBg))
         {
@@ -544,11 +567,43 @@ void GameUI::renderMultiplayer() {
                 ImGui::SetCursorPos(ImVec2(textLeft, startPos.y - 2));
                 ImGui::Text("%s", line1.c_str());
 
-                // 第一行右侧：人数/延迟
+                // 第一行右侧：人数/延迟（为 ping 图标留出空间）
+                float pingIconWidth = (pingTex[0] != 0 || unreachableTexID != 0) ? 24.0f : 0.0f;
                 if (!rightInfo.empty()) {
                     ImVec2 infoSize = ImGui::CalcTextSize(rightInfo.c_str());
-                    ImGui::SetCursorPos(ImVec2(rightEdge - infoSize.x - 8, startPos.y + 3));
+                    ImGui::SetCursorPos(ImVec2(rightEdge - infoSize.x - pingIconWidth - 4, startPos.y + 3));
                     ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", rightInfo.c_str());
+                }
+
+                // 延迟信号图标（单独纹理，高版本资源包）
+                {
+                    GLuint displayPingTex = 0;
+                    if (servers[i].pinging) {
+                        // 动画: pinging_1~5 循环
+                        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count();
+                        int frame = (int)((ms / 100 + (int)i * 2) % 8);
+                        if (frame > 4) frame = 8 - frame;
+                        displayPingTex = pingingTex[frame];
+                    } else if (servers[i].pinged && servers[i].latencyMs >= 0) {
+                        // 根据延迟选择 ping_1~5 (5=最好满格, 1=最差一格)
+                        if (servers[i].latencyMs < 150) displayPingTex = pingTex[4];      // ping_5 满格
+                        else if (servers[i].latencyMs < 300) displayPingTex = pingTex[3];  // ping_4
+                        else if (servers[i].latencyMs < 600) displayPingTex = pingTex[2];  // ping_3
+                        else if (servers[i].latencyMs < 1000) displayPingTex = pingTex[1]; // ping_2
+                        else displayPingTex = pingTex[0];                                   // ping_1 最差
+                    } else {
+                        // 无连接 / ping 失败
+                        displayPingTex = unreachableTexID;
+                    }
+
+                    if (displayPingTex != 0) {
+                        float iconDisplaySize = 20.0f;
+                        float iconX = rightEdge - iconDisplaySize - 4;
+                        ImGui::SetCursorPos(ImVec2(iconX, startPos.y + 1));
+                        ImGui::Image((ImTextureID)(intptr_t)displayPingTex,
+                                     ImVec2(iconDisplaySize, iconDisplaySize * 0.8f));
+                    }
                 }
 
                 // MOTD 第一行（支持 Minecraft § 颜色代码）
