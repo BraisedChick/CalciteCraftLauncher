@@ -5,7 +5,7 @@
 
 struct PingResult {
     bool success = false;
-    std::string motd;          // 服务器 MOTD 文本
+    std::string motd;          // 服务器 MOTD 文本（可能包含 \n 换行）
     std::string versionName;   // 服务器版本名
     int protocolVersion = 0;
     int onlinePlayers = 0;

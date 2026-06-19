@@ -7,6 +7,8 @@
 #include <chrono>
 #include <cstring>
 #include <sstream>
+#include "3rdparty/json.hpp"
+using njson = nlohmann::json;
 
 // ProtocolCraft 数据包
 #include "protocolCraft/Packets/Handshake/Serverbound/ServerboundClientIntentionPacket.hpp"
@@ -129,72 +131,115 @@ std::vector<uint8_t> ServerList::base64Decode(const std::string& encoded) {
     return result;
 }
 
-// ===== 简易 JSON 解析 =====
+// ===== JSON 解析 (nlohmann/json) =====
 
-// 提取 JSON 字符串字段值（从 "key": "value" 格式）
-static std::string extractJsonString(const std::string& json, const std::string& key) {
-    std::string searchKey = "\"" + key + "\"";
-    size_t pos = json.find(searchKey);
-    if (pos == std::string::npos) return "";
-    pos = json.find(':', pos + searchKey.size());
-    if (pos == std::string::npos) return "";
-    pos++;
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
-    if (pos >= json.size() || json[pos] != '"') return "";
-    pos++; // skip opening quote
-    std::string result;
-    while (pos < json.size() && json[pos] != '"') {
-        if (json[pos] == '\\' && pos + 1 < json.size()) {
-            pos++;
-            if (json[pos] == 'n') result += '\n';
-            else if (json[pos] == '"') result += '"';
-            else result += json[pos];
-        } else {
-            result += json[pos];
+// Minecraft 颜色名称 → § 代码
+static char colorNameToCode(const std::string& name) {
+    if (name == "black") return '0';
+    if (name == "dark_blue") return '1';
+    if (name == "dark_green") return '2';
+    if (name == "dark_aqua") return '3';
+    if (name == "dark_red") return '4';
+    if (name == "dark_purple") return '5';
+    if (name == "gold") return '6';
+    if (name == "gray") return '7';
+    if (name == "dark_gray") return '8';
+    if (name == "blue") return '9';
+    if (name == "green") return 'a';
+    if (name == "aqua") return 'b';
+    if (name == "red") return 'c';
+    if (name == "light_purple") return 'd';
+    if (name == "yellow") return 'e';
+    if (name == "white") return 'f';
+    return 0;
+}
+
+// 将 hex 颜色 (#RRGGBB) 转换为最接近的 Minecraft § 颜色代码
+static char hexToNearestMcColor(const std::string& hex) {
+    if (hex.size() < 7 || hex[0] != '#') return 0;
+    try {
+        int r = std::stoi(hex.substr(1, 2), nullptr, 16);
+        int g = std::stoi(hex.substr(3, 2), nullptr, 16);
+        int b = std::stoi(hex.substr(5, 2), nullptr, 16);
+
+        static const struct { int r, g, b; char code; } palette[] = {
+            {0,0,0, '0'}, {0,0,170, '1'}, {0,170,0, '2'}, {0,170,170, '3'},
+            {170,0,0, '4'}, {170,0,170, '5'}, {255,170,0, '6'}, {170,170,170, '7'},
+            {85,85,85, '8'}, {85,85,255, '9'}, {85,255,85, 'a'}, {85,255,255, 'b'},
+            {255,85,85, 'c'}, {255,85,255, 'd'}, {255,255,85, 'e'}, {255,255,255, 'f'},
+        };
+        char bestCode = 'f';
+        int bestDist = INT32_MAX;
+        for (const auto& c : palette) {
+            int dr = r - c.r, dg = g - c.g, db = b - c.b;
+            int dist = dr*dr + dg*dg + db*db;
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestCode = c.code;
+            }
         }
-        pos++;
+        return bestCode;
+    } catch (...) {
+        return 0;
     }
+}
+
+// 将颜色值（名称或 #hex）转换为 § 代码
+static std::string colorToSection(const std::string& color) {
+    if (color.empty()) return "";
+    char code = 0;
+    if (color[0] == '#') {
+        code = hexToNearestMcColor(color);
+    } else {
+        code = colorNameToCode(color);
+    }
+    if (code) return std::string(1, '\xa7') + code;
+    return "";
+}
+
+// 递归提取 Minecraft Component JSON 为带 § 颜色代码的纯文本
+static std::string extractComponentText(const njson& component) {
+    std::string result;
+
+    if (component.is_string()) {
+        return component.get<std::string>();
+    }
+
+    if (component.is_object()) {
+        // 颜色前缀
+        if (component.contains("color") && component["color"].is_string()) {
+            result += colorToSection(component["color"].get<std::string>());
+        }
+
+        // 文本内容
+        if (component.contains("text") && component["text"].is_string()) {
+            result += component["text"].get<std::string>();
+        }
+
+        // 递归处理 extra 或 with 数组
+        for (const char* key : {"extra", "with"}) {
+            if (component.contains(key) && component[key].is_array()) {
+                for (const auto& child : component[key]) {
+                    result += extractComponentText(child);
+                }
+                break; // 只处理第一个匹配的数组
+            }
+        }
+    }
+
+    if (component.is_array()) {
+        for (const auto& child : component) {
+            result += extractComponentText(child);
+        }
+    }
+
     return result;
 }
 
-// 提取 JSON 整数字段值
-static int extractJsonInt(const std::string& json, const std::string& key) {
-    std::string searchKey = "\"" + key + "\"";
-    size_t pos = json.find(searchKey);
-    if (pos == std::string::npos) return -1;
-    pos = json.find(':', pos + searchKey.size());
-    if (pos == std::string::npos) return -1;
-    pos++;
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
-    if (pos >= json.size()) return -1;
-    try {
-        return std::stoi(json.substr(pos));
-    } catch (...) {
-        return -1;
-    }
-}
-
-// 提取 MOTD（description 可能是字符串或对象）
-static std::string extractMotd(const std::string& json) {
-    std::string searchKey = "\"description\"";
-    size_t pos = json.find(searchKey);
-    if (pos == std::string::npos) return "";
-    pos = json.find(':', pos + searchKey.size());
-    if (pos == std::string::npos) return "";
-    pos++;
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
-    if (pos >= json.size()) return "";
-
-    // 如果是字符串
-    if (json[pos] == '"') {
-        return extractJsonString(json, "description");
-    }
-
-    // 如果是对象，查找 "text" 字段
-    size_t objEnd = json.find('}', pos);
-    if (objEnd == std::string::npos) return "";
-    std::string obj = json.substr(pos, objEnd - pos + 1);
-    return extractJsonString(obj, "text");
+// 提取 MOTD（description 字段）
+static std::string extractMotd(const njson& root) {
+    if (!root.contains("description")) return "";
+    return extractComponentText(root["description"]);
 }
 
 // ===== 主 Ping 函数 =====
@@ -295,23 +340,45 @@ PingResult ServerList::ping(const std::string& host, int port, int protocolVersi
         }
 
         std::string jsonStr = resp.GetStatus();
-        SP_LOGI("Status JSON (%zu bytes): %.200s", jsonStr.size(), jsonStr.c_str());
+        SP_LOGI("Status JSON (%zu bytes): %.500s", jsonStr.size(), jsonStr.c_str());
 
-        // 解析 JSON
-        result.motd = extractMotd(jsonStr);
-        result.versionName = extractJsonString(jsonStr, "name");
-        result.protocolVersion = extractJsonInt(jsonStr, "protocol");
-        result.onlinePlayers = extractJsonInt(jsonStr, "online");
-        result.maxPlayers = extractJsonInt(jsonStr, "max");
+        // 解析 JSON (nlohmann/json)
+        try {
+            njson root = njson::parse(jsonStr);
 
-        // 服务器图标
-        std::string favicon = extractJsonString(jsonStr, "favicon");
-        if (!favicon.empty()) {
-            const std::string prefix = "data:image/png;base64,";
-            if (favicon.size() > prefix.size() && favicon.substr(0, prefix.size()) == prefix) {
-                result.faviconPng = base64Decode(favicon.substr(prefix.size()));
-                SP_LOGI("Favicon decoded: %zu bytes PNG", result.faviconPng.size());
+            // MOTD
+            result.motd = extractMotd(root);
+            SP_LOGI("Parsed MOTD: [%s]", result.motd.c_str());
+
+            // 版本
+            if (root.contains("version") && root["version"].is_object()) {
+                if (root["version"].contains("name") && root["version"]["name"].is_string())
+                    result.versionName = root["version"]["name"].get<std::string>();
+                if (root["version"].contains("protocol") && root["version"]["protocol"].is_number())
+                    result.protocolVersion = root["version"]["protocol"].get<int>();
             }
+
+            // 玩家
+            if (root.contains("players") && root["players"].is_object()) {
+                if (root["players"].contains("online") && root["players"]["online"].is_number())
+                    result.onlinePlayers = root["players"]["online"].get<int>();
+                if (root["players"].contains("max") && root["players"]["max"].is_number())
+                    result.maxPlayers = root["players"]["max"].get<int>();
+            }
+
+            // 服务器图标
+            if (root.contains("favicon") && root["favicon"].is_string()) {
+                std::string favicon = root["favicon"].get<std::string>();
+                const std::string prefix = "data:image/png;base64,";
+                if (favicon.size() > prefix.size() && favicon.substr(0, prefix.size()) == prefix) {
+                    result.faviconPng = base64Decode(favicon.substr(prefix.size()));
+                    SP_LOGI("Favicon decoded: %zu bytes PNG", result.faviconPng.size());
+                }
+            }
+        } catch (const std::exception& e) {
+            SP_LOGE("JSON parse error: %s", e.what());
+            close(sock);
+            return result;
         }
 
         result.success = true;

@@ -44,6 +44,96 @@
 // 视频设置文件路径
 #define OPTIONS_FILE_PATH "/data/data/com.calcite/options.txt"
 
+// ===== Minecraft § 颜色代码渲染 =====
+
+// Minecraft 颜色代码对应的 ARGB 颜色（0-9, a-f）
+static ImU32 getMcColor(char code) {
+    switch (code) {
+        case '0': return IM_COL32(0, 0, 0, 255);       // Black
+        case '1': return IM_COL32(0, 0, 170, 255);     // Dark Blue
+        case '2': return IM_COL32(0, 170, 0, 255);     // Dark Green
+        case '3': return IM_COL32(0, 170, 170, 255);   // Dark Aqua
+        case '4': return IM_COL32(170, 0, 0, 255);     // Dark Red
+        case '5': return IM_COL32(170, 0, 170, 255);   // Dark Purple
+        case '6': return IM_COL32(255, 170, 0, 255);   // Gold
+        case '7': return IM_COL32(170, 170, 170, 255); // Gray
+        case '8': return IM_COL32(85, 85, 85, 255);    // Dark Gray
+        case '9': return IM_COL32(85, 85, 255, 255);   // Blue
+        case 'a': return IM_COL32(85, 255, 85, 255);   // Green
+        case 'b': return IM_COL32(85, 255, 255, 255);  // Aqua
+        case 'c': return IM_COL32(255, 85, 85, 255);   // Red
+        case 'd': return IM_COL32(255, 85, 255, 255);  // Light Purple
+        case 'e': return IM_COL32(255, 255, 85, 255);  // Yellow
+        case 'f': return IM_COL32(255, 255, 255, 255); // White
+        default:  return IM_COL32(255, 255, 255, 255);
+    }
+}
+
+// 绘制带有 Minecraft § 颜色代码的文本
+// 支持 UTF-8 多字节字符（如中文）
+static float drawMcText(float x, float y, const std::string& text, ImU32 defaultColor) {
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    ImU32 currentColor = defaultColor;
+    bool bold = false;
+    float curX = x;
+    size_t segStart = 0;
+
+    for (size_t i = 0; i < text.size();) {
+        // 检查 § 代码 (0xA7)
+        if ((uint8_t)text[i] == 0xA7 && i + 1 < text.size()) {
+            // 先渲染之前的文本段
+            if (i > segStart) {
+                const char* begin = text.c_str() + segStart;
+                const char* endPtr = text.c_str() + i;
+                drawList->AddText(ImVec2(curX + 1, y + 1), IM_COL32(0, 0, 0, 128), begin, endPtr);
+                drawList->AddText(ImVec2(curX, y), currentColor, begin, endPtr);
+                ImVec2 sz = ImGui::CalcTextSize(begin, endPtr);
+                curX += sz.x;
+                if (bold) {
+                    drawList->AddText(ImVec2(curX - sz.x + 1, y), currentColor, begin, endPtr);
+                }
+            }
+            // 处理 § 代码
+            char code = text[i + 1];
+            if ((code >= '0' && code <= '9') || (code >= 'a' && code <= 'f') ||
+                (code >= 'A' && code <= 'F')) {
+                currentColor = getMcColor(code >= 'A' ? (code + 32) : code);
+                bold = false;
+            } else if (code == 'l' || code == 'L') {
+                bold = true;
+            } else if (code == 'o' || code == 'O') {
+                // 斜体 - 暂不支持
+            } else if (code == 'r' || code == 'R') {
+                currentColor = defaultColor;
+                bold = false;
+            }
+            i += 2;
+            segStart = i;
+        } else {
+            // 跳过完整的 UTF-8 字符
+            uint8_t c = (uint8_t)text[i];
+            if (c < 0x80) i += 1;
+            else if ((c & 0xE0) == 0xC0) i += 2;
+            else if ((c & 0xF0) == 0xE0) i += 3;
+            else if ((c & 0xF8) == 0xF0) i += 4;
+            else i += 1;
+        }
+    }
+    // 渲染最后一段文本
+    if (segStart < text.size()) {
+        const char* begin = text.c_str() + segStart;
+        const char* endPtr = text.c_str() + text.size();
+        drawList->AddText(ImVec2(curX + 1, y + 1), IM_COL32(0, 0, 0, 128), begin, endPtr);
+        drawList->AddText(ImVec2(curX, y), currentColor, begin, endPtr);
+        ImVec2 sz = ImGui::CalcTextSize(begin, endPtr);
+        curX += sz.x;
+        if (bold) {
+            drawList->AddText(ImVec2(curX - sz.x + 1, y), currentColor, begin, endPtr);
+        }
+    }
+    return curX;
+}
+
 // 游戏内 UI 布局常量
 #define JOYSTICK_CENTER_X  220.0f
 #define JOYSTICK_CENTER_Y_OFFSET 210.0f  // 距屏幕底部
@@ -379,14 +469,25 @@ void GameUI::renderMultiplayer() {
                 // 第一行：服务器名称（左） + 人数/延迟（右）
                 std::string line1 = servers[i].name;
                 std::string rightInfo;  // 右侧显示的人数/延迟
-                // 第二行：MOTD 或状态信息
-                std::string line2;
-                bool line2Red = false;
+                // MOTD 行（最多 2 行）
+                std::string motdLine1, motdLine2;
+                bool motdRed = false;
                 if (servers[i].pinging) {
-                    line2 = "(正在获取信息...)";
+                    motdLine1 = "(正在获取信息...)";
                 } else if (servers[i].pinged) {
+                    // 将 MOTD 按 \n 拆分为最多 2 行
                     if (!servers[i].motd.empty()) {
-                        line2 = servers[i].motd;
+                        size_t nlPos = servers[i].motd.find('\n');
+                        if (nlPos != std::string::npos) {
+                            motdLine1 = servers[i].motd.substr(0, nlPos);
+                            motdLine2 = servers[i].motd.substr(nlPos + 1);
+                            // 去除第二行开头可能的多余空白
+                            while (!motdLine2.empty() && (motdLine2[0] == ' ' || motdLine2[0] == '\t')) {
+                                motdLine2.erase(0, 1);
+                            }
+                        } else {
+                            motdLine1 = servers[i].motd;
+                        }
                     }
                     if (servers[i].latencyMs >= 0) {
                         char info[64];
@@ -401,8 +502,8 @@ void GameUI::renderMultiplayer() {
                         rightInfo = info;
                     }
                 } else if (servers[i].pingFailed) {
-                    line2 = "\xe6\x97\xa0\xe6\xb3\x95\xe8\xbf\x9e\xe6\x8e\xa5\xe5\x88\xb0\xe6\x9c\x8d\xe5\x8a\xa1\xe5\x99\xa8";
-                    line2Red = true;
+                    motdLine1 = "\xe6\x97\xa0\xe6\xb3\x95\xe8\xbf\x9e\xe6\x8e\xa5\xe5\x88\xb0\xe6\x9c\x8d\xe5\x8a\xa1\xe5\x99\xa8";
+                    motdRed = true;
                 }
 
                 // 图标区域宽度
@@ -440,22 +541,31 @@ void GameUI::renderMultiplayer() {
                 float rightEdge = startPos.x + availWidth;
 
                 // 第一行：服务器名称（左）
-                ImGui::SetCursorPos(ImVec2(textLeft, startPos.y + 8));
+                ImGui::SetCursorPos(ImVec2(textLeft, startPos.y - 2));
                 ImGui::Text("%s", line1.c_str());
 
                 // 第一行右侧：人数/延迟
                 if (!rightInfo.empty()) {
                     ImVec2 infoSize = ImGui::CalcTextSize(rightInfo.c_str());
-                    ImGui::SetCursorPos(ImVec2(rightEdge - infoSize.x - 8, startPos.y + 8));
+                    ImGui::SetCursorPos(ImVec2(rightEdge - infoSize.x - 8, startPos.y + 3));
                     ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", rightInfo.c_str());
                 }
 
-                // 第二行：MOTD 或状态
-                ImGui::SetCursorPos(ImVec2(textLeft, startPos.y + 34));
-                if (line2Red) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", line2.c_str());
+                // MOTD 第一行（支持 Minecraft § 颜色代码）
+                if (motdRed) {
+                    ImGui::SetCursorPos(ImVec2(textLeft, startPos.y + 28));
+                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", motdLine1.c_str());
                 } else {
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", line2.c_str());
+                    ImGui::SetCursorPos(ImVec2(textLeft, startPos.y + 28));
+                    ImVec2 screenPos = ImGui::GetCursorScreenPos();
+                    drawMcText(screenPos.x, screenPos.y, motdLine1, IM_COL32(128, 128, 128, 255));
+                }
+
+                // MOTD 第二行
+                if (!motdLine2.empty()) {
+                    ImGui::SetCursorPos(ImVec2(textLeft, startPos.y + 46));
+                    ImVec2 screenPos = ImGui::GetCursorScreenPos();
+                    drawMcText(screenPos.x, screenPos.y, motdLine2, IM_COL32(128, 128, 128, 255));
                 }
 
                 ImGui::PopID();
