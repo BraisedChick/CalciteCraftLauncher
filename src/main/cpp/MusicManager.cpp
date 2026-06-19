@@ -11,9 +11,9 @@
 #include "3rdparty/miniaudio.h"
 
 // minivorbis OGG 解码 API（实现在 minivorbis.c 中）
-#include "3rdparty/minivorbis.h"
+#include "3rdparty/minivorbis/minivorbis.h"
 
-#include "miniz.h"
+#include "3rdparty/miniz/miniz.h"
 
 #define LOG_TAG "MusicManager"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)

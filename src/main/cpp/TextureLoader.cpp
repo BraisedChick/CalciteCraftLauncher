@@ -12,7 +12,7 @@
 #include "stb_image.h"
 
 // 包含 miniz（ZIP 读取支持，实现代码在 miniz.c 中）
-#include "miniz.h"
+#include "3rdparty/miniz/miniz.h"
 
 AAssetManager* TextureLoader::g_assetManager = nullptr;
 std::string TextureLoader::g_zipPath = "";
