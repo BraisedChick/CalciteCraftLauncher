@@ -514,9 +514,8 @@ void GameUI::renderMultiplayer() {
                     }
                     if (servers[i].latencyMs >= 0) {
                         char info[64];
-                        snprintf(info, sizeof(info), "%d/%d  %dms",
-                                 servers[i].onlinePlayers, servers[i].maxPlayers,
-                                 servers[i].latencyMs);
+                        snprintf(info, sizeof(info), "%d/%d",
+                                 servers[i].onlinePlayers, servers[i].maxPlayers);
                         rightInfo = info;
                     } else {
                         char info[64];
@@ -568,7 +567,7 @@ void GameUI::renderMultiplayer() {
                 ImGui::Text("%s", line1.c_str());
 
                 // 第一行右侧：人数/延迟（为 ping 图标留出空间）
-                float pingIconWidth = (pingTex[0] != 0 || unreachableTexID != 0) ? 24.0f : 0.0f;
+                float pingIconWidth = (pingTex[0] != 0 || unreachableTexID != 0) ? 36.0f : 0.0f;
                 if (!rightInfo.empty()) {
                     ImVec2 infoSize = ImGui::CalcTextSize(rightInfo.c_str());
                     ImGui::SetCursorPos(ImVec2(rightEdge - infoSize.x - pingIconWidth - 4, startPos.y + 3));
@@ -598,11 +597,21 @@ void GameUI::renderMultiplayer() {
                     }
 
                     if (displayPingTex != 0) {
-                        float iconDisplaySize = 20.0f;
+                        float iconDisplaySize = 28.0f;
                         float iconX = rightEdge - iconDisplaySize - 4;
-                        ImGui::SetCursorPos(ImVec2(iconX, startPos.y + 1));
+                        ImGui::SetCursorPos(ImVec2(iconX, startPos.y + 8));
                         ImGui::Image((ImTextureID)(intptr_t)displayPingTex,
                                      ImVec2(iconDisplaySize, iconDisplaySize * 0.8f));
+                        // 悬停显示延迟 tooltip
+                        ImGui::SetCursorPos(ImVec2(iconX, startPos.y + 8));
+                        ImGui::InvisibleButton("##ping", ImVec2(iconDisplaySize, iconDisplaySize * 0.8f));
+                        if (ImGui::IsItemHovered() && servers[i].pinged && servers[i].latencyMs >= 0) {
+                            char tooltip[32];
+                            snprintf(tooltip, sizeof(tooltip), "%dms", servers[i].latencyMs);
+                            ImVec2 mousePos = ImGui::GetMousePos();
+                            ImGui::SetNextWindowPos(ImVec2(mousePos.x, mousePos.y - 15));
+                            ImGui::SetTooltip("%s", tooltip);
+                        }
                     }
                 }
 
