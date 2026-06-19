@@ -376,9 +376,10 @@ void GameUI::renderMultiplayer() {
                     servers[i].faviconPngData.shrink_to_fit();
                 }
 
-                // 第一行：服务器名称
+                // 第一行：服务器名称（左） + 人数/延迟（右）
                 std::string line1 = servers[i].name;
-                // 第二行：MOTD + 人数 + 延迟
+                std::string rightInfo;  // 右侧显示的人数/延迟
+                // 第二行：MOTD 或状态信息
                 std::string line2;
                 bool line2Red = false;
                 if (servers[i].pinging) {
@@ -387,16 +388,18 @@ void GameUI::renderMultiplayer() {
                     if (!servers[i].motd.empty()) {
                         line2 = servers[i].motd;
                     }
-                    char info[128];
                     if (servers[i].latencyMs >= 0) {
-                        snprintf(info, sizeof(info), " [%d/%d] %dms",
+                        char info[64];
+                        snprintf(info, sizeof(info), "%d/%d  %dms",
                                  servers[i].onlinePlayers, servers[i].maxPlayers,
                                  servers[i].latencyMs);
+                        rightInfo = info;
                     } else {
-                        snprintf(info, sizeof(info), " [%d/%d]",
+                        char info[64];
+                        snprintf(info, sizeof(info), "%d/%d",
                                  servers[i].onlinePlayers, servers[i].maxPlayers);
+                        rightInfo = info;
                     }
-                    line2 += info;
                 } else if (servers[i].pingFailed) {
                     line2 = "\xe6\x97\xa0\xe6\xb3\x95\xe8\xbf\x9e\xe6\x8e\xa5\xe5\x88\xb0\xe6\x9c\x8d\xe5\x8a\xa1\xe5\x99\xa8";
                     line2Red = true;
@@ -409,8 +412,9 @@ void GameUI::renderMultiplayer() {
                 // 确定要显示的图标纹理
                 GLuint displayIcon = (servers[i].iconTextureID != 0) ? servers[i].iconTextureID : defaultServerIconTexID;
 
-                // 记录 Selectable 起始位置
+                // 记录 Selectable 起始位置和可用宽度
                 ImVec2 startPos = ImGui::GetCursorPos();
+                float availWidth = ImGui::GetContentRegionAvail().x;
 
                 // 绘制 Selectable（占满整行，处理点击和高亮）
                 if (ImGui::Selectable("##sel", isSelected,
@@ -432,9 +436,22 @@ void GameUI::renderMultiplayer() {
                 }
 
                 // 覆盖文本（图标右侧）
-                ImGui::SetCursorPos(ImVec2(startPos.x + textOffsetX, startPos.y + 8));
+                float textLeft = startPos.x + textOffsetX;
+                float rightEdge = startPos.x + availWidth;
+
+                // 第一行：服务器名称（左）
+                ImGui::SetCursorPos(ImVec2(textLeft, startPos.y + 8));
                 ImGui::Text("%s", line1.c_str());
-                ImGui::SetCursorPos(ImVec2(startPos.x + textOffsetX, startPos.y + 34));
+
+                // 第一行右侧：人数/延迟
+                if (!rightInfo.empty()) {
+                    ImVec2 infoSize = ImGui::CalcTextSize(rightInfo.c_str());
+                    ImGui::SetCursorPos(ImVec2(rightEdge - infoSize.x - 8, startPos.y + 8));
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", rightInfo.c_str());
+                }
+
+                // 第二行：MOTD 或状态
+                ImGui::SetCursorPos(ImVec2(textLeft, startPos.y + 34));
                 if (line2Red) {
                     ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", line2.c_str());
                 } else {
