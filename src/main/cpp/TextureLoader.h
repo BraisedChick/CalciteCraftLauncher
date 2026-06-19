@@ -67,6 +67,8 @@ public:
     // 批量读取 ZIP 中指定前缀的所有文本文件（一次遍历，减少 ZIP 查找开销）
     static std::vector<std::pair<std::string, std::string>> readAllTextFromZip(const std::string& prefix);
     static void closeZip();
+    // 获取 ZIP 句柄供其他模块使用（如 MusicManager）
+    static void* getZipHandle() { return g_zip; }
 
 private:
     static AAssetManager* g_assetManager;

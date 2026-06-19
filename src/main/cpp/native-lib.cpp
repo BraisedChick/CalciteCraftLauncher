@@ -18,6 +18,7 @@
 #include "Collision.h"
 #include "Light.h"
 #include "GameUI.h"
+#include "MusicManager.h"
 #include "imgui.h"
 
 #define JNI_LOG_TAG "JNI"
@@ -221,6 +222,25 @@ static void renderLoop() {
             }
         } else if (g_useVulkan && g_vulkanRenderer) {
             g_vulkanRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
+        }
+
+        // 音乐管理器每帧驱动
+        {
+            auto& music = MusicManager::getInstance();
+            if (music.isInitialized()) {
+                // 根据 UI 状态同步音乐场景
+                UIState uiState = GameUI::getInstance().getState();
+                MusicScene targetScene;
+                if (uiState == UIState::IN_GAME) {
+                    targetScene = MusicScene::GAME; // TODO: 创造模式判断
+                } else {
+                    targetScene = MusicScene::MENU;
+                }
+                if (music.getScene() != targetScene) {
+                    music.setScene(targetScene);
+                }
+                music.tick();
+            }
         }
     }
 }
@@ -486,6 +506,9 @@ Java_com_calcite_MainActivity_initRenderer(
     g_initialized = true;
     ANativeWindow_release(window);
 
+    // 初始化音乐管理器
+    MusicManager::getInstance().init();
+
     JNI_LOGI("Starting render thread");
     g_rendering = true;
     g_renderThread = std::thread(renderLoop);
@@ -554,6 +577,10 @@ Java_com_calcite_MainActivity_cleanupRenderer(
     }
 
     g_initialized = false;
+
+    // 关闭音乐管理器
+    MusicManager::getInstance().shutdown();
+
     JNI_LOGI("Cleanup completed");
 }
 

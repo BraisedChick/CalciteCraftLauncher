@@ -72,10 +72,12 @@ set(APP_SOURCES
     BiomeColorManager.cpp
     GameUI.cpp
     ServerList.cpp
+    MusicManager.cpp
     ResourcepackManager.cpp
     PlayerInventory.cpp
     Raycast.cpp
     3rdparty/miniz.c
+    3rdparty/minivorbis.c
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_draw.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_widgets.cpp
@@ -111,6 +113,7 @@ foreach(PVER ${SUPPORTED_VERSIONS})
         ${egl-lib}
         ${gles-lib}
         vulkan
+        OpenSLES
     )
 
     set_target_properties(mc_${PVER} PROPERTIES OUTPUT_NAME "mc_${PVER}")
