@@ -68,6 +68,7 @@ public:
         editionTexW = 0;
         editionTexH = 0;
         panoramaTextureID = 0;
+        defaultServerIconTexID = 0;
     }
 
     // 视频设置
@@ -130,8 +131,10 @@ private:
         int maxPlayers = -1;        // 最大人数
         int latencyMs = -1;         // 延迟（毫秒）
         GLuint iconTextureID = 0;   // 服务器图标 GL 纹理
+        std::vector<uint8_t> faviconPngData;  // 原始 PNG 数据（ping 线程写入，渲染线程读取后上传 GL）
         bool pinged = false;        // 是否已 ping 过
         bool pinging = false;       // 是否正在 ping
+        bool pingFailed = false;    // ping 是否失败
     };
 
     void renderMainMenu();
@@ -208,6 +211,7 @@ private:
     GLuint titleTextureID = 0;     // 主菜单标题纹理（minecraft.png）
     GLuint editionTextureID = 0;  // 主菜单副标题纹理（edition.png）
     float editionTexW = 0, editionTexH = 0;  // edition.png 原始尺寸
+    GLuint defaultServerIconTexID = 0;  // 默认服务器图标纹理
 
     struct TouchEvent {
         float x, y;

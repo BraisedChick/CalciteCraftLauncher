@@ -23,6 +23,7 @@
 #include "TextureLoader.h"
 #include "ServerList.h"
 #include "MinecraftVersion.h"
+#include "stb_image.h"
 
 #define LOG_TAG "GameUI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -332,6 +333,19 @@ void GameUI::renderMultiplayer() {
         ImGui::SetCursorPos(ImVec2(w * 0.5f - 120.0f, listHeight * 0.4f));
         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "暂无保存的服务器");
     } else {
+        // 懒加载默认服务器图标
+        if (defaultServerIconTexID == 0) {
+            TextureData tex = TextureLoader::loadPNG("misc/unknown_server.png");
+            if (tex.data && tex.width > 0 && tex.height > 0) {
+                glGenTextures(1, &defaultServerIconTexID);
+                glBindTexture(GL_TEXTURE_2D, defaultServerIconTexID);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex.width, tex.height,
+                             0, GL_RGBA, GL_UNSIGNED_BYTE, tex.data);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            }
+        }
+
         if (ImGui::BeginTable("servers", 1,
             ImGuiTableFlags_NoBordersInBody | ImGuiTableFlags_RowBg))
         {
@@ -344,10 +358,29 @@ void GameUI::renderMultiplayer() {
 
                 bool isSelected = (selectedServer == (int)i);
 
+                // 懒上传服务器图标纹理（在 GL 线程中执行）
+                if (!servers[i].faviconPngData.empty() && servers[i].iconTextureID == 0) {
+                    int iw, ih, ich;
+                    uint8_t* pixels = stbi_load_from_memory(
+                        servers[i].faviconPngData.data(), (int)servers[i].faviconPngData.size(),
+                        &iw, &ih, &ich, 4);
+                    if (pixels && iw > 0 && ih > 0) {
+                        glGenTextures(1, &servers[i].iconTextureID);
+                        glBindTexture(GL_TEXTURE_2D, servers[i].iconTextureID);
+                        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, iw, ih, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                        stbi_image_free(pixels);
+                    }
+                    servers[i].faviconPngData.clear();  // 释放内存
+                    servers[i].faviconPngData.shrink_to_fit();
+                }
+
                 // 第一行：服务器名称
                 std::string line1 = servers[i].name;
                 // 第二行：MOTD + 人数 + 延迟
                 std::string line2;
+                bool line2Red = false;
                 if (servers[i].pinging) {
                     line2 = "(正在获取信息...)";
                 } else if (servers[i].pinged) {
@@ -364,14 +397,22 @@ void GameUI::renderMultiplayer() {
                                  servers[i].onlinePlayers, servers[i].maxPlayers);
                     }
                     line2 += info;
-                } else {
-                    line2 = servers[i].ip + ":" + std::to_string(servers[i].port);
+                } else if (servers[i].pingFailed) {
+                    line2 = "\xe6\x97\xa0\xe6\xb3\x95\xe8\xbf\x9e\xe6\x8e\xa5\xe5\x88\xb0\xe6\x9c\x8d\xe5\x8a\xa1\xe5\x99\xa8";
+                    line2Red = true;
                 }
+
+                // 图标区域宽度
+                float iconSize = 64.0f;
+                float textOffsetX = iconSize + 8.0f;
+
+                // 确定要显示的图标纹理
+                GLuint displayIcon = (servers[i].iconTextureID != 0) ? servers[i].iconTextureID : defaultServerIconTexID;
 
                 // 记录 Selectable 起始位置
                 ImVec2 startPos = ImGui::GetCursorPos();
 
-                // 绘制 Selectable（占满整行，处理点击和离亮）
+                // 绘制 Selectable（占满整行，处理点击和高亮）
                 if (ImGui::Selectable("##sel", isSelected,
                     ImGuiSelectableFlags_AllowDoubleClick,
                     ImVec2(0, 74.0f)))
@@ -383,11 +424,22 @@ void GameUI::renderMultiplayer() {
                     }
                 }
 
-                // 回到 Selectable 位置，覆盖文本
-                ImGui::SetCursorPos(ImVec2(startPos.x + 4, startPos.y + 4));
+                // 绘制服务器图标（自定义或默认）
+                if (displayIcon != 0) {
+                    ImGui::SetCursorPos(ImVec2(startPos.x + 2, startPos.y + 5));
+                    ImGui::Image((ImTextureID)(intptr_t)displayIcon,
+                                 ImVec2(iconSize, iconSize));
+                }
+
+                // 覆盖文本（图标右侧）
+                ImGui::SetCursorPos(ImVec2(startPos.x + textOffsetX, startPos.y + 8));
                 ImGui::Text("%s", line1.c_str());
-                ImGui::SetCursorPos(ImVec2(startPos.x + 4, startPos.y + 28));
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", line2.c_str());
+                ImGui::SetCursorPos(ImVec2(startPos.x + textOffsetX, startPos.y + 34));
+                if (line2Red) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", line2.c_str());
+                } else {
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", line2.c_str());
+                }
 
                 ImGui::PopID();
             }
@@ -555,6 +607,7 @@ void GameUI::pingServer(int index) {
     if (servers[index].pinging) return;
 
     servers[index].pinging = true;
+    servers[index].pingFailed = false;
     std::string ip = servers[index].ip;
     int port = servers[index].port;
     int protocolVersion = VersionManager::getInstance().getProtocolVersion();
@@ -571,12 +624,17 @@ void GameUI::pingServer(int index) {
                 servers[index].maxPlayers = result.maxPlayers;
                 servers[index].latencyMs = result.latencyMs;
                 servers[index].pinged = true;
+                // 保存图标 PNG 数据（渲染线程负责上传 GL）
+                if (!result.faviconPng.empty()) {
+                    servers[index].faviconPngData = std::move(result.faviconPng);
+                }
                 LOGI("Server %d pinged: %s (%d/%d) %dms",
                      index, result.motd.c_str(),
                      result.onlinePlayers, result.maxPlayers, result.latencyMs);
             } else {
                 servers[index].pinged = false;
                 servers[index].latencyMs = -1;
+                servers[index].pingFailed = true;
                 LOGI("Server %d ping failed", index);
             }
         }
