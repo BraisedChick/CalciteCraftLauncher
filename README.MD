@@ -21,3 +21,9 @@
 使用的第三方库
 - [Botcraft](https://github.com/adepierre/Botcraft)
 - [FoldCraftLauncher](https://github.com/FCL-Team/FoldCraftLauncher)
+- [GLM](https://github.com/g-truc/glm)
+- [Dear ImGui](https://github.com/ocornut/imgui)
+- [miniz](https://github.com/richgel999/miniz)
+- [stb_image](https://github.com/nothings/stb)
+- [json](https://github.com/nlohmann/json)
+- [miniaudio](https://github.com/mackron/miniaudio)
