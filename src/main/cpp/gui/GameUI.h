@@ -38,10 +38,12 @@ public:
     // 连接回调
     using ConnectCallback = std::function<void(const std::string& ip, int port)>;
     void setConnectCallback(ConnectCallback cb) { connectCallback = cb; }
+    ConnectCallback getConnectCallback() const { return connectCallback; }
 
     // 退出游戏回调（返回 Java 启动器）
     using ExitCallback = std::function<void()>;
     void setExitCallback(ExitCallback cb) { exitCallback = cb; }
+    ExitCallback getExitCallback() const { return exitCallback; }
 
     // 断开连接回调（返回服务器列表）
     using DisconnectCallback = std::function<void()>;
@@ -57,20 +59,14 @@ public:
     void setOptionsOpen(bool open) { optionsOpen = open; }
     bool isOptionsOpen() const { return optionsOpen; }
     float getOptionsFov() const { return optionsFov; }
+    void setOptionsFov(float fov) { optionsFov = fov; }
 
     // 全景背景纹理 ID（由 GLRenderer 每帧设置）
     void setPanoramaTexture(GLuint texID) { panoramaTextureID = texID; }
 
-    // EGL context 丢失时重置 GL 资源（纹理 ID 失效，下次渲染时重新加载）
+    // EGL context 丢失时重置 GL 资源
     void resetGLResources() {
-        titleTextureID = 0;
-        editionTextureID = 0;
-        editionTexW = 0;
-        editionTexH = 0;
         panoramaTextureID = 0;
-        defaultServerIconTexID = 0;
-        for (int i = 0; i < 5; i++) { pingTex[i] = 0; pingingTex[i] = 0; }
-        unreachableTexID = 0;
     }
 
     // 视频设置
@@ -80,6 +76,12 @@ public:
     bool isSmoothLightingEnabled() const { return smoothLightingEnabled; }
     bool isMipmapEnabled() const { return mipmapEnabled; }
     int getMaxFps() const { return maxFps; }
+
+    // 直接修改设置（供 PauseScreen 使用）
+    void setRenderDistanceDirect(int v) { renderDistance = v; }
+    void setSmoothLightingDirect(bool v) { smoothLightingEnabled = v; }
+    void setMipmapDirect(bool v) { mipmapEnabled = v; }
+    void setMaxFpsDirect(int v) { maxFps = v; }
 
     // FOV 更新回调
     using FovCallback = std::function<void(float)>;
@@ -97,7 +99,7 @@ public:
     MipmapCallback getMipmapCallback() const { return mipmapCallback; }
     MipmapCallback mipmapCallback;
 
-    // 最大帧率回调（0=垂直同步, 1-255=fps值, 256=无限制）
+    // 最大帧率回调
     using MaxFpsCallback = std::function<void(int)>;
     void setMaxFpsCallback(MaxFpsCallback cb) { maxFpsCallback = cb; }
     MaxFpsCallback maxFpsCallback;
@@ -113,53 +115,28 @@ public:
 
     // 背包界面
     bool isInventoryOpen() const { return inventoryOpen; }
+    void setInventoryOpen(bool open) { inventoryOpen = open; }
 
     // 是否有任意游戏内界面打开（阻挡移动输入）
     bool isInGameUIActive() const {
         return gameMenuOpen || optionsOpen || deathScreenActive || inventoryOpen;
     }
 
+    // 保存设置
+    void saveSettingsNow();
+
+    // 连接地址（供 ConnectingScreen 使用）
+    void setConnectingAddress(const std::string& addr) { connectingAddress = addr; }
+    std::string getConnectingAddress() const { return connectingAddress; }
+
 private:
     GameUI() = default;
     ~GameUI() = default;
 
-    struct ServerInfo {
-        std::string name;
-        std::string ip;
-        int port = 25565;
-        // Server List Ping 结果
-        std::string motd;           // 服务器 MOTD
-        int onlinePlayers = -1;     // 在线人数，-1=未知
-        int maxPlayers = -1;        // 最大人数
-        int latencyMs = -1;         // 延迟（毫秒）
-        GLuint iconTextureID = 0;   // 服务器图标 GL 纹理
-        std::vector<uint8_t> faviconPngData;  // 原始 PNG 数据（ping 线程写入，渲染线程读取后上传 GL）
-        bool pinged = false;        // 是否已 ping 过
-        bool pinging = false;       // 是否正在 ping
-        bool pingFailed = false;    // ping 是否失败
-    };
-
-    void renderMainMenu();
-    void renderMultiplayer();
-    void renderAddServer();
-    void renderConnecting();
-    void renderInGameUI();
-    void renderDeathScreen();
-    void renderInventory();
-    void renderInGameMenu();
-    void renderGameOptions();
-    void renderVideoSettings();
+    void updateOverlays();
     void processTouchEvents();
-
-    void loadServerList();
-    void saveServerList();
     void loadSettings();
     void saveSettings();
-    void connectToServer(const ServerInfo& server);
-
-    // Server List Ping
-    void pingAllServers();           // 异步 ping 所有服务器
-    void pingServer(int index);      // ping 单个服务器
 
     // 多点触控
     struct TouchPoint {
@@ -188,9 +165,7 @@ private:
     bool isInAttackButtonArea(float x, float y) const;
     bool isInPlaceButtonArea(float x, float y) const;
     bool isInF3ButtonArea(float x, float y) const;
-    // E 按钮区域（打开背包）
     bool isInEButtonArea(float x, float y) const;
-    // 快捷栏点击检测：返回槽位索引 (0-8)，不在快捷栏区域则返回 -1
     int hotbarSlotAt(float x, float y) const;
 
     UIState currentState = UIState::MAIN_MENU;
@@ -199,25 +174,8 @@ private:
     DisconnectCallback disconnectCallback;
     std::string connectingAddress;
 
-    // 服务器列表
-    std::vector<ServerInfo> servers;
-    int selectedServer = -1;
-    bool showingAddServer = false;
-    int editingServerIndex = -1;
-    char addServerName[64] = "";
-    char addServerIp[64] = "";
-    char addServerPort[16] = "25565";
-
     bool initialized = false;
-    GLuint panoramaTextureID = 0;  // 全景背景纹理（由 GLRenderer 传入）
-    GLuint titleTextureID = 0;     // 主菜单标题纹理（minecraft.png）
-    GLuint editionTextureID = 0;  // 主菜单副标题纹理（edition.png）
-    float editionTexW = 0, editionTexH = 0;  // edition.png 原始尺寸
-    GLuint defaultServerIconTexID = 0;  // 默认服务器图标纹理
-    // 延迟信号图标（单独纹理，高版本资源包格式）
-    GLuint pingTex[5] = {};        // ping_1~5 (已连接: 1=最好, 5=最差)
-    GLuint pingingTex[5] = {};     // pinging_1~5 (动画帧)
-    GLuint unreachableTexID = 0;   // unreachable (无连接)
+    GLuint panoramaTextureID = 0;
 
     struct TouchEvent {
         float x, y;
@@ -234,7 +192,7 @@ private:
     int renderDistance = 10;
     bool smoothLightingEnabled = true;
     bool mipmapEnabled = true;
-    int maxFps = 0;  // 0=垂直同步, 1-255=fps值, 256=无限制
+    int maxFps = 0;
 
     // 游戏内 UI 状态
     struct {
@@ -257,18 +215,7 @@ private:
     int digBlockX = 0, digBlockY = 0, digBlockZ = 0;
     int digFace = 0;
     std::chrono::steady_clock::time_point digStartTime;
-    float digDuration = 0.0f;  // 挖掘所需时间（秒）
-
-    // HUD 纹理缓存（初始化时加载，避免每帧查询）
-    GLuint texHeartContainer = 0;
-    GLuint texHeartFull = 0;
-    GLuint texHeartHalf = 0;
-    GLuint texFoodEmpty = 0;
-    GLuint texFoodFull = 0;
-    GLuint texFoodHalf = 0;
-    GLuint texExpBarBg = 0;
-    GLuint texExpBarProgress = 0;
-    bool hudTexturesLoaded = false;
+    float digDuration = 0.0f;
 
     // 死亡界面状态
     bool deathScreenActive = false;
@@ -278,11 +225,8 @@ private:
     // 背包界面
     bool inventoryOpen = false;
 
-    // 背包拖拽（Quick Craft）状态
-    // 原版MC的拖拽流程：按住鼠标拖过多个格子 → 松开时均分物品
-    // status: 0=未开始, 1=拖拽中, 2=结束（分发）
-    int quickcraftStatus = 0;
-    std::vector<int> quickcraftSlots;  // 拖拽经过的槽位索引列表
-    int quickcraftStartSlot = -1;      // 拖拽起始槽位
-    bool isDraggingSlot = false;       // 是否正在拖拽
+    // overlay 跟踪（避免每帧重建）
+    bool lastDeathActive = false;
+    bool lastMenuOpen = false;
+    bool lastInventoryOpen = false;
 };

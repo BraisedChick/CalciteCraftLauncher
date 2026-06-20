@@ -2,7 +2,7 @@
 #include "BlockRegistry.h"
 #include "TextureAtlas.h"
 #include "BiomeColorManager.h"
-#include "GameUI.h"
+#include "gui/GameUI.h"
 #include <android/log.h>
 #include <map>
 #include <string>

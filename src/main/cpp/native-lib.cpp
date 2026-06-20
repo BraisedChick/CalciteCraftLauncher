@@ -17,9 +17,12 @@
 #include "CameraController.h"
 #include "Collision.h"
 #include "Light.h"
-#include "GameUI.h"
+#include "gui/GameUI.h"
 #include "MusicManager.h"
 #include "imgui.h"
+#include "gui/ScreenManager.h"
+#include "gui/TitleScreen.h"
+#include "gui/ConnectingScreen.h"
 
 #define JNI_LOG_TAG "JNI"
 #define JNI_LOGI(...) __android_log_print(ANDROID_LOG_INFO, JNI_LOG_TAG, __VA_ARGS__)
@@ -99,13 +102,17 @@ Java_com_calcite_MainActivity_connectToServer(
 
         g_engine->start(addr, port, name);
 
-        // 断开连接后回到服务器列表
-        JNI_LOGI("Disconnected, returning to server list");
+        // 断开连接后回到主菜单
+        JNI_LOGI("Disconnected, returning to title screen");
         if (g_glRenderer) {
             g_glRenderer->clearChunks();
         }
-        GameUI::getInstance().setState(UIState::MULTIPLAYER);
+        GameUI::getInstance().setState(UIState::MAIN_MENU);
         GameUI::getInstance().setGameMenuOpen(false);
+        GameUI::getInstance().setDeathScreenActive(false);
+        GameUI::getInstance().setOptionsOpen(false);
+        GameUI::getInstance().setInventoryOpen(false);
+        ScreenManager::getInstance().setScreen(std::make_unique<TitleScreen>());
     }).detach();
 
     env->ReleaseStringUTFChars(address, addr);
@@ -424,14 +431,18 @@ Java_com_calcite_MainActivity_initRenderer(
 
                 g_engine->start(ip, port, g_username);
 
-                // 断开连接后回到服务器列表
-                JNI_LOGI("Disconnected, returning to server list");
+                // 断开连接后回到主菜单
+                JNI_LOGI("Disconnected, returning to title screen");
                 if (g_glRenderer) {
                     g_glRenderer->clearChunks();
                 }
                 auto& ui = GameUI::getInstance();
-                ui.setState(UIState::MULTIPLAYER);
+                ui.setState(UIState::MAIN_MENU);
                 ui.setGameMenuOpen(false);
+                ui.setDeathScreenActive(false);
+                ui.setOptionsOpen(false);
+                ui.setInventoryOpen(false);
+                ScreenManager::getInstance().setScreen(std::make_unique<TitleScreen>());
             }).detach();
         });
 
@@ -912,8 +923,9 @@ Java_com_calcite_MainActivity_onBackPressedNative(
         // 主菜单其他情况不处理
         return JNI_FALSE;
     }
-    if (ui.getState() == UIState::MULTIPLAYER) {
+    if (ui.getState() == UIState::MULTIPLAYER || ui.getState() == UIState::CONNECTING) {
         ui.setState(UIState::MAIN_MENU);
+        ScreenManager::getInstance().setScreen(std::make_unique<TitleScreen>());
         return JNI_TRUE;
     }
     // MAIN_MENU 或 CONNECTING 时，不处理（让系统默认行为退出）

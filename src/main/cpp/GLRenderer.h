@@ -25,7 +25,7 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <chrono>
-#include "GameUI.h"
+#include "gui/GameUI.h"
 // 添加 GLM 库
 #define GLM_FORCE_RADIANS
 #define GLM_ENABLE_EXPERIMENTAL

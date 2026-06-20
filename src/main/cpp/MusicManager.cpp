@@ -120,6 +120,12 @@ void MusicManager::setScene(MusicScene scene) {
         shouldReplace = false; // GAME/CREATIVE 的 replace=false
     }
 
+    // 从其他场景切换到 GAME/CREATIVE 时，停止当前音乐
+    // （菜单音乐不应该在游戏内继续播放）
+    if (prevScene != scene && (prevScene == MusicScene::MENU || prevScene == MusicScene::NONE)) {
+        stopPlaying();
+    }
+
     if (shouldReplace || !currentSound) {
         // 停止当前音乐，设短延迟后开始新场景音乐
         stopPlaying();

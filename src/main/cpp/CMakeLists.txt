@@ -70,9 +70,17 @@ set(APP_SOURCES
     Collision.cpp
     TextureAtlas.cpp
     BiomeColorManager.cpp
-    GameUI.cpp
+    gui/GameUI.cpp
     ServerList.cpp
     MusicManager.cpp
+    gui/ScreenManager.cpp
+    gui/TitleScreen.cpp
+    gui/MultiplayerScreen.cpp
+    gui/ConnectingScreen.cpp
+    gui/HudScreen.cpp
+    gui/DeathScreen.cpp
+    gui/InventoryScreen.cpp
+    gui/PauseScreen.cpp
     ResourcepackManager.cpp
     PlayerInventory.cpp
     Raycast.cpp
@@ -98,6 +106,7 @@ foreach(PVER ${SUPPORTED_VERSIONS})
         ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/imgui/backends
         ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty
+        ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
     # 仅为 AESEncrypter_armv8.cpp 启用 ARMv8 Crypto Extensions

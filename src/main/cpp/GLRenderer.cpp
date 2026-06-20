@@ -12,7 +12,7 @@
 #include "BiomeColorManager.h"
 #include "MinecraftVersion.h"
 #include "Light.h"
-#include "GameUI.h"
+#include "gui/GameUI.h"
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
 

@@ -1,0 +1,359 @@
+#include "HudScreen.h"
+
+#define IMGUI_IMPL_OPENGL_ES3
+#define IMGUI_IMPL_OPENGL_LOADER_CUSTOM
+#include <GLES3/gl3.h>
+#include "imgui.h"
+#include "GameUI.h"
+#include "CameraController.h"
+#include "ClientEngine.h"
+#include "ResourcepackManager.h"
+#include "BlockRegistry.h"
+#include "PlayerInventory.h"
+
+#include <chrono>
+#include <cmath>
+
+// 游戏内 UI 布局常量
+#define JOYSTICK_CENTER_X  220.0f
+#define JOYSTICK_CENTER_Y_OFFSET 210.0f
+#define JOYSTICK_RADIUS    110.0f
+#define JOYSTICK_KNOB_RADIUS 38.0f
+#define JOYSTICK_MAX_DIST  65.0f
+#define BTN_RADIUS         38.0f
+#define BTN_RIGHT_MARGIN   90.0f
+#define BTN_VERTICAL_SPACING 85.0f
+
+void HudScreen::render(int mouseX, int mouseY) {
+    ImGuiIO& io = ImGui::GetIO();
+    float w = io.DisplaySize.x;
+    float h = io.DisplaySize.y;
+    auto& gui = GameUI::getInstance();
+
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+
+    // ===== 摇杆底座（左下角） =====
+    float jx = JOYSTICK_CENTER_X;
+    float jy = h - JOYSTICK_CENTER_Y_OFFSET;
+
+    draw->AddCircleFilled(ImVec2(jx, jy), JOYSTICK_RADIUS, IM_COL32(255, 255, 255, 30));
+    draw->AddCircle(ImVec2(jx, jy), JOYSTICK_RADIUS, IM_COL32(255, 255, 255, 60));
+
+    // 摇杆摇柄（从 GameUI 读取 joystick state）
+    // joystick/button state is in GameUI private, so we access via public getters
+    // For now, just render static positions (the touch handler updates GameUI state)
+    float knobX = jx;
+    float knobY = jy;
+    draw->AddCircleFilled(ImVec2(knobX, knobY), JOYSTICK_KNOB_RADIUS, IM_COL32(255, 255, 255, 100));
+    draw->AddCircle(ImVec2(knobX, knobY), JOYSTICK_KNOB_RADIUS, IM_COL32(255, 255, 255, 160));
+
+    // ===== 上升/下降按钮 =====
+    float btnX = w - BTN_RIGHT_MARGIN;
+    float btnUpY = h * 0.5f - BTN_VERTICAL_SPACING;
+    float btnDownY = h * 0.5f;
+
+    ImU32 upCol = IM_COL32(255, 255, 255, 60);
+    draw->AddCircleFilled(ImVec2(btnX, btnUpY), BTN_RADIUS, upCol);
+    draw->AddCircle(ImVec2(btnX, btnUpY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
+    draw->AddTriangleFilled(
+        ImVec2(btnX, btnUpY - 10),
+        ImVec2(btnX - 10, btnUpY + 6),
+        ImVec2(btnX + 10, btnUpY + 6),
+        IM_COL32(255, 255, 255, 180));
+
+    ImU32 downCol = IM_COL32(255, 255, 255, 60);
+    draw->AddCircleFilled(ImVec2(btnX, btnDownY), BTN_RADIUS, downCol);
+    draw->AddCircle(ImVec2(btnX, btnDownY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
+    draw->AddTriangleFilled(
+        ImVec2(btnX, btnDownY + 10),
+        ImVec2(btnX - 10, btnDownY - 6),
+        ImVec2(btnX + 10, btnDownY - 6),
+        IM_COL32(255, 255, 255, 180));
+
+    // ===== 疾跑按钮 =====
+    float btnSprintY = h * 0.5f + BTN_VERTICAL_SPACING;
+    ImU32 sprintCol = IM_COL32(255, 255, 255, 60);
+    draw->AddCircleFilled(ImVec2(btnX, btnSprintY), BTN_RADIUS, sprintCol);
+    draw->AddCircle(ImVec2(btnX, btnSprintY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
+    draw->AddLine(ImVec2(btnX - 8, btnSprintY - 6), ImVec2(btnX + 8, btnSprintY + 2), IM_COL32(255, 255, 255, 180), 3.0f);
+    draw->AddLine(ImVec2(btnX - 8, btnSprintY), ImVec2(btnX + 8, btnSprintY + 6), IM_COL32(255, 255, 255, 180), 3.0f);
+    draw->AddLine(ImVec2(btnX - 8, btnSprintY + 6), ImVec2(btnX + 8, btnSprintY + 10), IM_COL32(255, 255, 255, 180), 3.0f);
+
+    // ===== 攻击按钮 =====
+    float btnAttackY = h * 0.5f - BTN_VERTICAL_SPACING * 2 + 150.0f;
+    float btnAttackX = btnX - 200.0f;
+    {
+        ImU32 atkCol = IM_COL32(255, 255, 255, 60);
+        draw->AddCircleFilled(ImVec2(btnAttackX, btnAttackY), BTN_RADIUS, atkCol);
+        draw->AddCircle(ImVec2(btnAttackX, btnAttackY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
+        draw->AddLine(ImVec2(btnAttackX - 8, btnAttackY - 8), ImVec2(btnAttackX + 8, btnAttackY + 8), IM_COL32(255, 255, 255, 180), 2.5f);
+        draw->AddLine(ImVec2(btnAttackX + 8, btnAttackY - 8), ImVec2(btnAttackX - 8, btnAttackY + 8), IM_COL32(255, 255, 255, 180), 2.5f);
+    }
+
+    // ===== 放置按钮 =====
+    float btnPlaceY = btnAttackY + BTN_VERTICAL_SPACING;
+    {
+        ImU32 plcCol = IM_COL32(255, 255, 255, 60);
+        draw->AddCircleFilled(ImVec2(btnAttackX, btnPlaceY), BTN_RADIUS, plcCol);
+        draw->AddCircle(ImVec2(btnAttackX, btnPlaceY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
+        draw->AddRect(ImVec2(btnAttackX - 10, btnPlaceY - 10), ImVec2(btnAttackX + 10, btnPlaceY + 10),
+                      IM_COL32(255, 255, 255, 180), 0, 0, 2.5f);
+    }
+
+    // ===== F3 按钮 =====
+    {
+        const float F3_W = 52.0f;
+        const float F3_H = 28.0f;
+        const float F3_X = w * 0.25f - F3_W * 0.5f;
+        const float F3_Y = 10.0f;
+        bool showDebug = gui.isDebugInfoVisible();
+        ImU32 f3Col = showDebug ? IM_COL32(255, 255, 0, 200) : IM_COL32(255, 255, 255, 80);
+        ImU32 f3Bg = showDebug ? IM_COL32(255, 255, 0, 40) : IM_COL32(255, 255, 255, 25);
+        draw->AddRectFilled(ImVec2(F3_X, F3_Y), ImVec2(F3_X + F3_W, F3_Y + F3_H), f3Bg, 6.0f);
+        draw->AddRect(ImVec2(F3_X, F3_Y), ImVec2(F3_X + F3_W, F3_Y + F3_H), f3Col, 6.0f, 0, 1.5f);
+        const char* f3Text = "F3";
+        ImVec2 textSize = ImGui::CalcTextSize(f3Text);
+        float textX = F3_X + (F3_W - textSize.x) * 0.5f;
+        float textY = F3_Y + (F3_H - textSize.y) * 0.5f;
+        draw->AddText(ImVec2(textX, textY), f3Col, f3Text);
+    }
+
+    // ===== 准星 =====
+    float cx = w * 0.5f;
+    float cy = h * 0.5f;
+    const float CROSS_SIZE = 16.0f;
+    const float CROSS_GAP = 0.0f;
+    const float CROSS_THICK = 3.0f;
+    ImU32 crossCol = IM_COL32(255, 255, 255, 200);
+    draw->AddLine(ImVec2(cx - CROSS_SIZE, cy), ImVec2(cx - CROSS_GAP, cy), crossCol, CROSS_THICK);
+    draw->AddLine(ImVec2(cx + CROSS_GAP, cy), ImVec2(cx + CROSS_SIZE, cy), crossCol, CROSS_THICK);
+    draw->AddLine(ImVec2(cx, cy - CROSS_SIZE), ImVec2(cx, cy - CROSS_GAP), crossCol, CROSS_THICK);
+    draw->AddLine(ImVec2(cx, cy + CROSS_GAP), ImVec2(cx, cy + CROSS_SIZE), crossCol, CROSS_THICK);
+
+    // ===== 快捷栏 + HUD（使用 ImGui 窗口） =====
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::Begin("Hotbar", nullptr,
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoInputs |
+        ImGuiWindowFlags_NoBackground);
+
+    const float SLOT_SIZE = 55.0f;
+    const float SLOT_GAP = 5.0f;
+    const float HOTBAR_Y = h - 61.0f;
+    float totalW = 9.0f * SLOT_SIZE + 8.0f * SLOT_GAP;
+    float hotbarX = w * 0.5f - totalW * 0.5f;
+
+    ImGui::GetWindowDrawList()->AddRectFilled(
+        ImVec2(hotbarX - 6, HOTBAR_Y - 6),
+        ImVec2(hotbarX + totalW + 6, HOTBAR_Y + SLOT_SIZE + 6),
+        IM_COL32(0, 0, 0, 100), 4.0f);
+
+    InvSlot hotbar[9];
+    PlayerInventory::getInstance().getHotbarSlots(hotbar);
+    int selSlot = PlayerInventory::getInstance().getSelectedSlot();
+
+    for (int i = 0; i < 9; i++) {
+        float sx = hotbarX + i * (SLOT_SIZE + SLOT_GAP);
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            ImVec2(sx, HOTBAR_Y),
+            ImVec2(sx + SLOT_SIZE, HOTBAR_Y + SLOT_SIZE),
+            IM_COL32(40, 40, 50, 200), 2.0f);
+
+        if (i == selSlot) {
+            ImGui::GetWindowDrawList()->AddRect(
+                ImVec2(sx - 2, HOTBAR_Y - 2),
+                ImVec2(sx + SLOT_SIZE + 2, HOTBAR_Y + SLOT_SIZE + 2),
+                IM_COL32(255, 255, 255, 255), 3.0f, 0, 2.5f);
+        }
+
+        if (hotbar[i].present && hotbar[i].itemId > 0) {
+            std::string itemName = BlockRegistry::getInstance().getItemName(hotbar[i].itemId);
+            if (!itemName.empty()) {
+                GLuint tex = ResourcepackManager::getInstance().getItemTexture(itemName);
+                if (tex != 0) {
+                    ImGui::GetWindowDrawList()->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
+                        glBindSampler(0, 0);
+                    }, nullptr);
+                    float pad = 5.0f;
+                    float iconSize = SLOT_SIZE - pad * 2;
+                    ImGui::SetCursorScreenPos(ImVec2((int)(sx + pad), (int)(HOTBAR_Y + pad)));
+                    ImGui::Image((ImTextureID)(intptr_t)tex, ImVec2(iconSize, iconSize));
+                }
+            }
+
+            if (hotbar[i].count > 1) {
+                char countStr[8];
+                snprintf(countStr, sizeof(countStr), "%d", hotbar[i].count);
+                ImVec2 textSize = ImGui::CalcTextSize(countStr);
+                ImGui::SetCursorScreenPos(ImVec2(
+                    sx + SLOT_SIZE - textSize.x - 4,
+                    HOTBAR_Y + SLOT_SIZE - textSize.y - 2));
+                ImGui::TextColored(ImVec4(1, 1, 1, 1), "%s", countStr);
+            }
+        }
+    }
+
+    // ===== 生命值 + 饥饿值 =====
+    {
+        auto* engine = ClientEngine::getInstance();
+        if (engine && engine->getGameMode() != 1) {
+            float healthVal = engine->getHealth();
+            int foodVal = engine->getFood();
+            const float ICON_SIZE = 20.0f;
+            const float GAP = 1.0f;
+            const float HUD_Y = h - 61.0f - ICON_SIZE - 18.0f;
+
+            if (!hudTexturesLoaded) {
+                auto& rm = ResourcepackManager::getInstance();
+                texHeartContainer = rm.getHudTexture("heart/container");
+                texHeartFull = rm.getHudTexture("heart/full");
+                texHeartHalf = rm.getHudTexture("heart/half");
+                texFoodEmpty = rm.getHudTexture("food_empty");
+                texFoodFull = rm.getHudTexture("food_full");
+                texFoodHalf = rm.getHudTexture("food_half");
+                texExpBarBg = rm.getHudTexture("experience_bar_background");
+                texExpBarProgress = rm.getHudTexture("experience_bar_progress");
+                hudTexturesLoaded = true;
+            }
+
+            for (int i = 0; i < 10; i++) {
+                float hx = hotbarX + i * (ICON_SIZE + GAP);
+                if (texHeartContainer) {
+                    ImGui::GetWindowDrawList()->AddImage(
+                        (ImTextureID)(intptr_t)texHeartContainer,
+                        ImVec2(hx, HUD_Y), ImVec2(hx + ICON_SIZE, HUD_Y + ICON_SIZE));
+                }
+                float remain = healthVal - i * 2.0f;
+                if (remain >= 2.0f && texHeartFull) {
+                    ImGui::GetWindowDrawList()->AddImage(
+                        (ImTextureID)(intptr_t)texHeartFull,
+                        ImVec2(hx, HUD_Y), ImVec2(hx + ICON_SIZE, HUD_Y + ICON_SIZE));
+                } else if (remain >= 1.0f && texHeartHalf) {
+                    ImGui::GetWindowDrawList()->AddImage(
+                        (ImTextureID)(intptr_t)texHeartHalf,
+                        ImVec2(hx, HUD_Y), ImVec2(hx + ICON_SIZE, HUD_Y + ICON_SIZE));
+                }
+            }
+
+            float totalWFood = 10.0f * (ICON_SIZE + GAP) - GAP;
+            float foodStartX = hotbarX + totalW - totalWFood;
+
+            for (int i = 0; i < 10; i++) {
+                float fx = foodStartX + i * (ICON_SIZE + GAP);
+                if (texFoodEmpty) {
+                    ImGui::GetWindowDrawList()->AddImage(
+                        (ImTextureID)(intptr_t)texFoodEmpty,
+                        ImVec2(fx, HUD_Y), ImVec2(fx + ICON_SIZE, HUD_Y + ICON_SIZE));
+                }
+                int remain = foodVal - i * 2;
+                if (remain >= 2 && texFoodFull) {
+                    ImGui::GetWindowDrawList()->AddImage(
+                        (ImTextureID)(intptr_t)texFoodFull,
+                        ImVec2(fx, HUD_Y), ImVec2(fx + ICON_SIZE, HUD_Y + ICON_SIZE));
+                } else if (remain >= 1 && texFoodHalf) {
+                    ImGui::GetWindowDrawList()->AddImage(
+                        (ImTextureID)(intptr_t)texFoodHalf,
+                        ImVec2(fx, HUD_Y), ImVec2(fx + ICON_SIZE, HUD_Y + ICON_SIZE));
+                }
+            }
+
+            // 经验条
+            if (texExpBarBg && texExpBarProgress) {
+                float expBarH = 14.0f;
+                float expBarW = totalW;
+                float expBarX = hotbarX;
+                float expBarY = HOTBAR_Y - expBarH - 4.0f;
+
+                ImGui::GetWindowDrawList()->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
+                    glBindSampler(0, 0);
+                }, nullptr);
+                ImGui::GetWindowDrawList()->AddImage(
+                    (ImTextureID)(intptr_t)texExpBarBg,
+                    ImVec2(expBarX, expBarY),
+                    ImVec2(expBarX + expBarW, expBarY + expBarH),
+                    ImVec2(0, 0), ImVec2(1, 1));
+
+                if (engine) {
+                    float progress = engine->getExperienceProgress();
+                    if (progress > 0.0f && progress <= 1.0f) {
+                        ImGui::GetWindowDrawList()->AddImage(
+                            (ImTextureID)(intptr_t)texExpBarProgress,
+                            ImVec2(expBarX, expBarY),
+                            ImVec2(expBarX + expBarW * progress, expBarY + expBarH),
+                            ImVec2(0, 0), ImVec2(progress, 1));
+                    }
+
+                    int level = engine->getExperienceLevel();
+                    if (level > 0) {
+                        char levelStr[16];
+                        snprintf(levelStr, sizeof(levelStr), "%d", level);
+                        ImVec2 textSize = ImGui::CalcTextSize(levelStr);
+                        float textX = expBarX + (expBarW - textSize.x) * 0.5f;
+                        float textY = expBarY + (expBarH - textSize.y) * 0.5f - 12.0f;
+                        ImU32 greenCol = IM_COL32(128, 255, 32, 255);
+                        ImU32 shadowCol = IM_COL32(0, 0, 0, 255);
+                        ImGui::GetWindowDrawList()->AddText(ImVec2(textX - 1, textY), shadowCol, levelStr);
+                        ImGui::GetWindowDrawList()->AddText(ImVec2(textX + 1, textY), shadowCol, levelStr);
+                        ImGui::GetWindowDrawList()->AddText(ImVec2(textX, textY - 1), shadowCol, levelStr);
+                        ImGui::GetWindowDrawList()->AddText(ImVec2(textX, textY + 1), shadowCol, levelStr);
+                        ImGui::GetWindowDrawList()->AddText(ImVec2(textX, textY), greenCol, levelStr);
+                    }
+                }
+            }
+        }
+    }
+
+    // ===== E 按钮 =====
+    {
+        float eX = hotbarX + totalW + 10.0f;
+        bool invOpen = gui.isInventoryOpen();
+        ImU32 eCol = invOpen ? IM_COL32(255, 255, 0, 200) : IM_COL32(255, 255, 255, 180);
+        ImU32 eBg = invOpen ? IM_COL32(255, 255, 0, 40) : IM_COL32(40, 40, 50, 180);
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            ImVec2(eX, HOTBAR_Y), ImVec2(eX + SLOT_SIZE, HOTBAR_Y + SLOT_SIZE),
+            eBg, 4.0f);
+        ImGui::GetWindowDrawList()->AddRect(
+            ImVec2(eX, HOTBAR_Y), ImVec2(eX + SLOT_SIZE, HOTBAR_Y + SLOT_SIZE),
+            eCol, 4.0f, 0, 2.0f);
+        const char* eText = "E";
+        ImVec2 eTextSize = ImGui::CalcTextSize(eText);
+        float eTextX = eX + (SLOT_SIZE - eTextSize.x) * 0.5f;
+        float eTextY = HOTBAR_Y + (SLOT_SIZE - eTextSize.y) * 0.5f;
+        ImGui::GetWindowDrawList()->AddText(ImVec2(eTextX, eTextY), eCol, eText);
+    }
+
+    ImGui::End();
+
+    // ===== F3 调试信息 =====
+    if (gui.isDebugInfoVisible()) {
+        static auto lastFpsTime = std::chrono::steady_clock::now();
+        static int fpsCounter = 0;
+        static float displayFps = 0.0f;
+        fpsCounter++;
+        auto now = std::chrono::steady_clock::now();
+        float elapsed = std::chrono::duration<float>(now - lastFpsTime).count();
+        if (elapsed >= 1.0f) {
+            displayFps = fpsCounter / elapsed;
+            fpsCounter = 0;
+            lastFpsTime = now;
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
+        ImGui::Begin("DebugInfo", nullptr,
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoInputs |
+            ImGuiWindowFlags_NoBackground);
+
+        ImGui::TextColored(ImVec4(1, 1, 0, 1), "Minecraft 1.18.2");
+        ImGui::Text("FPS: %.0f", displayFps);
+        ImGui::Text("");
+
+        auto pos = CameraController::getInstance().getPosition();
+        ImGui::Text("XYZ: %.1f / %.1f / %.1f", pos.x, pos.y, pos.z);
+
+        ImGui::End();
+    }
+}
