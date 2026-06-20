@@ -5,6 +5,7 @@
 #include <GLES3/gl3.h>
 #include "imgui.h"
 #include "GameUI.h"
+#include "GuiUtils.h"
 
 void PauseScreen::render(int mouseX, int mouseY) {
     switch (subPage) {
@@ -34,31 +35,23 @@ void PauseScreen::renderPauseMenu() {
     const float CENTER_X = w * 0.5f;
     float startY = h * 0.5f - BTN_H * 1.5f - SPACING;
 
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(50, 50, 50, 220));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(80, 80, 80, 240));
-    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(100, 100, 100, 255));
-
     ImGui::SetCursorPos(ImVec2(CENTER_X - BTN_W * 0.5f, startY));
-    if (ImGui::Button("回到游戏", ImVec2(BTN_W, BTN_H))) {
+    if (McButton("回到游戏", ImVec2(BTN_W, BTN_H))) {
         GameUI::getInstance().setGameMenuOpen(false);
         if (closeCallback) closeCallback();
     }
 
     ImGui::SetCursorPos(ImVec2(CENTER_X - BTN_W * 0.5f, startY + BTN_H + SPACING));
-    if (ImGui::Button("选项", ImVec2(BTN_W, BTN_H))) {
+    if (McButton("选项", ImVec2(BTN_W, BTN_H))) {
         subPage = OPTIONS;
     }
 
     ImGui::SetCursorPos(ImVec2(CENTER_X - BTN_W * 0.5f, startY + (BTN_H + SPACING) * 2));
-    if (ImGui::Button("断开连接", ImVec2(BTN_W, BTN_H))) {
+    if (McButton("断开连接", ImVec2(BTN_W, BTN_H))) {
         GameUI::getInstance().setGameMenuOpen(false);
         if (disconnectCallback) disconnectCallback();
     }
 
-    ImGui::PopStyleColor(4);
-    ImGui::PopStyleVar();
     ImGui::End();
     ImGui::PopStyleColor(); // WindowBg
 }
@@ -114,21 +107,13 @@ void PauseScreen::renderOptions() {
 
     // 视频设置按钮
     ImGui::SetCursorPos(ImVec2(panelX + PANEL_W * 0.5f - 100.0f, panelY + 95));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(50, 50, 50, 220));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(80, 80, 80, 240));
-    if (ImGui::Button("视频设置", ImVec2(200, 40))) {
+    if (McButton("视频设置", ImVec2(200, 40))) {
         subPage = VIDEO_SETTINGS;
     }
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar();
 
     // 完成按钮
     ImGui::SetCursorPos(ImVec2(panelX + PANEL_W * 0.5f - 60.0f, panelY + PANEL_H - 50));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(50, 50, 50, 220));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(80, 80, 80, 240));
-    if (ImGui::Button("完成", ImVec2(120, 40))) {
+    if (McButton("完成", ImVec2(120, 40))) {
         gui.setOptionsOpen(false);
         gui.setVideoSettingsOpen(false);
         if (saveSettingsCallback) saveSettingsCallback();
@@ -139,8 +124,6 @@ void PauseScreen::renderOptions() {
             subPage = MENU;
         }
     }
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar();
 
     ImGui::End();
     ImGui::PopStyleColor(); // WindowBg
@@ -235,16 +218,11 @@ void PauseScreen::renderVideoSettings() {
 
     // 完成按钮
     ImGui::SetCursorPos(ImVec2(panelX + PANEL_W * 0.5f - 60.0f, panelY + PANEL_H - 55));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(50, 50, 50, 220));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(80, 80, 80, 240));
-    if (ImGui::Button("完成", ImVec2(120, 40))) {
+    if (McButton("完成", ImVec2(120, 40))) {
         gui.setVideoSettingsOpen(false);
         if (saveSettingsCallback) saveSettingsCallback();
         subPage = OPTIONS;
     }
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar();
 
     ImGui::End();
     ImGui::PopStyleColor(); // WindowBg

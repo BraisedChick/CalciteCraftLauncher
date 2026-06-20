@@ -276,16 +276,14 @@ void MultiplayerScreen::renderServerList() {
 
     bool noSel = (selectedServer < 0);
     ImGui::SetCursorPos(ImVec2(startX, btnY));
-    if (noSel) ImGui::BeginDisabled();
-    if (ImGui::Button("连接服务器", ImVec2(btnW, 50))) {
+    if (McButton("\xe8\xbf\x9e\xe6\x8e\xa5\xe6\x9c\x8d\xe5\x8a\xa1\xe5\x99\xa8", ImVec2(btnW, 50), !noSel)) {
         if (selectedServer >= 0 && selectedServer < (int)servers.size())
             connectToServer(servers[selectedServer]);
     }
-    if (noSel) ImGui::EndDisabled();
 
     ImGui::SameLine();
     ImGui::SetCursorPos(ImVec2(startX + (btnW + btnGap), btnY));
-    if (ImGui::Button("添加服务器", ImVec2(btnW, 50))) {
+    if (McButton("\xe6\xb7\xbb\xe5\x8a\xa0\xe6\x9c\x8d\xe5\x8a\xa1\xe5\x99\xa8", ImVec2(btnW, 50))) {
         memset(addServerName, 0, sizeof(addServerName));
         memset(addServerIp, 0, sizeof(addServerIp));
         strncpy(addServerPort, "25565", sizeof(addServerPort) - 1);
@@ -296,8 +294,7 @@ void MultiplayerScreen::renderServerList() {
 
     ImGui::SameLine();
     ImGui::SetCursorPos(ImVec2(startX + (btnW + btnGap) * 2, btnY));
-    if (noSel) ImGui::BeginDisabled();
-    if (ImGui::Button("编辑", ImVec2(btnW, 50))) {
+    if (McButton("\xe7\xbc\x96\xe8\xbe\x91", ImVec2(btnW, 50), !noSel)) {
         if (selectedServer >= 0 && selectedServer < (int)servers.size()) {
             const auto& s = servers[selectedServer];
             strncpy(addServerName, s.name.c_str(), sizeof(addServerName) - 1);
@@ -309,23 +306,20 @@ void MultiplayerScreen::renderServerList() {
             showingAddServer = true;
         }
     }
-    if (noSel) ImGui::EndDisabled();
 
     ImGui::SameLine();
     ImGui::SetCursorPos(ImVec2(startX + (btnW + btnGap) * 3, btnY));
-    if (noSel) ImGui::BeginDisabled();
-    if (ImGui::Button("删除", ImVec2(btnW, 50))) {
+    if (McButton("\xe5\x88\xa0\xe9\x99\xa4", ImVec2(btnW, 50), !noSel)) {
         if (selectedServer >= 0 && selectedServer < (int)servers.size()) {
             servers.erase(servers.begin() + selectedServer);
             selectedServer = -1;
             saveServerList();
         }
     }
-    if (noSel) ImGui::EndDisabled();
 
     ImGui::SameLine();
     ImGui::SetCursorPos(ImVec2(startX + (btnW + btnGap) * 4, btnY));
-    if (ImGui::Button("取消", ImVec2(btnW, 50))) {
+    if (McButton("\xe5\x8f\x96\xe6\xb6\x88", ImVec2(btnW, 50))) {
         if (backCallback) backCallback();
     }
 
@@ -369,7 +363,7 @@ void MultiplayerScreen::renderAddServer() {
     float btnFormStartX = w * 0.5f - (btnWForm * 2 + btnGapForm) * 0.5f;
 
     ImGui::SetCursorPos(ImVec2(btnFormStartX, btnFormY));
-    if (ImGui::Button("保存", ImVec2(btnWForm, 44)) && strlen(addServerName) > 0 && strlen(addServerIp) > 0) {
+    if (McButton("\xe4\xbf\x9d\xe5\xad\x98", ImVec2(btnWForm, 44)) && strlen(addServerName) > 0 && strlen(addServerIp) > 0) {
         ServerInfo server;
         server.name = addServerName;
         server.ip = addServerIp;
@@ -390,7 +384,7 @@ void MultiplayerScreen::renderAddServer() {
     }
 
     ImGui::SetCursorPos(ImVec2(btnFormStartX + btnWForm + btnGapForm, btnFormY));
-    if (ImGui::Button("取消", ImVec2(btnWForm, 44))) {
+    if (McButton("\xe5\x8f\x96\xe6\xb6\x88", ImVec2(btnWForm, 44))) {
         showingAddServer = false;
     }
 

@@ -6,6 +6,7 @@
 #include "ConnectingScreen.h"
 #include "PauseScreen.h"
 #include "GameUI.h"
+#include "GuiUtils.h"
 #include <android/log.h>
 
 #define LOG_TAG "TitleScreen"
@@ -76,9 +77,9 @@ void TitleScreen::render(int mouseX, int mouseY) {
     float startY = h * 0.38f;
     float spacing = 12.0f;
 
-    // 多人游戏 → 切换到 MultiplayerScreen
+    // 多人游戏
     ImGui::SetCursorPos(ImVec2(w * 0.5f - btnW * 0.5f, startY));
-    if (ImGui::Button("\xe5\xa4\x9a\xe4\xba\xba\xe6\xb8\xb8\xe6\x88\x8f", ImVec2(btnW, btnH))) {
+    if (McButton("\xe5\xa4\x9a\xe4\xba\xba\xe6\xb8\xb8\xe6\x88\x8f", ImVec2(btnW, btnH))) {
         auto mp = std::make_unique<MultiplayerScreen>();
         auto connectCb = GameUI::getInstance().getConnectCallback();
         mp->setConnectCallback([connectCb](const std::string& ip, int port, const std::string& address) {
@@ -95,9 +96,9 @@ void TitleScreen::render(int mouseX, int mouseY) {
         ScreenManager::getInstance().setScreen(std::move(mp));
     }
 
-    // 选项 → 切换到 PauseScreen (OPTIONS 子页面)
+    // 选项
     ImGui::SetCursorPos(ImVec2(w * 0.5f - btnW * 0.5f, startY + (btnH + spacing) * 1));
-    if (ImGui::Button("\xe9\x80\x89\xe9\xa1\xb9", ImVec2(btnW, btnH))) {
+    if (McButton("\xe9\x80\x89\xe9\xa1\xb9", ImVec2(btnW, btnH))) {
         auto pause = std::make_unique<PauseScreen>();
         pause->setSubPage(PauseScreen::OPTIONS);
         pause->setFovCallback(GameUI::getInstance().fovCallback);
@@ -113,7 +114,7 @@ void TitleScreen::render(int mouseX, int mouseY) {
 
     // 退出游戏
     ImGui::SetCursorPos(ImVec2(w * 0.5f - btnW * 0.5f, startY + (btnH + spacing) * 2));
-    if (ImGui::Button("\xe9\x80\x80\xe5\x87\xba\xe6\xb8\xb8\xe6\x88\x8f", ImVec2(btnW, btnH))) {
+    if (McButton("\xe9\x80\x80\xe5\x87\xba\xe6\xb8\xb8\xe6\x88\x8f", ImVec2(btnW, btnH))) {
         auto cb = GameUI::getInstance().getExitCallback();
         if (cb) cb();
     }

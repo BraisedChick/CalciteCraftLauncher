@@ -1,7 +1,9 @@
 #pragma once
 
 #include "imgui.h"
+#include "ResourcepackManager.h"
 #include <string>
+#include <cstdint>
 
 // Minecraft § 颜色代码渲染工具
 // 供多个 Screen 共享使用
@@ -84,4 +86,97 @@ inline float drawMcText(float x, float y, const std::string& text, ImU32 default
         }
     }
     return curX;
+}
+
+// ===== MC 风格九宫格按钮 =====
+
+// 按钮纹理缓存（懒加载）
+struct McWidgetTextures {
+    GLuint button = 0;
+    GLuint buttonHighlighted = 0;
+    GLuint buttonDisabled = 0;
+    bool loaded = false;
+
+    void ensureLoaded() {
+        if (loaded) return;
+        auto& rm = ResourcepackManager::getInstance();
+        button = rm.getGuiTexture("sprites/widget/button");
+        buttonHighlighted = rm.getGuiTexture("sprites/widget/button_highlighted");
+        buttonDisabled = rm.getGuiTexture("sprites/widget/button_disabled");
+        loaded = true;
+    }
+};
+
+inline McWidgetTextures& getWidgetTextures() {
+    static McWidgetTextures tex;
+    tex.ensureLoaded();
+    return tex;
+}
+
+// 九宫格绘制（MC .mcmeta nine_slice 规范）
+// texW/texH = 纹理像素尺寸，border = 边框像素宽度
+inline void drawNineSlice(ImDrawList* dl, GLuint tex,
+    ImVec2 pos, ImVec2 size,
+    float texW, float texH, float border)
+{
+    if (tex == 0) return;
+    dl->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
+        glBindSampler(0, 0);
+    }, nullptr);
+
+    float u[4] = { 0, border / texW, (texW - border) / texW, 1.0f };
+    float v[4] = { 0, border / texH, (texH - border) / texH, 1.0f };
+    float sx[4] = { pos.x, pos.x + border, pos.x + size.x - border, pos.x + size.x };
+    float sy[4] = { pos.y, pos.y + border, pos.y + size.y - border, pos.y + size.y };
+
+    for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 3; c++) {
+            dl->AddImage((ImTextureID)(intptr_t)tex,
+                ImVec2(sx[c], sy[r]), ImVec2(sx[c + 1], sy[r + 1]),
+                ImVec2(u[c], v[r]), ImVec2(u[c + 1], v[r + 1]));
+        }
+    }
+}
+
+// MC 风格按钮：九宫格纹理 + 居中文字 + 黑色阴影
+// 返回 true 当按钮被点击（与 ImGui::Button 相同语义）
+inline bool McButton(const char* label, ImVec2 size, bool enabled = true) {
+    auto& wt = getWidgetTextures();
+
+    // 不可见按钮做点击/悬停检测
+    bool clicked = false;
+    if (!enabled) ImGui::BeginDisabled();
+    clicked = ImGui::InvisibleButton(label, size);
+    if (!enabled) ImGui::EndDisabled();
+
+    // 根据状态选择纹理
+    GLuint tex;
+    ImU32 textColor;
+    if (!enabled) {
+        tex = wt.buttonDisabled;
+        textColor = IM_COL32(160, 160, 160, 255);
+    } else if (ImGui::IsItemActive()) {
+        tex = wt.buttonHighlighted;
+        textColor = IM_COL32(255, 255, 160, 255);
+    } else if (ImGui::IsItemHovered()) {
+        tex = wt.buttonHighlighted;
+        textColor = IM_COL32(255, 255, 160, 255);
+    } else {
+        tex = wt.button;
+        textColor = IM_COL32(224, 224, 224, 255);
+    }
+
+    // 九宫格绘制纹理（200x20, 3px border）
+    ImVec2 pos = ImGui::GetItemRectMin();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    drawNineSlice(dl, tex, pos, size, 200.0f, 20.0f, 3.0f);
+
+    // 居中文字 + 黑色阴影
+    ImVec2 textSize = ImGui::CalcTextSize(label);
+    float tx = pos.x + (size.x - textSize.x) * 0.5f;
+    float ty = pos.y + (size.y - textSize.y) * 0.5f;
+    dl->AddText(ImVec2(tx + 1, ty + 1), IM_COL32(0, 0, 0, 128), label);
+    dl->AddText(ImVec2(tx, ty), textColor, label);
+
+    return clicked;
 }

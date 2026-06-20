@@ -6,6 +6,7 @@
 #include "imgui.h"
 #include "ClientEngine.h"
 #include "GameUI.h"
+#include "GuiUtils.h"
 
 void DeathScreen::render(int mouseX, int mouseY) {
     ImGuiIO& io = ImGui::GetIO();
@@ -27,12 +28,6 @@ void DeathScreen::render(int mouseX, int mouseY) {
     const float SPACING = 20.0f;
     const float CENTER_X = w * 0.5f;
 
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(100, 30, 30, 220));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(140, 50, 50, 240));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(160, 70, 70, 255));
-    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
-
     // 你死了！
     float textW = ImGui::CalcTextSize("你死了！").x;
     ImGui::SetCursorPos(ImVec2(CENTER_X - textW * 0.5f, h * 0.3f));
@@ -45,7 +40,7 @@ void DeathScreen::render(int mouseX, int mouseY) {
 
     // 重生按钮
     ImGui::SetCursorPos(ImVec2(CENTER_X - BTN_W * 0.5f, h * 0.5f));
-    if (ImGui::Button("重生", ImVec2(BTN_W, BTN_H))) {
+    if (McButton("重生", ImVec2(BTN_W, BTN_H))) {
         GameUI::getInstance().setDeathScreenActive(false);
         auto* engine = ClientEngine::getInstance();
         if (engine) {
@@ -56,7 +51,7 @@ void DeathScreen::render(int mouseX, int mouseY) {
 
     // 标题屏幕按钮
     ImGui::SetCursorPos(ImVec2(CENTER_X - BTN_W * 0.5f, h * 0.5f + BTN_H + SPACING));
-    if (ImGui::Button("标题屏幕", ImVec2(BTN_W, BTN_H))) {
+    if (McButton("标题屏幕", ImVec2(BTN_W, BTN_H))) {
         GameUI::getInstance().setDeathScreenActive(false);
         if (auto* engine = ClientEngine::getInstance()) {
             engine->clearDeathMessage();
@@ -66,8 +61,6 @@ void DeathScreen::render(int mouseX, int mouseY) {
         }
     }
 
-    ImGui::PopStyleColor(4);
-    ImGui::PopStyleVar();
     ImGui::End();
     ImGui::PopStyleColor(); // WindowBg
 }
