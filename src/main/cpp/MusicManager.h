@@ -21,8 +21,11 @@ public:
     bool init();
     void shutdown();
 
-    // 每帧调用，驱动音乐状态机
+    // 每帧调用，驱动音乐状态机 + 清理已完成的音效
     void tick();
+
+    // 播放 UI 按钮点击音效（random/click_stereo.ogg）
+    void playClickSound();
 
     // 场景切换时调用
     void setScene(MusicScene scene);
@@ -47,6 +50,9 @@ private:
     // 停止当前音乐
     void stopPlaying();
 
+    // 预加载按钮点击音效（init 时调用）
+    void loadClickSound();
+
     // 获取当前场景的音乐文件列表
     std::vector<std::string> getMusicFiles() const;
 
@@ -58,9 +64,23 @@ private:
 
     bool initialized = false;
     void* engine = nullptr;      // ma_engine*
-    void* currentSound = nullptr; // ma_sound*
-    void* audioBuffer = nullptr;  // ma_audio_buffer* (PCM)
-    short* pcmData = nullptr;    // decoded PCM data
+    void* currentSound = nullptr; // ma_sound* (music)
+    void* audioBuffer = nullptr;  // ma_audio_buffer* (music PCM)
+    short* pcmData = nullptr;    // decoded music PCM data
+
+    // 按钮点击音效（预解码 PCM 缓存）
+    short* clickPcmData = nullptr;
+    size_t clickPcmSize = 0;
+    int clickChannels = 0;
+    int clickSampleRate = 0;
+    bool clickSoundLoaded = false;
+
+    // one-shot 音效跟踪（tick 中清理）
+    struct OneShotSound {
+        void* sound;       // ma_sound*
+        void* buffer;      // ma_audio_buffer*
+    };
+    std::vector<OneShotSound> activeOneShots;
 
     MusicScene currentScene = MusicScene::MENU;
     std::string currentMusicPath;  // 当前正在播放的资源路径

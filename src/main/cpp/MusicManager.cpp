@@ -52,6 +52,10 @@ bool MusicManager::init() {
 
     initialized = true;
     LOGI("MusicManager initialized, tempDir=%s", tempDir.c_str());
+
+    // 预加载按钮点击音效
+    loadClickSound();
+
     return true;
 }
 
@@ -59,6 +63,27 @@ void MusicManager::shutdown() {
     if (!initialized) return;
 
     stopPlaying();
+
+    // 清理 one-shot 音效
+    for (auto& os : activeOneShots) {
+        if (os.sound) {
+            ma_sound* s = static_cast<ma_sound*>(os.sound);
+            ma_sound_stop(s);
+            ma_sound_uninit(s);
+            delete s;
+        }
+        if (os.buffer) {
+            ma_audio_buffer_uninit(static_cast<ma_audio_buffer*>(os.buffer));
+            delete static_cast<ma_audio_buffer*>(os.buffer);
+        }
+    }
+    activeOneShots.clear();
+
+    // 清理点击音效 PCM 缓存
+    if (clickPcmData) {
+        delete[] clickPcmData;
+        clickPcmData = nullptr;
+    }
 
     if (engine) {
         ma_engine_uninit(static_cast<ma_engine*>(engine));
@@ -99,6 +124,22 @@ void MusicManager::tick() {
         std::string music = pickRandomMusic();
         if (!music.empty()) {
             startPlaying(music);
+        }
+    }
+
+    // 清理已完成的 one-shot 音效
+    for (auto it = activeOneShots.begin(); it != activeOneShots.end();) {
+        ma_sound* snd = static_cast<ma_sound*>(it->sound);
+        if (!ma_sound_is_playing(snd)) {
+            ma_sound_uninit(snd);
+            delete snd;
+            if (it->buffer) {
+                ma_audio_buffer_uninit(static_cast<ma_audio_buffer*>(it->buffer));
+                delete static_cast<ma_audio_buffer*>(it->buffer);
+            }
+            it = activeOneShots.erase(it);
+        } else {
+            ++it;
         }
     }
 }
@@ -339,6 +380,112 @@ void MusicManager::stopPlaying() {
         pcmData = nullptr;
     }
     currentMusicPath.clear();
+}
+
+void MusicManager::loadClickSound() {
+    if (clickSoundLoaded) return;
+
+    // 从 ZIP 提取 click_stereo.ogg 并解码
+    std::string filePath = extractOggToTemp("random/click_stereo");
+    if (filePath.empty()) {
+        // 回退到单声道 click.ogg
+        filePath = extractOggToTemp("random/click");
+    }
+    if (filePath.empty()) {
+        LOGW("Click sound not found, button clicks will be silent");
+        return;
+    }
+
+    // 用 minivorbis 解码 OGG -> PCM
+    OggVorbis_File vf;
+    int err = ov_fopen(filePath.c_str(), &vf);
+    if (err != 0) {
+        LOGE("ov_fopen failed for click sound: %d", err);
+        return;
+    }
+
+    vorbis_info* vi = ov_info(&vf, -1);
+    if (!vi) {
+        LOGE("ov_info failed for click sound");
+        ov_clear(&vf);
+        return;
+    }
+
+    clickChannels = vi->channels;
+    clickSampleRate = (int)vi->rate;
+
+    // 解码全部 PCM 数据
+    std::vector<short> pcm;
+    pcm.reserve(clickSampleRate * clickChannels); // 短音效
+    char readBuf[4096];
+    int bitstream = 0;
+    long bytesRead;
+    while ((bytesRead = ov_read(&vf, readBuf, sizeof(readBuf), 0, 2, 1, &bitstream)) > 0) {
+        short* samples = reinterpret_cast<short*>(readBuf);
+        int numSamples = bytesRead / 2;
+        pcm.insert(pcm.end(), samples, samples + numSamples);
+    }
+    ov_clear(&vf);
+
+    if (pcm.empty()) {
+        LOGE("No PCM data decoded from click sound");
+        return;
+    }
+
+    // 保存 PCM 数据
+    clickPcmSize = pcm.size();
+    clickPcmData = new short[clickPcmSize];
+    memcpy(clickPcmData, pcm.data(), clickPcmSize * sizeof(short));
+    clickSoundLoaded = true;
+
+    LOGI("Click sound loaded: %d ch, %d Hz, %zu samples (%.0fms)",
+         clickChannels, clickSampleRate, clickPcmSize,
+         (float)(clickPcmSize / clickChannels) / clickSampleRate * 1000.0f);
+}
+
+void MusicManager::playClickSound() {
+    if (!initialized || !engine || !clickSoundLoaded) return;
+
+    // 从缓存的 PCM 数据创建 one-shot ma_sound
+    ma_audio_buffer_config bufConfig = ma_audio_buffer_config_init(
+        ma_format_s16,
+        clickChannels,
+        clickPcmSize / clickChannels,
+        clickPcmData,
+        nullptr
+    );
+    bufConfig.sampleRate = clickSampleRate;
+
+    ma_audio_buffer* buf = new ma_audio_buffer();
+    ma_result result = ma_audio_buffer_init(&bufConfig, buf);
+    if (result != MA_SUCCESS) {
+        LOGE("click ma_audio_buffer_init failed: %d", result);
+        delete buf;
+        return;
+    }
+
+    ma_sound* snd = new ma_sound();
+    result = ma_sound_init_from_data_source(
+        static_cast<ma_engine*>(engine),
+        buf,
+        0,   // 默认 flag：自动连接到引擎音频输出
+        nullptr,
+        snd);
+
+    if (result != MA_SUCCESS) {
+        LOGE("click ma_sound_init failed: %d", result);
+        ma_audio_buffer_uninit(buf);
+        delete buf;
+        delete snd;
+        return;
+    }
+
+    // MC 按钮音量 = 0.25
+    ma_sound_set_volume(snd, 0.25f);
+    ma_sound_start(snd);
+
+    // 跟踪以便 tick 清理
+    activeOneShots.push_back({snd, buf});
 }
 
 std::vector<std::string> MusicManager::getMusicFiles() const {

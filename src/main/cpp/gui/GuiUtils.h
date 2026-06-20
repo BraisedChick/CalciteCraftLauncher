@@ -2,6 +2,7 @@
 
 #include "imgui.h"
 #include "ResourcepackManager.h"
+#include "MusicManager.h"
 #include <string>
 #include <cstdint>
 
@@ -177,6 +178,11 @@ inline bool McButton(const char* label, ImVec2 size, bool enabled = true) {
     float ty = pos.y + (size.y - textSize.y) * 0.5f;
     dl->AddText(ImVec2(tx + 1, ty + 1), IM_COL32(0, 0, 0, 128), label);
     dl->AddText(ImVec2(tx, ty), textColor, label);
+
+    // 点击时播放音效
+    if (clicked) {
+        MusicManager::getInstance().playClickSound();
+    }
 
     return clicked;
 }
