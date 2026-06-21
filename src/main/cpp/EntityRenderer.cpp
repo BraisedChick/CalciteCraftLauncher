@@ -128,6 +128,38 @@ bool EntityRenderer::init() {
     // Head: 8x8x8
     buildBox(spiderVerts, -4, 4, -12, 8, 8, 8, 32, 0, QW, QH);
 
+    // ===== 构建苦力怕模型（64x32 纹理）=====
+    creeperVerts.clear();
+    // Head: 8x8x8, Y=18 to 26
+    buildBox(creeperVerts, -4, 18, -4, 8, 8, 8, 0, 0, QW, QH);
+    // Body: 4x16x4, Y=6 to 22
+    buildBox(creeperVerts, -2, 6, -2, 4, 16, 4, 16, 16, QW, QH);
+    // 4 Legs: 4x6x4
+    buildBox(creeperVerts, -6, 0, -2, 4, 6, 4, 0, 16, QW, QH);   // right hind
+    buildBox(creeperVerts, 2, 0, -2, 4, 6, 4, 0, 16, QW, QH);    // left hind
+    buildBox(creeperVerts, -6, 0, 2, 4, 6, 4, 0, 16, QW, QH);    // right front
+    buildBox(creeperVerts, 2, 0, 2, 4, 6, 4, 0, 16, QW, QH);     // left front
+
+    // ===== 构建史莱姆模型（64x32 纹理）=====
+    slimeVerts.clear();
+    // 外壳: 16x16x16
+    buildBox(slimeVerts, -8, 0, -8, 16, 16, 16, 0, 0, QW, QH);
+    // 内核: 8x8x8 (居中)
+    buildBox(slimeVerts, -4, 4, -4, 8, 8, 8, 0, 16, QW, QH);
+
+    // ===== 构建恶魂模型（64x32 纹理）=====
+    ghastVerts.clear();
+    // Body: 16x16x16, Y=8 to 24 (漂浮)
+    buildBox(ghastVerts, -8, 8, -8, 16, 16, 16, 0, 0, QW, QH);
+    // 9 tentacles: 2x(8-15)x2, 悬挂在body下方
+    float tentX[] = {-5.5f, -5.5f, -5.5f, 0, 0, 0, 5.5f, 5.5f, 5.5f};
+    float tentZ[] = {-5.5f, 0, 5.5f, -5.5f, 0, 5.5f, -5.5f, 0, 5.5f};
+    int tentLen[] = {11, 12, 9, 14, 10, 13, 8, 11, 15};
+    for (int i = 0; i < 9; i++) {
+        buildBox(ghastVerts, tentX[i] - 1, 8 - tentLen[i], tentZ[i] - 1,
+                 2, tentLen[i], 2, 0, 0, QW, QH);
+    }
+
     // VAO/VBO（所有模型共享一个 VBO，渲染时按需切换偏移）
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
@@ -264,11 +296,15 @@ void EntityRenderer::renderAll(const std::vector<Entity>& entities,
                                float partialTick) {
     if (!initialized || entities.empty()) return;
 
-    // 调试日志：每 120 帧打印实体数
+    // 调试日志：每 120 帧打印实体数和类型
     static int frameCounter = 0;
     if (++frameCounter >= 120) {
         frameCounter = 0;
         LOGI("Entity render: %zu entities", entities.size());
+        for (const auto& e : entities) {
+            LOGI("  entity: type=%s(%d) pos=(%.1f,%.1f,%.1f)",
+                 e.getTypeName(), (int)e.type, e.x, e.y, e.z);
+        }
     }
 
     glUseProgram(shaderProgram);
@@ -311,6 +347,12 @@ void EntityRenderer::renderAll(const std::vector<Entity>& entities,
                     glUniform4f(uColor, 0.6f, 0.4f, 0.2f, 1.0f); break;
                 case EntityType::SPIDER:
                     glUniform4f(uColor, 0.3f, 0.2f, 0.1f, 1.0f); break;
+                case EntityType::SLIME:
+                    glUniform4f(uColor, 0.3f, 0.8f, 0.3f, 0.7f); break;
+                case EntityType::GHAST:
+                    glUniform4f(uColor, 0.9f, 0.9f, 0.9f, 1.0f); break;
+                case EntityType::BLAZE:
+                    glUniform4f(uColor, 1.0f, 0.7f, 0.0f, 1.0f); break;
                 default:
                     glUniform4f(uColor, 0.5f, 0.5f, 0.5f, 1.0f); break;
             }
@@ -325,7 +367,7 @@ void EntityRenderer::renderAll(const std::vector<Entity>& entities,
 
         // MVP: 平移到实体位置 + 旋转
         glm::mat4 model = glm::translate(vp, glm::vec3(ix, iy, iz));
-        model = glm::rotate(model, glm::radians(-iyaw), glm::vec3(0, 1, 0));
+        model = glm::rotate(model, glm::radians(-iyaw + 180.0f), glm::vec3(0, 1, 0));
 
         glm::mat4 mvp = model;
         glUniformMatrix4fv(uMVP, 1, GL_FALSE, &mvp[0][0]);
@@ -355,8 +397,17 @@ void EntityRenderer::renderAll(const std::vector<Entity>& entities,
             case EntityType::SPIDER:
                 renderSpider(iyaw, iheadYaw);
                 break;
+            case EntityType::CREEPER:
+                renderCreeper();
+                break;
+            case EntityType::SLIME:
+                renderSlime();
+                break;
+            case EntityType::GHAST:
+                renderGhast();
+                break;
             default:
-                // 未知类型：渲染为人形（兜底）
+                // 未知类型：渲染为人形（兆底）
                 renderHumanoid(iyaw, iheadYaw, entity.pitch);
                 break;
         }
@@ -384,6 +435,24 @@ void EntityRenderer::renderSpider(float bodyYaw, float headYaw) {
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, spiderVerts.size() * sizeof(float), spiderVerts.data());
     glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(spiderVerts.size() / 5));
+}
+
+void EntityRenderer::renderCreeper() {
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, creeperVerts.size() * sizeof(float), creeperVerts.data());
+    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(creeperVerts.size() / 5));
+}
+
+void EntityRenderer::renderSlime() {
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, slimeVerts.size() * sizeof(float), slimeVerts.data());
+    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(slimeVerts.size() / 5));
+}
+
+void EntityRenderer::renderGhast() {
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, ghastVerts.size() * sizeof(float), ghastVerts.data());
+    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(ghastVerts.size() / 5));
 }
 
 // ===== 几何构建工具 =====

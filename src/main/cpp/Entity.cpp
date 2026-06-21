@@ -1,40 +1,41 @@
 #include "Entity.h"
 
-// Protocol 758 (1.18.2) 实体类型 ID 映射
-// 这些 ID 是服务器 RegistryHolder 注册的，此处提供默认映射
-// 后续可从 Login 包的 registry_holder 动态解析
+// 1.18.2 EntityType.java 注册表顺序（注册顺序 = 协议 ID）
 EntityType entityTypeFromProtocolId(int typeId) {
     switch (typeId) {
-        // 常见生物
-        case 1:  return EntityType::AREA_EFFECT_CLOUD;
-        case 2:  return EntityType::ARMOR_STAND;
-        case 3:  return EntityType::ARROW;
-        case 5:  return EntityType::BLAZE;
-        case 7:  return EntityType::BOAT;
-        case 10: return EntityType::CAT;
-        case 14: return EntityType::CHICKEN;
-        case 15: return EntityType::COD;
-        case 21: return EntityType::COW;
-        case 22: return EntityType::CREEPER;
-        case 26: return EntityType::ENDERMAN;
-        case 31: return EntityType::EXPERIENCE_ORB;
-        case 34: return EntityType::GHAST;
-        case 39: return EntityType::HOGLIN;
-        case 42: return EntityType::IRON_GOLEM;
-        case 45: return EntityType::ITEM;
-        case 57: return EntityType::MINECART;
-        case 65: return EntityType::PIG;
-        case 67: return EntityType::PIGLIN;
-        case 81: return EntityType::SHEEP;
-        case 82: return EntityType::SKELETON;
-        case 83: return EntityType::SLIME;
-        case 87: return EntityType::SPIDER;
-        case 99: return EntityType::VILLAGER;
-        case 102: return EntityType::WITCH;
-        case 104: return EntityType::WOLF;
-        case 112: return EntityType::ZOMBIE;
-        case 113: return EntityType::ZOMBIE_VILLAGER;
-        default: return EntityType::UNKNOWN;
+        // 以下为常用实体，完整表见 EntityType.java L156-268
+        case 2:   return EntityType::ARROW;
+        case 6:   return EntityType::BLAZE;
+        case 7:   return EntityType::BOAT;
+        case 8:   return EntityType::CAT;
+        case 10:  return EntityType::CHICKEN;
+        case 11:  return EntityType::COD;
+        case 12:  return EntityType::COW;
+        case 13:  return EntityType::CREEPER;
+        case 21:  return EntityType::ENDERMAN;
+        case 25:  return EntityType::EXPERIENCE_ORB;
+        case 27:  return EntityType::FALLING_BLOCK;
+        case 30:  return EntityType::GHAST;
+        case 36:  return EntityType::HOGLIN;
+        case 37:  return EntityType::HORSE;
+        case 38:  return EntityType::HUSK;
+        case 40:  return EntityType::IRON_GOLEM;
+        case 41:  return EntityType::ITEM;
+        case 50:  return EntityType::MINECART;
+        case 64:  return EntityType::PIG;
+        case 65:  return EntityType::PIGLIN;
+        case 69:  return EntityType::TNT;
+        case 82:  return EntityType::SHEEP;
+        case 84:  return EntityType::SKELETON;
+        case 86:  return EntityType::SLIME;
+        case 91:  return EntityType::SPIDER;
+        case 89:  return EntityType::SKELETON;     // stray
+        case 99:  return EntityType::VILLAGER;
+        case 107: return EntityType::WITCH;
+        case 111: return EntityType::WOLF;
+        case 113: return EntityType::ZOMBIE;
+        case 115: return EntityType::ZOMBIE_VILLAGER;
+        default:  return EntityType::UNKNOWN;
     }
 }
 

@@ -44,6 +44,13 @@ private:
     // 渲染蜘蛛（八足扁体）
     void renderSpider(float bodyYaw, float headYaw);
 
+    // 渲染苦力怕
+    void renderCreeper();
+    // 渲染史莱姆
+    void renderSlime();
+    // 渲染恶魂
+    void renderGhast();
+
     // 获取实体对应的 GL 纹理 ID（懒加载）
     GLuint getEntityTexture(const Entity& entity);
 
@@ -72,6 +79,9 @@ private:
     std::vector<float> humanoidVerts;
     std::vector<float> quadrupedVerts;
     std::vector<float> spiderVerts;
+    std::vector<float> creeperVerts;
+    std::vector<float> slimeVerts;
+    std::vector<float> ghastVerts;
 
     // 实体纹理缓存（type name → GL texture ID）
     std::unordered_map<std::string, GLuint> textureCache;

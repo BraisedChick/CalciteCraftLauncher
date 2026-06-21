@@ -1600,8 +1600,7 @@ void ClientEngine::handlePlayPacket(int packetId,
             }
 
             // ===== 实体包处理 =====
-            case 0x00: { // Spawn Entity（通用实体生成：箭头、掉落物、落沙等）
-                LOGI("Received SpawnEntity packet (0x00)");
+            case 0x00: { // Spawn Entity（通用实体生成）
                 ProtocolCraft::ClientboundAddEntityPacket pkt;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1611,6 +1610,8 @@ void ClientEngine::handlePlayPacket(int packetId,
                 e.entityId = pkt.GetEntityId();
                 e.protocolTypeId = pkt.GetType();
                 e.type = entityTypeFromProtocolId(pkt.GetType());
+                LOGI("SpawnEntity(0x00): entityId=%d, typeId=%d, type=%s",
+                     e.entityId, e.protocolTypeId, e.getTypeName());
                 e.x = pkt.GetX();
                 e.y = pkt.GetY();
                 e.z = pkt.GetZ();
@@ -1638,6 +1639,8 @@ void ClientEngine::handlePlayPacket(int packetId,
                 e.yaw = pkt.GetYRot() * 360.0f / 256.0f;
                 e.pitch = pkt.GetXRot() * 360.0f / 256.0f;
                 e.headYaw = pkt.GetYHeadRot() * 360.0f / 256.0f;
+                LOGI("SpawnMob: entityId=%d, typeId=%d, entityType=%s",
+                     e.entityId, e.protocolTypeId, e.getTypeName());
                 EntityManager::getInstance().addEntity(e);
                 break;
             }
