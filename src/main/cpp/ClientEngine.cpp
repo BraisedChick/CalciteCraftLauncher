@@ -46,7 +46,19 @@
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundGameEventPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundRespawnPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundSetTimePacket.hpp"
+// 实体相关包
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundAddEntityPacket.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundAddMobPacket.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundAddPlayerPacket.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundMoveEntityPacketPosRot.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundMoveEntityPacketPos.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundMoveEntityPacketRot.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundTeleportEntityPacket.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundRemoveEntitiesPacket.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundSetEntityMotionPacket.hpp"
 #include "Light.h"
+#include "EntityManager.h"
+#include "EntityRenderer.h"
 #include "protocolCraft/Types/NBT/Tag.hpp"
 #include "protocolCraft/Utilities/Json.hpp"
 #include "BiomeColorManager.h"
@@ -765,6 +777,9 @@ void ClientEngine::disconnect() {
     if (net) {
         net->disconnect();
     }
+    // 清理所有实体
+    EntityManager::getInstance().removeAllEntities();
+    EntityRenderer::getInstance().clearTextureCache();
 }
 
 float ClientEngine::getSkyDarken() const {
@@ -1581,6 +1596,146 @@ void ClientEngine::handlePlayPacket(int packetId,
                 if (slot >= 0 && slot <= 8) {
                     PlayerInventory::getInstance().setSelectedSlot(slot);
                 }
+                break;
+            }
+
+            // ===== 实体包处理 =====
+            case 0x00: { // Spawn Entity（通用实体生成：箭头、掉落物、落沙等）
+                LOGI("Received SpawnEntity packet (0x00)");
+                ProtocolCraft::ClientboundAddEntityPacket pkt;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t len = pktData.size();
+                pkt.Read(iter, len);
+                Entity e;
+                e.entityId = pkt.GetEntityId();
+                e.protocolTypeId = pkt.GetType();
+                e.type = entityTypeFromProtocolId(pkt.GetType());
+                e.x = pkt.GetX();
+                e.y = pkt.GetY();
+                e.z = pkt.GetZ();
+                e.yaw = pkt.GetYRot() * 360.0f / 256.0f;
+                e.pitch = pkt.GetXRot() * 360.0f / 256.0f;
+                e.headYaw = e.yaw;
+                EntityManager::getInstance().addEntity(e);
+                break;
+            }
+
+#if PROTOCOL_VERSION < 759
+            case 0x02: { // Spawn Mob（生物生成：僵尸、动物等，1.18.2 专用）
+                ProtocolCraft::ClientboundAddMobPacket pkt;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t len = pktData.size();
+                pkt.Read(iter, len);
+                Entity e;
+                e.entityId = pkt.GetEntityId();
+                e.protocolTypeId = pkt.GetType();
+                e.type = entityTypeFromProtocolId(pkt.GetType());
+                e.x = pkt.GetX();
+                e.y = pkt.GetY();
+                e.z = pkt.GetZ();
+                e.yaw = pkt.GetYRot() * 360.0f / 256.0f;
+                e.pitch = pkt.GetXRot() * 360.0f / 256.0f;
+                e.headYaw = pkt.GetYHeadRot() * 360.0f / 256.0f;
+                EntityManager::getInstance().addEntity(e);
+                break;
+            }
+#endif
+
+#if PROTOCOL_VERSION < 764
+            case 0x04: { // Spawn Player（玩家生成，1.20.1 及以下）
+                ProtocolCraft::ClientboundAddPlayerPacket pkt;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t len = pktData.size();
+                pkt.Read(iter, len);
+                Entity e;
+                e.entityId = pkt.GetEntityId();
+                e.type = EntityType::PLAYER;
+                e.x = pkt.GetX();
+                e.y = pkt.GetY();
+                e.z = pkt.GetZ();
+                e.yaw = pkt.GetYRot() * 360.0f / 256.0f;
+                e.pitch = pkt.GetXRot() * 360.0f / 256.0f;
+                e.headYaw = e.yaw;
+                EntityManager::getInstance().addEntity(e);
+                break;
+            }
+#endif
+
+            case 0x2A: { // Entity Position and Rotation（相对移动+旋转）
+                ProtocolCraft::ClientboundMoveEntityPacketPosRot pkt;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t len = pktData.size();
+                pkt.Read(iter, len);
+                float yaw = pkt.GetYRot() * 360.0f / 256.0f;
+                float pitch = pkt.GetXRot() * 360.0f / 256.0f;
+                EntityManager::getInstance().moveEntityRot(
+                    pkt.GetEntityId(), pkt.GetXA(), pkt.GetYA(), pkt.GetZA(),
+                    yaw, pitch);
+                break;
+            }
+
+            case 0x29: { // Entity Position（相对移动，无旋转）
+                ProtocolCraft::ClientboundMoveEntityPacketPos pkt;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t len = pktData.size();
+                pkt.Read(iter, len);
+                EntityManager::getInstance().moveEntity(
+                    pkt.GetEntityId(), pkt.GetXA(), pkt.GetYA(), pkt.GetZA());
+                break;
+            }
+
+            case 0x2B: { // Entity Rotation（仅旋转）
+                ProtocolCraft::ClientboundMoveEntityPacketRot pkt;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t len = pktData.size();
+                pkt.Read(iter, len);
+                float yaw = pkt.GetYRot() * 360.0f / 256.0f;
+                float pitch = pkt.GetXRot() * 360.0f / 256.0f;
+                EntityManager::getInstance().rotateEntity(pkt.GetEntityId(), yaw, pitch);
+                break;
+            }
+
+            case 0x62: { // Teleport Entity（绝对传送）
+                ProtocolCraft::ClientboundTeleportEntityPacket pkt;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t len = pktData.size();
+                pkt.Read(iter, len);
+                float yaw = pkt.GetYRot() * 360.0f / 256.0f;
+                float pitch = pkt.GetXRot() * 360.0f / 256.0f;
+                EntityManager::getInstance().teleportEntity(
+                    pkt.GetEntityId(), pkt.GetX(), pkt.GetY(), pkt.GetZ(),
+                    yaw, pitch);
+                break;
+            }
+
+            case 0x3A: { // Remove Entities（移除实体）
+                ProtocolCraft::ClientboundRemoveEntitiesPacket pkt;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t len = pktData.size();
+                pkt.Read(iter, len);
+                const auto& ids = pkt.GetEntityIds();
+                for (auto id : ids) {
+                    EntityManager::getInstance().removeEntity((int)id);
+                }
+                break;
+            }
+
+            case 0x4F: { // Set Entity Motion（设置速度）
+                ProtocolCraft::ClientboundSetEntityMotionPacket pkt;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t len = pktData.size();
+                pkt.Read(iter, len);
+                EntityManager::getInstance().setEntityMotion(
+                    pkt.GetEntityId(), pkt.GetXA(), pkt.GetYA(), pkt.GetZA());
                 break;
             }
 

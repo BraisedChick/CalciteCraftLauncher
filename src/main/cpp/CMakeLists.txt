@@ -84,6 +84,9 @@ set(APP_SOURCES
     ResourcepackManager.cpp
     PlayerInventory.cpp
     Raycast.cpp
+    Entity.cpp
+    EntityManager.cpp
+    EntityRenderer.cpp
     3rdparty/miniz/miniz.c
     3rdparty/minivorbis/minivorbis.c
     ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/imgui/imgui.cpp

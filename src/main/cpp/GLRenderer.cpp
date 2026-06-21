@@ -13,6 +13,8 @@
 #include "MinecraftVersion.h"
 #include "Light.h"
 #include "gui/GameUI.h"
+#include "EntityRenderer.h"
+#include "EntityManager.h"
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
 
@@ -1571,6 +1573,16 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     }
 
     glBindVertexArray(0);
+
+    // ===== Phase 3: 实体渲染 =====
+    {
+        EntityRenderer& er = EntityRenderer::getInstance();
+        if (!er.isInitialized()) er.init();
+        auto entities = EntityManager::getInstance().getAllEntities();
+        if (!entities.empty()) {
+            er.renderAll(entities, viewMatrix, projMatrix, 1.0f);
+        }
+    }
 
     // 每 60 帧打印统计信息
     if (frameCount % 60 == 0) {
