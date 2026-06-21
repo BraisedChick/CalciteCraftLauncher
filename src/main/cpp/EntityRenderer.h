@@ -50,6 +50,8 @@ private:
     void renderSlime();
     // 渲染恶魂
     void renderGhast();
+    // 渲染掉落物
+    void renderItem();
 
     // 获取实体对应的 GL 纹理 ID（懒加载）
     GLuint getEntityTexture(const Entity& entity);
@@ -82,6 +84,7 @@ private:
     std::vector<float> creeperVerts;
     std::vector<float> slimeVerts;
     std::vector<float> ghastVerts;
+    std::vector<float> itemVerts;
 
     // 实体纹理缓存（type name → GL texture ID）
     std::unordered_map<std::string, GLuint> textureCache;

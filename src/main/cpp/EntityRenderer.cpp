@@ -2,6 +2,7 @@
 #include "TextureLoader.h"
 #include <android/log.h>
 #include <cmath>
+#include <chrono>
 
 #define IMGUI_IMPL_OPENGL_ES3
 #define IMGUI_IMPL_OPENGL_LOADER_CUSTOM
@@ -159,6 +160,11 @@ bool EntityRenderer::init() {
         buildBox(ghastVerts, tentX[i] - 1, 8 - tentLen[i], tentZ[i] - 1,
                  2, tentLen[i], 2, 0, 0, QW, QH);
     }
+
+    // ===== 构建掉落物模型（小方块 4x4x4 像素）=====
+    itemVerts.clear();
+    // 居中的小方块：原点周围 4x4x4 像素，UV 全 0（使用纯色渲染）
+    buildBox(itemVerts, -2, -2, -2, 4, 4, 4, 0, 0, 16.0f, 16.0f);
 
     // VAO/VBO（所有模型共享一个 VBO，渲染时按需切换偏移）
     glGenVertexArrays(1, &vao);
@@ -353,8 +359,9 @@ void EntityRenderer::renderAll(const std::vector<Entity>& entities,
                     glUniform4f(uColor, 0.9f, 0.9f, 0.9f, 1.0f); break;
                 case EntityType::BLAZE:
                     glUniform4f(uColor, 1.0f, 0.7f, 0.0f, 1.0f); break;
+                case EntityType::ITEM:
+                    glUniform4f(uColor, 0.8f, 0.6f, 0.2f, 1.0f); break; // 金黄色
                 default:
-                    glUniform4f(uColor, 0.5f, 0.5f, 0.5f, 1.0f); break;
             }
         }
 
@@ -365,11 +372,24 @@ void EntityRenderer::renderAll(const std::vector<Entity>& entities,
         float iyaw = entity.prevYaw + (entity.yaw - entity.prevYaw) * partialTick;
         float iheadYaw = entity.prevHeadYaw + (entity.headYaw - entity.prevHeadYaw) * partialTick;
 
-        // MVP: 平移到实体位置 + 旋转
-        glm::mat4 model = glm::translate(vp, glm::vec3(ix, iy, iz));
-        model = glm::rotate(model, glm::radians(-iyaw + 180.0f), glm::vec3(0, 1, 0));
-
-        glm::mat4 mvp = model;
+        // MVP: 根据实体类型构建模型矩阵
+        glm::mat4 mvp;
+        if (entity.type == EntityType::ITEM) {
+            // TODO: 解析 SetEntityMetadata(0x4E) 获取 ItemStack，
+            // 根据 itemId 查纹理数组渲染具体物品图标
+            // 当前用通用小方块占位
+            // 掉落物：抬高 0.25 格 + 缓慢旋转
+            static auto startTime = std::chrono::steady_clock::now();
+            float time = std::chrono::duration<float>(std::chrono::steady_clock::now() - startTime).count();
+            float spinAngle = time * 90.0f;
+            glm::mat4 model = glm::translate(vp, glm::vec3(ix, iy + 0.25f, iz));
+            model = glm::rotate(model, glm::radians(spinAngle), glm::vec3(0, 1, 0));
+            mvp = model;
+        } else {
+            glm::mat4 model = glm::translate(vp, glm::vec3(ix, iy, iz));
+            model = glm::rotate(model, glm::radians(-iyaw + 180.0f), glm::vec3(0, 1, 0));
+            mvp = model;
+        }
         glUniformMatrix4fv(uMVP, 1, GL_FALSE, &mvp[0][0]);
 
         // 根据类型选择渲染方法
@@ -405,6 +425,17 @@ void EntityRenderer::renderAll(const std::vector<Entity>& entities,
                 break;
             case EntityType::GHAST:
                 renderGhast();
+                break;
+            // 无模型实体：跳过渲染
+            case EntityType::ARROW:
+            case EntityType::EXPERIENCE_ORB:
+            case EntityType::FALLING_BLOCK:
+            case EntityType::TNT:
+            case EntityType::BOAT:
+            case EntityType::MINECART:
+                break;
+            case EntityType::ITEM:
+                renderItem();
                 break;
             default:
                 // 未知类型：渲染为人形（兆底）
@@ -453,6 +484,12 @@ void EntityRenderer::renderGhast() {
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, ghastVerts.size() * sizeof(float), ghastVerts.data());
     glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(ghastVerts.size() / 5));
+}
+
+void EntityRenderer::renderItem() {
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, itemVerts.size() * sizeof(float), itemVerts.data());
+    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(itemVerts.size() / 5));
 }
 
 // ===== 几何构建工具 =====
