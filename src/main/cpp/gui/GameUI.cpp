@@ -265,7 +265,12 @@ void GameUI::loadSettings() {
         try {
             if (key == "renderDistance") renderDistance = std::stoi(value);
             else if (key == "smoothLighting") smoothLightingEnabled = (value == "true");
-            else if (key == "mipmap") mipmapEnabled = (value == "true");
+            else if (key == "mipmap") {
+                // 兼容旧版 bool 格式
+                if (value == "true") mipmapLevel = 4;
+                else if (value == "false") mipmapLevel = 0;
+                else mipmapLevel = std::atoi(value.c_str());
+            }
             else if (key == "maxFps") maxFps = std::stoi(value);
             else if (key == "fov") optionsFov = std::stof(value);
         } catch (...) {}
@@ -279,7 +284,7 @@ void GameUI::saveSettings() {
     if (!file.is_open()) { LOGE("Failed to save options"); return; }
     file << "renderDistance:" << renderDistance << '\n';
     file << "smoothLighting:" << (smoothLightingEnabled ? "true" : "false") << '\n';
-    file << "mipmap:" << (mipmapEnabled ? "true" : "false") << '\n';
+    file << "mipmap:" << mipmapLevel << '\n';
     file << "maxFps:" << maxFps << '\n';
     file << "fov:" << optionsFov << '\n';
     file.close();

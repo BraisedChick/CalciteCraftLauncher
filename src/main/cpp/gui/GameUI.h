@@ -74,13 +74,15 @@ public:
     bool isVideoSettingsOpen() const { return videoSettingsOpen; }
     int getRenderDistance() const { return renderDistance; }
     bool isSmoothLightingEnabled() const { return smoothLightingEnabled; }
-    bool isMipmapEnabled() const { return mipmapEnabled; }
+    bool isMipmapEnabled() const { return mipmapLevel > 0; }
+    int getMipmapLevel() const { return mipmapLevel; }
     int getMaxFps() const { return maxFps; }
 
     // 直接修改设置（供 PauseScreen 使用）
     void setRenderDistanceDirect(int v) { renderDistance = v; }
     void setSmoothLightingDirect(bool v) { smoothLightingEnabled = v; }
-    void setMipmapDirect(bool v) { mipmapEnabled = v; }
+    void setMipmapDirect(bool v) { mipmapLevel = v ? 4 : 0; }
+    void setMipmapLevelDirect(int v) { mipmapLevel = v; }
     void setMaxFpsDirect(int v) { maxFps = v; }
 
     // FOV 更新回调
@@ -94,7 +96,7 @@ public:
     RenderDistanceCallback renderDistanceCallback;
 
     // Mipmap 回调
-    using MipmapCallback = std::function<void(bool)>;
+    using MipmapCallback = std::function<void(int)>;
     void setMipmapCallback(MipmapCallback cb) { mipmapCallback = cb; }
     MipmapCallback getMipmapCallback() const { return mipmapCallback; }
     MipmapCallback mipmapCallback;
@@ -201,7 +203,8 @@ private:
     bool videoSettingsOpen = false;
     int renderDistance = 10;
     bool smoothLightingEnabled = true;
-    bool mipmapEnabled = true;
+    bool mipmapEnabled = true; // legacy compat
+    int mipmapLevel = 4;
     int maxFps = 0;
 
     // 游戏内 UI 状态

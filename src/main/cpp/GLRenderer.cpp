@@ -151,7 +151,9 @@ bool GLRenderer::finishTextureInit() {
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
         // 根据 mipmap 设置选择正确的 min filter，避免无 mipmap 数据时采样全黑
-        if (GameUI::getInstance().isMipmapEnabled()) {
+        int initMipLevel = GameUI::getInstance().getMipmapLevel();
+        if (initMipLevel > 0) {
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL, initMipLevel);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
         } else {
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -199,9 +201,11 @@ bool GLRenderer::finishTextureInit() {
     if (textureNextBatch >= textureTotalCount) {
         LOGI("All %d textures uploaded", textureTotalCount);
         // 根据设置生成 mipmap
-        if (GameUI::getInstance().isMipmapEnabled()) {
+        int mipLevel = GameUI::getInstance().getMipmapLevel();
+        if (mipLevel > 0) {
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL, mipLevel);
             glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
-            LOGI("Mipmaps generated for texture array");
+            LOGI("Mipmaps generated, max level=%d", mipLevel);
         }
         textureInitPending = false;
         LOGI("=== finishTextureInit COMPLETE ===");
@@ -1631,17 +1635,21 @@ void GLRenderer::setRenderDistance(int chunks) {
     farPlane = chunks * 16.0f;
 }
 
-void GLRenderer::setMipmapEnabled(bool enabled) {
+void GLRenderer::setMipmapLevel(int level) {
     if (textureArrayID == 0) return;
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayID);
 
-    if (enabled) {
+    if (level > 0) {
+        // 限制 mipmap 层级数（level=1 只用 2 层: 0+1，level=4 用全部 5 层: 0+1+2+3+4）
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL, level);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
         glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+        LOGI("Mipmap level set to %d", level);
     } else {
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        LOGI("Mipmap disabled");
     }
 }
 

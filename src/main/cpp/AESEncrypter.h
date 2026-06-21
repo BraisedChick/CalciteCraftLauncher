@@ -6,7 +6,6 @@
 
 /**
  * AES-128-CFB8 流加密器
- * 纯 C++ 实现，不依赖 OpenSSL/BoringSSL
  *
  * 用于 Minecraft 在线模式服务器的加密通信：
  * - Init(): 用共享密钥初始化 AES-128-CFB8 上下文
@@ -25,7 +24,7 @@ public:
 
     /**
      * 用共享密钥初始化加密上下文
-     * 共享密钥同时用作 AES-128 的密钥和 CFB8 的 IV（与 Botcraft/OpenSSL 行为一致）
+     * 共享密钥同时用作 AES-128 的密钥和 CFB8 的 IV
      *
      * @param sharedSecret 16 字节共享密钥（由 Java 层生成并传回）
      */

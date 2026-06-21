@@ -469,9 +469,9 @@ Java_com_calcite_MainActivity_initRenderer(
         });
 
         // 设置 Mipmap 更新回调
-        GameUI::getInstance().setMipmapCallback([](bool enabled) {
+        GameUI::getInstance().setMipmapCallback([](int level) {
             if (g_glRenderer) {
-                g_glRenderer->setMipmapEnabled(enabled);
+                g_glRenderer->setMipmapLevel(level);
             }
         });
 
@@ -487,7 +487,7 @@ Java_com_calcite_MainActivity_initRenderer(
             auto& ui = GameUI::getInstance();
             g_glRenderer->setFov(ui.getOptionsFov());
             g_glRenderer->setRenderDistance(ui.getRenderDistance());
-            g_glRenderer->setMipmapEnabled(ui.isMipmapEnabled());
+            g_glRenderer->setMipmapLevel(ui.getMipmapLevel());
             g_glRenderer->setMaxFps(ui.getMaxFps());
         }
 

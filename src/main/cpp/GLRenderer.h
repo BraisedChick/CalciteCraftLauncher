@@ -71,8 +71,8 @@ public:
     void setRenderDistance(int chunks);
     int getRenderDistance() const { return static_cast<int>(farPlane / 16.0f); }
 
-    // Mipmap 开关
-    void setMipmapEnabled(bool enabled);
+    // Mipmap 等级（0=关闭，1-4=mipmap层级数）
+    void setMipmapLevel(int level);
 
     // 最大帧率控制（0=垂直同步, 1-255=fps值, 256=无限制）
     void setMaxFps(int fps);

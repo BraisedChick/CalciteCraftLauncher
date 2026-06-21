@@ -181,15 +181,21 @@ void PauseScreen::renderVideoSettings() {
     }
     ImGui::PopStyleColor();
 
-    // Mipmap
-    bool mipmap = gui.isMipmapEnabled();
+    // Mipmap 等级
+    int mipLevel = gui.getMipmapLevel();
     ImGui::SetCursorPos(ImVec2(panelX + 20, panelY + 130));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(60, 60, 70, 200));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrab, IM_COL32(120, 180, 255, 220));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, IM_COL32(150, 200, 255, 255));
     ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
-    if (ImGui::Checkbox("Mipmap", &mipmap)) {
-        gui.setMipmapDirect(mipmap);
-        if (mipmapCallback) mipmapCallback(mipmap);
+    ImGui::SetNextItemWidth(PANEL_W - 40);
+    if (ImGui::SliderInt("##mipmap", &mipLevel, 0, 4, "Mipmap: %d")) {
+        gui.setMipmapLevelDirect(mipLevel);
+        if (mipmapCallback) mipmapCallback(mipLevel);
     }
-    ImGui::PopStyleColor();
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar();
 
     // 最大帧率
     int fps = gui.getMaxFps();
