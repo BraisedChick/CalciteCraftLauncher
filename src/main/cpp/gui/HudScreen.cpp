@@ -36,68 +36,86 @@ void HudScreen::render(int mouseX, int mouseY) {
     float jx = JOYSTICK_CENTER_X;
     float jy = h - JOYSTICK_CENTER_Y_OFFSET;
 
-    draw->AddCircleFilled(ImVec2(jx, jy), JOYSTICK_RADIUS, IM_COL32(255, 255, 255, 30));
-    draw->AddCircle(ImVec2(jx, jy), JOYSTICK_RADIUS, IM_COL32(255, 255, 255, 60));
+    bool joyActive = gui.isJoystickActive();
+    ImU32 baseCol = joyActive ? IM_COL32(255, 255, 255, 60) : IM_COL32(255, 255, 255, 30);
+    ImU32 baseOutline = joyActive ? IM_COL32(255, 255, 255, 100) : IM_COL32(255, 255, 255, 60);
+    draw->AddCircleFilled(ImVec2(jx, jy), JOYSTICK_RADIUS, baseCol);
+    draw->AddCircle(ImVec2(jx, jy), JOYSTICK_RADIUS, baseOutline);
 
-    // 摇杆摇柄（从 GameUI 读取 joystick state）
-    // joystick/button state is in GameUI private, so we access via public getters
-    // For now, just render static positions (the touch handler updates GameUI state)
-    float knobX = jx;
-    float knobY = jy;
-    draw->AddCircleFilled(ImVec2(knobX, knobY), JOYSTICK_KNOB_RADIUS, IM_COL32(255, 255, 255, 100));
-    draw->AddCircle(ImVec2(knobX, knobY), JOYSTICK_KNOB_RADIUS, IM_COL32(255, 255, 255, 160));
+    // 摇杆摇柄
+    float knobX = joyActive ? jx + gui.getJoystickKnobX() : jx;
+    float knobY = joyActive ? jy + gui.getJoystickKnobY() : jy;
+    ImU32 knobCol = joyActive ? IM_COL32(255, 255, 255, 180) : IM_COL32(255, 255, 255, 100);
+    ImU32 knobOutline = joyActive ? IM_COL32(255, 255, 255, 220) : IM_COL32(255, 255, 255, 160);
+    draw->AddCircleFilled(ImVec2(knobX, knobY), JOYSTICK_KNOB_RADIUS, knobCol);
+    draw->AddCircle(ImVec2(knobX, knobY), JOYSTICK_KNOB_RADIUS, knobOutline);
 
     // ===== 上升/下降按钮 =====
     float btnX = w - BTN_RIGHT_MARGIN;
     float btnUpY = h * 0.5f - BTN_VERTICAL_SPACING;
     float btnDownY = h * 0.5f;
 
-    ImU32 upCol = IM_COL32(255, 255, 255, 60);
-    draw->AddCircleFilled(ImVec2(btnX, btnUpY), BTN_RADIUS, upCol);
-    draw->AddCircle(ImVec2(btnX, btnUpY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
+    bool upPressed = gui.isButtonUp();
+    ImU32 upBg = upPressed ? IM_COL32(255, 255, 255, 140) : IM_COL32(255, 255, 255, 60);
+    ImU32 upBorder = upPressed ? IM_COL32(255, 255, 255, 200) : IM_COL32(255, 255, 255, 100);
+    ImU32 upIcon = upPressed ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 255, 255, 180);
+    draw->AddRectFilled(ImVec2(btnX - BTN_RADIUS, btnUpY - BTN_RADIUS), ImVec2(btnX + BTN_RADIUS, btnUpY + BTN_RADIUS), upBg, 4.0f);
+    draw->AddRect(ImVec2(btnX - BTN_RADIUS, btnUpY - BTN_RADIUS), ImVec2(btnX + BTN_RADIUS, btnUpY + BTN_RADIUS), upBorder, 4.0f);
     draw->AddTriangleFilled(
         ImVec2(btnX, btnUpY - 10),
         ImVec2(btnX - 10, btnUpY + 6),
         ImVec2(btnX + 10, btnUpY + 6),
-        IM_COL32(255, 255, 255, 180));
+        upIcon);
 
-    ImU32 downCol = IM_COL32(255, 255, 255, 60);
-    draw->AddCircleFilled(ImVec2(btnX, btnDownY), BTN_RADIUS, downCol);
-    draw->AddCircle(ImVec2(btnX, btnDownY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
+    bool downPressed = gui.isButtonDown();
+    ImU32 downBg = downPressed ? IM_COL32(255, 255, 255, 140) : IM_COL32(255, 255, 255, 60);
+    ImU32 downBorder = downPressed ? IM_COL32(255, 255, 255, 200) : IM_COL32(255, 255, 255, 100);
+    ImU32 downIcon = downPressed ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 255, 255, 180);
+    draw->AddRectFilled(ImVec2(btnX - BTN_RADIUS, btnDownY - BTN_RADIUS), ImVec2(btnX + BTN_RADIUS, btnDownY + BTN_RADIUS), downBg, 4.0f);
+    draw->AddRect(ImVec2(btnX - BTN_RADIUS, btnDownY - BTN_RADIUS), ImVec2(btnX + BTN_RADIUS, btnDownY + BTN_RADIUS), downBorder, 4.0f);
     draw->AddTriangleFilled(
         ImVec2(btnX, btnDownY + 10),
         ImVec2(btnX - 10, btnDownY - 6),
         ImVec2(btnX + 10, btnDownY - 6),
-        IM_COL32(255, 255, 255, 180));
+        downIcon);
 
     // ===== 疾跑按钮 =====
     float btnSprintY = h * 0.5f + BTN_VERTICAL_SPACING;
-    ImU32 sprintCol = IM_COL32(255, 255, 255, 60);
-    draw->AddCircleFilled(ImVec2(btnX, btnSprintY), BTN_RADIUS, sprintCol);
-    draw->AddCircle(ImVec2(btnX, btnSprintY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
-    draw->AddLine(ImVec2(btnX - 8, btnSprintY - 6), ImVec2(btnX + 8, btnSprintY + 2), IM_COL32(255, 255, 255, 180), 3.0f);
-    draw->AddLine(ImVec2(btnX - 8, btnSprintY), ImVec2(btnX + 8, btnSprintY + 6), IM_COL32(255, 255, 255, 180), 3.0f);
-    draw->AddLine(ImVec2(btnX - 8, btnSprintY + 6), ImVec2(btnX + 8, btnSprintY + 10), IM_COL32(255, 255, 255, 180), 3.0f);
+    bool sprintPressed = gui.isButtonSprint();
+    ImU32 sprintBg = sprintPressed ? IM_COL32(255, 255, 255, 140) : IM_COL32(255, 255, 255, 60);
+    ImU32 sprintBorder = sprintPressed ? IM_COL32(255, 255, 255, 200) : IM_COL32(255, 255, 255, 100);
+    ImU32 sprintIcon = sprintPressed ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 255, 255, 180);
+    draw->AddRectFilled(ImVec2(btnX - BTN_RADIUS, btnSprintY - BTN_RADIUS), ImVec2(btnX + BTN_RADIUS, btnSprintY + BTN_RADIUS), sprintBg, 4.0f);
+    draw->AddRect(ImVec2(btnX - BTN_RADIUS, btnSprintY - BTN_RADIUS), ImVec2(btnX + BTN_RADIUS, btnSprintY + BTN_RADIUS), sprintBorder, 4.0f);
+    draw->AddLine(ImVec2(btnX - 8, btnSprintY - 6), ImVec2(btnX + 8, btnSprintY + 2), sprintIcon, 3.0f);
+    draw->AddLine(ImVec2(btnX - 8, btnSprintY), ImVec2(btnX + 8, btnSprintY + 6), sprintIcon, 3.0f);
+    draw->AddLine(ImVec2(btnX - 8, btnSprintY + 6), ImVec2(btnX + 8, btnSprintY + 10), sprintIcon, 3.0f);
 
     // ===== 攻击按钮 =====
     float btnAttackY = h * 0.5f - BTN_VERTICAL_SPACING * 2 + 150.0f;
     float btnAttackX = btnX - 200.0f;
     {
-        ImU32 atkCol = IM_COL32(255, 255, 255, 60);
-        draw->AddCircleFilled(ImVec2(btnAttackX, btnAttackY), BTN_RADIUS, atkCol);
-        draw->AddCircle(ImVec2(btnAttackX, btnAttackY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
-        draw->AddLine(ImVec2(btnAttackX - 8, btnAttackY - 8), ImVec2(btnAttackX + 8, btnAttackY + 8), IM_COL32(255, 255, 255, 180), 2.5f);
-        draw->AddLine(ImVec2(btnAttackX + 8, btnAttackY - 8), ImVec2(btnAttackX - 8, btnAttackY + 8), IM_COL32(255, 255, 255, 180), 2.5f);
+        bool atkPressed = gui.isButtonAttack();
+        ImU32 atkBg = atkPressed ? IM_COL32(255, 255, 255, 140) : IM_COL32(255, 255, 255, 60);
+        ImU32 atkBorder = atkPressed ? IM_COL32(255, 255, 255, 200) : IM_COL32(255, 255, 255, 100);
+        ImU32 atkIcon = atkPressed ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 255, 255, 180);
+        draw->AddRectFilled(ImVec2(btnAttackX - BTN_RADIUS, btnAttackY - BTN_RADIUS), ImVec2(btnAttackX + BTN_RADIUS, btnAttackY + BTN_RADIUS), atkBg, 4.0f);
+        draw->AddRect(ImVec2(btnAttackX - BTN_RADIUS, btnAttackY - BTN_RADIUS), ImVec2(btnAttackX + BTN_RADIUS, btnAttackY + BTN_RADIUS), atkBorder, 4.0f);
+        draw->AddLine(ImVec2(btnAttackX - 8, btnAttackY - 8), ImVec2(btnAttackX + 8, btnAttackY + 8), atkIcon, 2.5f);
+        draw->AddLine(ImVec2(btnAttackX + 8, btnAttackY - 8), ImVec2(btnAttackX - 8, btnAttackY + 8), atkIcon, 2.5f);
     }
 
     // ===== 放置按钮 =====
     float btnPlaceY = btnAttackY + BTN_VERTICAL_SPACING;
     {
-        ImU32 plcCol = IM_COL32(255, 255, 255, 60);
-        draw->AddCircleFilled(ImVec2(btnAttackX, btnPlaceY), BTN_RADIUS, plcCol);
-        draw->AddCircle(ImVec2(btnAttackX, btnPlaceY), BTN_RADIUS, IM_COL32(255, 255, 255, 100));
+        bool plcPressed = gui.isButtonPlace();
+        ImU32 plcBg = plcPressed ? IM_COL32(255, 255, 255, 140) : IM_COL32(255, 255, 255, 60);
+        ImU32 plcBorder = plcPressed ? IM_COL32(255, 255, 255, 200) : IM_COL32(255, 255, 255, 100);
+        ImU32 plcIcon = plcPressed ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 255, 255, 180);
+        draw->AddRectFilled(ImVec2(btnAttackX - BTN_RADIUS, btnPlaceY - BTN_RADIUS), ImVec2(btnAttackX + BTN_RADIUS, btnPlaceY + BTN_RADIUS), plcBg, 4.0f);
+        draw->AddRect(ImVec2(btnAttackX - BTN_RADIUS, btnPlaceY - BTN_RADIUS), ImVec2(btnAttackX + BTN_RADIUS, btnPlaceY + BTN_RADIUS), plcBorder, 4.0f);
         draw->AddRect(ImVec2(btnAttackX - 10, btnPlaceY - 10), ImVec2(btnAttackX + 10, btnPlaceY + 10),
-                      IM_COL32(255, 255, 255, 180), 0, 0, 2.5f);
+                      plcIcon, 0, 0, 2.5f);
     }
 
     // ===== F3 按钮 =====

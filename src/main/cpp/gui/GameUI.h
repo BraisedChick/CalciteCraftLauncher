@@ -117,6 +117,16 @@ public:
     bool isInventoryOpen() const { return inventoryOpen; }
     void setInventoryOpen(bool open) { inventoryOpen = open; }
 
+    // HUD 按钮/摇杆状态 getter（供 HudScreen 读取高亮状态）
+    bool isButtonUp() const { return buttons.upPressed; }
+    bool isButtonDown() const { return buttons.downPressed; }
+    bool isButtonSprint() const { return buttons.sprintPressed; }
+    bool isButtonAttack() const { return buttons.attackPressed; }
+    bool isButtonPlace() const { return buttons.placePressed; }
+    bool isJoystickActive() const { return joystick.active; }
+    float getJoystickKnobX() const { return joystick.knobX; }
+    float getJoystickKnobY() const { return joystick.knobY; }
+
     // 是否有任意游戏内界面打开（阻挡移动输入）
     bool isInGameUIActive() const {
         return gameMenuOpen || optionsOpen || deathScreenActive || inventoryOpen;
