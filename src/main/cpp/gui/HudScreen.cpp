@@ -10,6 +10,7 @@
 #include "ResourcepackManager.h"
 #include "BlockRegistry.h"
 #include "PlayerInventory.h"
+#include "EntityRenderer.h"
 
 #include <chrono>
 #include <cmath>
@@ -367,6 +368,8 @@ void HudScreen::render(int mouseX, int mouseY) {
 
         ImGui::TextColored(ImVec4(1, 1, 0, 1), "Minecraft 1.18.2");
         ImGui::Text("FPS: %.0f", displayFps);
+        ImGui::Text("E: %d/%d", EntityRenderer::getInstance().getRenderedCount(),
+                     EntityRenderer::getInstance().getTotalCount());
         ImGui::Text("");
 
         auto pos = CameraController::getInstance().getPosition();

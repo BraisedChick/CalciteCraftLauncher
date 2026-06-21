@@ -29,6 +29,10 @@ public:
     // 断开连接时清理纹理缓存
     void clearTextureCache();
 
+    // 实体渲染统计（F3 显示用）
+    int getRenderedCount() const { return renderedCount; }
+    int getTotalCount() const { return totalCount; }
+
 private:
     EntityRenderer() = default;
 
@@ -88,4 +92,8 @@ private:
 
     // 实体纹理缓存（type name → GL texture ID）
     std::unordered_map<std::string, GLuint> textureCache;
+
+    // 渲染统计
+    int renderedCount = 0;
+    int totalCount = 0;
 };

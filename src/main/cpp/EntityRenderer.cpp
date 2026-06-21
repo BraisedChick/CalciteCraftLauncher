@@ -302,17 +302,6 @@ void EntityRenderer::renderAll(const std::vector<Entity>& entities,
                                float partialTick) {
     if (!initialized || entities.empty()) return;
 
-    // 调试日志：每 120 帧打印实体数和类型
-    static int frameCounter = 0;
-    if (++frameCounter >= 120) {
-        frameCounter = 0;
-        LOGI("Entity render: %zu entities", entities.size());
-        for (const auto& e : entities) {
-            LOGI("  entity: type=%s(%d) pos=(%.1f,%.1f,%.1f)",
-                 e.getTypeName(), (int)e.type, e.x, e.y, e.z);
-        }
-    }
-
     glUseProgram(shaderProgram);
     glBindVertexArray(vao);
     glEnable(GL_DEPTH_TEST);
@@ -320,10 +309,39 @@ void EntityRenderer::renderAll(const std::vector<Entity>& entities,
 
     glm::mat4 vp = proj * view;
 
+    // 从 VP 矩阵提取视锥体 6 个平面（Gribb-Hartmann 方法）
+    struct FrustumPlane { float a, b, c, d; };
+    FrustumPlane planes[6];
+    const float* mp = &vp[0][0]; // column-major
+    planes[0] = { mp[3]+mp[0], mp[7]+mp[4], mp[11]+mp[8], mp[15]+mp[12] };   // left
+    planes[1] = { mp[3]-mp[0], mp[7]-mp[4], mp[11]-mp[8], mp[15]-mp[12] };   // right
+    planes[2] = { mp[3]+mp[1], mp[7]+mp[5], mp[11]+mp[9], mp[15]+mp[13] };   // bottom
+    planes[3] = { mp[3]-mp[1], mp[7]-mp[5], mp[11]-mp[9], mp[15]-mp[13] };   // top
+    planes[4] = { mp[3]+mp[2], mp[7]+mp[6], mp[11]+mp[10], mp[15]+mp[14] };  // near
+    planes[5] = { mp[3]-mp[2], mp[7]-mp[6], mp[11]-mp[10], mp[15]-mp[14] };  // far
+    for (auto& fp : planes) {
+        float len = sqrtf(fp.a*fp.a + fp.b*fp.b + fp.c*fp.c);
+        if (len > 0.0001f) { fp.a /= len; fp.b /= len; fp.c /= len; fp.d /= len; }
+    }
+    int rendered = 0;
+    totalCount = (int)entities.size();
+
     for (const auto& entity : entities) {
         if (entity.removed) continue;
-        // 跳过太远的实体（优化）
-        // TODO: 视锥裁剪
+
+        // 插值位置（提前计算用于剔除）
+        float ix = (float)(entity.prevX + (entity.x - entity.prevX) * partialTick);
+        float iy = (float)(entity.prevY + (entity.y - entity.prevY) * partialTick);
+        float iz = (float)(entity.prevZ + (entity.z - entity.prevZ) * partialTick);
+
+        // 视锥体剔除（包围球半径 2.0 block）
+        bool visible = true;
+        for (const auto& fp : planes) {
+            if (fp.a*ix + fp.b*iy + fp.c*iz + fp.d < -2.0f) {
+                visible = false; break;
+            }
+        }
+        if (!visible) continue;
 
         GLuint tex = getEntityTexture(entity);
         // tex == 0 时使用 fallback 纯色渲染（不跳过）
@@ -365,10 +383,7 @@ void EntityRenderer::renderAll(const std::vector<Entity>& entities,
             }
         }
 
-        // 插值位置
-        float ix = (float)(entity.prevX + (entity.x - entity.prevX) * partialTick);
-        float iy = (float)(entity.prevY + (entity.y - entity.prevY) * partialTick);
-        float iz = (float)(entity.prevZ + (entity.z - entity.prevZ) * partialTick);
+        // 插值旋转
         float iyaw = entity.prevYaw + (entity.yaw - entity.prevYaw) * partialTick;
         float iheadYaw = entity.prevHeadYaw + (entity.headYaw - entity.prevHeadYaw) * partialTick;
 
@@ -391,6 +406,8 @@ void EntityRenderer::renderAll(const std::vector<Entity>& entities,
             mvp = model;
         }
         glUniformMatrix4fv(uMVP, 1, GL_FALSE, &mvp[0][0]);
+
+        rendered++;
 
         // 根据类型选择渲染方法
         switch (entity.type) {
@@ -444,6 +461,7 @@ void EntityRenderer::renderAll(const std::vector<Entity>& entities,
         }
     }
 
+    renderedCount = rendered;
     glBindVertexArray(0);
     glUseProgram(0);
     glEnable(GL_CULL_FACE);
