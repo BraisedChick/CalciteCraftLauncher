@@ -454,6 +454,11 @@ void GameUI::handleJoystickTouch(int pointerId, float x, float y, int action) {
 }
 
 void GameUI::performBlockPlacement() {
+    // 空手时不发送放置包
+    auto& inv = PlayerInventory::getInstance();
+    const InvSlot& held = inv.getHotbarSlot(inv.getSelectedSlot());
+    if (!held.present || held.itemId <= 0) return;
+
     auto& cam = CameraController::getInstance();
     glm::vec3 playerPos = cam.getPosition();
     float pitch = cam.getPitch(), yaw = cam.getYaw();
