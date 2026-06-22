@@ -8,6 +8,7 @@
 #include "BlockRegistry.h"
 #include "PlayerInventory.h"
 #include "ClientEngine.h"
+#include "GameUI.h"
 
 #include <android/log.h>
 #include <cstdio>
@@ -20,6 +21,17 @@ void InventoryScreen::render(int mouseX, int mouseY) {
     ImGuiIO& io = ImGui::GetIO();
     float w = io.DisplaySize.x;
     float h = io.DisplaySize.y;
+
+    int containerType = GameUI::getInstance().getOpenContainerType();
+    if (containerType == 11) {
+        renderCraftingTable(w, h);
+    } else {
+        renderPlayerInventory(w, h);
+    }
+}
+
+void InventoryScreen::renderPlayerInventory(float w, float h) {
+    ImGuiIO& io = ImGui::GetIO();
 
     const float INV_SLOT = 50.0f;
     const float TEX_SLOT = 18.0f;
@@ -374,6 +386,191 @@ void InventoryScreen::render(int mouseX, int mouseY) {
             float my = io.MousePos.y - INV_SLOT * 0.5f;
             renderItem(mx, my, cursor);
         }
+    }
+
+    ImGui::End();
+}
+
+void InventoryScreen::renderCraftingTable(float w, float h) {
+    ImGuiIO& io = ImGui::GetIO();
+
+    const float INV_SLOT = 50.0f;
+    const float TEX_SLOT = 18.0f;
+    float S = INV_SLOT / TEX_SLOT;
+
+    // 工作台容器布局：
+    // Slot 0 = 合成结果
+    // Slots 1-9 = 3x3 合成格
+    // Slots 10-36 = 主背包 (3x9)
+    // Slots 37-45 = 快捷栏 (1x9)
+    const float TEX_LEFT = 7.0f;       // 主背包左偏移
+    const float TEX_TOP = 84.0f;       // 主背包上偏移
+    const float TEX_HOTBAR = 142.0f;   // 快捷栏上偏移
+    const float TEX_CONTAINER_W = 176.0f;
+    const float TEX_CONTAINER_H = 166.0f;
+
+    // 3x3 合成格和结果槽在纹理中的位置
+    const float TEX_CRAFT_LEFT = 29.0f;
+    const float TEX_CRAFT_TOP = 17.0f;
+    const float TEX_RESULT_LEFT = 124.0f;
+    const float TEX_RESULT_TOP = 35.0f;
+
+    float containerW = TEX_CONTAINER_W * S;
+    float containerH = TEX_CONTAINER_H * S;
+    float containerX = (w - containerW) * 0.5f;
+    float containerY = h * 0.5f - containerH * 0.5f;
+
+    float gridX = containerX + TEX_LEFT * S;
+    float gridY = containerY + TEX_TOP * S;
+    float hotbarY = containerY + TEX_HOTBAR * S;
+
+    // 背景遮罩
+    ImGui::GetForegroundDrawList()->AddRectFilled(
+        ImVec2(0, 0), ImVec2(w, h), IM_COL32(0, 0, 0, 160));
+
+    // 工作台纹理
+    GLuint bgTex = ResourcepackManager::getInstance().getGuiTexture("container/crafting_table");
+    if (bgTex != 0) {
+        ImGui::GetForegroundDrawList()->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
+            glBindSampler(0, 0);
+        }, nullptr);
+        ImGui::GetForegroundDrawList()->AddImage(
+            (ImTextureID)(intptr_t)bgTex,
+            ImVec2(containerX, containerY),
+            ImVec2(containerX + containerW, containerY + containerH),
+            ImVec2(0, 0),
+            ImVec2(TEX_CONTAINER_W / 256.0f, TEX_CONTAINER_H / 256.0f));
+    }
+
+    // 标题
+    const char* title = "工作台";
+    ImVec2 titleSize = ImGui::CalcTextSize(title);
+    ImGui::GetForegroundDrawList()->AddText(
+        ImVec2(containerX + (containerW - titleSize.x) * 0.5f,
+               containerY + 6.0f * S),
+        IM_COL32(55, 55, 55, 255), title);
+
+    auto& inv = PlayerInventory::getInstance();
+    const auto& containerSlots = inv.getContainerSlots();
+    InvSlot hotbar[9];
+    inv.getHotbarSlots(hotbar);
+
+    auto renderItem = [&](float sx, float sy, const InvSlot& slot) {
+        if (!slot.present || slot.itemId <= 0) return;
+        std::string itemName = BlockRegistry::getInstance().getItemName(slot.itemId);
+        if (itemName.empty()) return;
+        GLuint tex = ResourcepackManager::getInstance().getItemTexture(itemName);
+        if (tex == 0) return;
+        ImGui::GetForegroundDrawList()->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
+            glBindSampler(0, 0);
+        }, nullptr);
+        float pad = 5.0f;
+        float iconSize = INV_SLOT - pad * 2;
+        ImGui::GetForegroundDrawList()->AddImage(
+            (ImTextureID)(intptr_t)tex,
+            ImVec2(sx + pad, sy + pad),
+            ImVec2(sx + pad + iconSize, sy + pad + iconSize));
+        if (slot.count > 1) {
+            char countStr[8];
+            snprintf(countStr, sizeof(countStr), "%d", slot.count);
+            ImVec2 textSize = ImGui::CalcTextSize(countStr);
+            ImGui::GetForegroundDrawList()->AddText(
+                ImVec2(sx + INV_SLOT - textSize.x - 3,
+                       sy + INV_SLOT - textSize.y - 2),
+                IM_COL32(255, 255, 255, 255), countStr);
+        }
+    };
+
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::Begin("##CraftingTableClick", nullptr,
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground |
+        ImGuiWindowFlags_NoNav);
+
+    int containerId = GameUI::getInstance().getOpenContainerId();
+
+    auto handleSlotClick = [&](float sx, float sy, int containerSlot, const char* id) {
+        ImGui::SetCursorScreenPos(ImVec2(sx, sy));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.1f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.2f));
+        char btnId[32];
+        snprintf(btnId, sizeof(btnId), "##%s", id);
+        ImGui::InvisibleButton(btnId, ImVec2(INV_SLOT, INV_SLOT));
+        auto* eng = ClientEngine::getInstance();
+        if (!eng) { ImGui::PopStyleColor(3); return; }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+            eng->sendContainerClick(containerSlot, 0);
+        }
+        ImGui::PopStyleColor(3);
+    };
+
+    // 获取容器槽位的辅助函数
+    auto getContainerSlot = [&](int index) -> InvSlot {
+        if (index >= 0 && index < (int)containerSlots.size()) {
+            return containerSlots[index];
+        }
+        return InvSlot{};
+    };
+
+    // 3x3 合成格 (slots 1-9)
+    float craftX = containerX + TEX_CRAFT_LEFT * S;
+    float craftY = containerY + TEX_CRAFT_TOP * S;
+    for (int row = 0; row < 3; row++) {
+        for (int col = 0; col < 3; col++) {
+            float sx = craftX + col * INV_SLOT;
+            float sy = craftY + row * INV_SLOT;
+            int slotIdx = 1 + row * 3 + col;
+            renderItem(sx, sy, getContainerSlot(slotIdx));
+            char id[16];
+            snprintf(id, sizeof(id), "craft_%d", slotIdx);
+            handleSlotClick(sx, sy, slotIdx, id);
+        }
+    }
+
+    // 合成结果槽 (slot 0)
+    float resultX = containerX + TEX_RESULT_LEFT * S;
+    float resultY = containerY + TEX_RESULT_TOP * S;
+    renderItem(resultX, resultY, getContainerSlot(0));
+    handleSlotClick(resultX, resultY, 0, "craft_result");
+
+    // 主背包格 3x9 (slots 10-36)
+    for (int row = 0; row < 3; row++) {
+        float rowY = gridY + row * INV_SLOT;
+        for (int col = 0; col < 9; col++) {
+            float sx = gridX + col * INV_SLOT;
+            int slotIdx = 10 + row * 9 + col;
+            renderItem(sx, rowY, getContainerSlot(slotIdx));
+            char id[16];
+            snprintf(id, sizeof(id), "main_%d", slotIdx);
+            handleSlotClick(sx, rowY, slotIdx, id);
+        }
+    }
+
+    // 快捷栏 1x9 (slots 37-45)
+    for (int i = 0; i < 9; i++) {
+        float sx = gridX + i * INV_SLOT;
+        int slotIdx = 37 + i;
+        if (i == inv.getSelectedSlot()) {
+            ImGui::GetForegroundDrawList()->AddRect(
+                ImVec2(sx - 2, hotbarY - 2),
+                ImVec2(sx + INV_SLOT + 2, hotbarY + INV_SLOT + 2),
+                IM_COL32(255, 255, 255, 255), 3.0f, 0, 2.5f);
+        }
+        renderItem(sx, hotbarY, getContainerSlot(slotIdx));
+        char id[16];
+        snprintf(id, sizeof(id), "hot_%d", i);
+        handleSlotClick(sx, hotbarY, slotIdx, id);
+    }
+
+    // 光标上的物品
+    const InvSlot& cursor = inv.getCursorItem();
+    if (cursor.present && cursor.itemId > 0) {
+        float mx = io.MousePos.x - INV_SLOT * 0.5f;
+        float my = io.MousePos.y - INV_SLOT * 0.5f;
+        renderItem(mx, my, cursor);
     }
 
     ImGui::End();

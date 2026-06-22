@@ -21,6 +21,10 @@ public:
     void setContent(int containerId, const std::vector<InvSlot>& items);
     void setSlot(int containerId, int slot, const InvSlot& item);
 
+    // 外部容器槽位访问（工作台、熔炉等）
+    const std::vector<InvSlot>& getContainerSlots() const { return containerSlots; }
+    int getContainerSlotCount() const { return (int)containerSlots.size(); }
+
     // 快捷栏 (0-8)
     const InvSlot& getHotbarSlot(int index) const;
     int getSelectedSlot() const { return selectedSlot; }
@@ -60,6 +64,7 @@ private:
     int getHotbarStart() const;
 
     std::vector<InvSlot> slots;       // 完整物品栏（容器 0 的全部格）
+    std::vector<InvSlot> containerSlots; // 外部容器槽位（工作台、熔炉等）
     std::array<InvSlot, 9> hotbar;    // 快捷栏专用（独立于 slots 布局）
     int selectedSlot = 0;
     int stateId = 0;

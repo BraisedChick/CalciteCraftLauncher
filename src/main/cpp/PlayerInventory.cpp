@@ -12,7 +12,13 @@ PlayerInventory::PlayerInventory() {
 }
 
 void PlayerInventory::setContent(int containerId, const std::vector<InvSlot>& items) {
-    if (containerId != 0) return;
+    if (containerId != 0) {
+        // 外部容器（工作台、熔炉等）
+        std::lock_guard<std::mutex> lock(mutex);
+        containerSlots = items;
+        LOGI("Container %d content: %zu slots", containerId, items.size());
+        return;
+    }
     std::lock_guard<std::mutex> lock(mutex);
     slots = items;
 
@@ -45,6 +51,13 @@ void PlayerInventory::setContent(int containerId, const std::vector<InvSlot>& it
 
 void PlayerInventory::setSlot(int containerId, int slot, const InvSlot& item) {
     std::lock_guard<std::mutex> lock(mutex);
+    if (containerId > 0) {
+        // 外部容器槽位更新
+        if (slot >= 0 && slot < (int)containerSlots.size()) {
+            containerSlots[slot] = item;
+        }
+        return;
+    }
     if (containerId == 0) {
         // 直接更新物品栏
         if (slot >= 0 && slot < (int)slots.size()) {

@@ -30,6 +30,7 @@
 #include "protocolCraft/Packets/Game/Serverbound/ServerboundClientInformationPacket.hpp"
 #include "protocolCraft/Packets/Game/Serverbound/ServerboundSetCarriedItemPacket.hpp"
 #include "protocolCraft/Packets/Game/Serverbound/ServerboundContainerClickPacket.hpp"
+#include "protocolCraft/Packets/Game/Serverbound/ServerboundContainerClosePacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundSetExperiencePacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundSetCarriedItemPacket.hpp"
 #include "protocolCraft/Packets/Game/Serverbound/ServerboundUseItemOnPacket.hpp"
@@ -56,6 +57,7 @@
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundTeleportEntityPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundRemoveEntitiesPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundSetEntityMotionPacket.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundOpenScreenPacket.hpp"
 #include "Light.h"
 #include "EntityManager.h"
 #include "EntityRenderer.h"
@@ -63,6 +65,7 @@
 #include "protocolCraft/Utilities/Json.hpp"
 #include "BiomeColorManager.h"
 #include "PlayerInventory.h"
+#include "gui/GameUI.h"
 
 #include <glm/glm.hpp>
 #include <vector>
@@ -624,9 +627,15 @@ void ClientEngine::sendRespawn() {
     LOGI("Sent respawn request (ClientCommand PERFORM_RESPAWN)");
 }
 
-void ClientEngine::sendContainerClick(int slotNum, int button) {
+void ClientEngine::sendContainerClick(int slotNum, int button, int containerId) {
     std::lock_guard<std::mutex> lock(netMutex);
     if (!net || !net->isConnected()) return;
+
+    // 确定实际容器 ID
+    if (containerId < 0) {
+        int openId = GameUI::getInstance().getOpenContainerId();
+        containerId = (openId >= 0) ? openId : 0;
+    }
 
     auto& inv = PlayerInventory::getInstance();
     InvSlot cursor = inv.getCursorItem();
@@ -701,7 +710,7 @@ void ClientEngine::sendContainerClick(int slotNum, int button) {
     };
 
     ProtocolCraft::ServerboundContainerClickPacket clickPacket;
-    clickPacket.SetContainerId(0);  // 0 = 玩家背包
+    clickPacket.SetContainerId(containerId);
     clickPacket.SetStateId(inv.getStateId());
     clickPacket.SetSlotNum((short)slotNum);
     clickPacket.SetButtonNum((char)button);
@@ -717,6 +726,22 @@ void ClientEngine::sendContainerClick(int slotNum, int button) {
     ProtocolCraft::WriteContainer writeData;
     clickPacket.Write(writeData);
     net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+}
+
+void ClientEngine::sendContainerClose() {
+    std::lock_guard<std::mutex> lock(netMutex);
+    if (!net || !net->isConnected()) return;
+
+    int containerId = GameUI::getInstance().getOpenContainerId();
+    if (containerId <= 0) return; // 0=玩家背包，不需要关闭包
+
+    ProtocolCraft::ServerboundContainerClosePacket closePacket;
+    closePacket.SetContainerId((unsigned char)containerId);
+
+    ProtocolCraft::WriteContainer writeData;
+    closePacket.Write(writeData);
+    net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+    LOGI("Sent ContainerClose: id=%d", containerId);
 }
 
 void ClientEngine::sendContainerQuickCraft(int phase, int slotNum, int button) {
@@ -1739,6 +1764,25 @@ void ClientEngine::handlePlayPacket(int packetId,
                 pkt.Read(iter, len);
                 EntityManager::getInstance().setEntityMotion(
                     pkt.GetEntityId(), pkt.GetXA(), pkt.GetYA(), pkt.GetZA());
+                break;
+            }
+
+            case 0x2E: { // Open Screen（服务器打开容器 UI）
+                ProtocolCraft::ClientboundOpenScreenPacket pkt;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t len = pktData.size();
+                pkt.Read(iter, len);
+                int containerId = pkt.GetContainerId();
+                int containerType = pkt.GetType();
+                LOGI("OpenScreen: containerId=%d, type=%d", containerId, containerType);
+                GameUI::getInstance().openContainer(containerId, containerType);
+                break;
+            }
+
+            case 0x13: { // Container Close（服务器关闭容器）
+                GameUI::getInstance().closeContainer();
+                LOGI("Container closed by server");
                 break;
             }
 

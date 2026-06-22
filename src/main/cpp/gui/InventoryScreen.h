@@ -12,6 +12,9 @@ public:
     void render(int mouseX, int mouseY) override;
 
 private:
+    void renderPlayerInventory(float w, float h);
+    void renderCraftingTable(float w, float h);
+
     // 背包拖拽（Quick Craft）状态
     int quickcraftStatus = 0;
     std::vector<int> quickcraftSlots;

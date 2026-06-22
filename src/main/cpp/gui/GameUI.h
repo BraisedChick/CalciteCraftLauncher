@@ -119,6 +119,12 @@ public:
     bool isInventoryOpen() const { return inventoryOpen; }
     void setInventoryOpen(bool open) { inventoryOpen = open; }
 
+    // 容器交互（由 ClientEngine 调用）
+    void openContainer(int containerId, int containerType);
+    void closeContainer();
+    int getOpenContainerId() const { return openContainerId; }
+    int getOpenContainerType() const { return openContainerType; }
+
     // HUD 按钮/摇杆状态 getter（供 HudScreen 读取高亮状态）
     bool isButtonUp() const { return buttons.upPressed; }
     bool isButtonDown() const { return buttons.downPressed; }
@@ -237,6 +243,10 @@ private:
 
     // 背包界面
     bool inventoryOpen = false;
+
+    // 容器状态（由 OpenScreen 包设置）
+    int openContainerId = -1;   // -1 = 无容器, 0 = 玩家背包, >0 = 外部容器
+    int openContainerType = -1; // 菜单类型：11=工作台，等
 
     // overlay 跟踪（避免每帧重建）
     bool lastDeathActive = false;

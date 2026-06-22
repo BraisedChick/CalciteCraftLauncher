@@ -17,6 +17,7 @@
 #include "ClientEngine.h"
 #include "Raycast.h"
 #include "ChunkManager.h"
+#include "BlockRegistry.h"
 #include "TextureLoader.h"
 
 // Screen 系统（同目录）
@@ -293,6 +294,19 @@ void GameUI::saveSettings() {
 
 void GameUI::saveSettingsNow() { saveSettings(); }
 
+void GameUI::openContainer(int containerId, int containerType) {
+    openContainerId = containerId;
+    openContainerType = containerType;
+    inventoryOpen = true;
+    LOGI("Container opened: id=%d, type=%d", containerId, containerType);
+}
+
+void GameUI::closeContainer() {
+    openContainerId = -1;
+    openContainerType = -1;
+    inventoryOpen = false;
+}
+
 // ===== 多点触控 =====
 
 GameUI::TouchPoint* GameUI::findTouchPoint(int id) {
@@ -336,7 +350,12 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
     }
     if (currentState == UIState::IN_GAME && inventoryOpen) {
         if (isInEButtonArea(x, y) && action == 0) {
-            inventoryOpen = false;
+            // 关闭外部容器时发送关闭包
+            if (openContainerId > 0) {
+                auto* engine = ClientEngine::getInstance();
+                if (engine) engine->sendContainerClose();
+            }
+            closeContainer();
             Collision::getInstance().resetMovement();
             return;
         }
@@ -376,7 +395,16 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
             toggleDebugInfo();
         } else if (!isRoleTaken(TouchPoint::E_BUTTON) && isInEButtonArea(x, y)) {
             pt->role = TouchPoint::E_BUTTON;
-            inventoryOpen = !inventoryOpen;
+            if (inventoryOpen) {
+                // 关闭外部容器时发送关闭包
+                if (openContainerId > 0) {
+                    auto* engine = ClientEngine::getInstance();
+                    if (engine) engine->sendContainerClose();
+                }
+                closeContainer();
+            } else {
+                inventoryOpen = true;
+            }
             Collision::getInstance().resetMovement();
         } else if (currentState == UIState::IN_GAME) {
             int hbSlot = hotbarSlotAt(x, y);
@@ -459,10 +487,9 @@ void GameUI::handleJoystickTouch(int pointerId, float x, float y, int action) {
 }
 
 void GameUI::performBlockPlacement() {
-    // 空手时不发送放置包
     auto& inv = PlayerInventory::getInstance();
     const InvSlot& held = inv.getHotbarSlot(inv.getSelectedSlot());
-    if (!held.present || held.itemId <= 0) return;
+    bool hasItem = held.present && held.itemId > 0;
 
     auto& cam = CameraController::getInstance();
     glm::vec3 playerPos = cam.getPosition();
@@ -478,6 +505,22 @@ void GameUI::performBlockPlacement() {
     if (!cm) return;
     auto result = rayCast(eyePos, dir, 5.0f, *cm);
     if (!result.hit) return;
+
+    // 空手时：检查目标方块是否为可交互方块（工作台等）
+    if (!hasItem) {
+        auto chunk = cm->getChunk(result.blockX >> 4, result.blockZ >> 4);
+        if (!chunk) return;
+        uint32_t state = chunk->getBlockState(result.blockX & 15, result.blockY, result.blockZ & 15);
+        auto meta = BlockRegistry::getInstance().getBlockMetadata(state);
+        // 只对可交互方块发送 UseItemOn（工作台、熔炉、箱子等）
+        if (meta.name != "crafting_table" && meta.name != "furnace" &&
+            meta.name != "chest" && meta.name != "ender_chest" &&
+            meta.name != "anvil" && meta.name != "enchanting_table" &&
+            meta.name != "brewing_stand" && meta.name != "smithing_table") {
+            return;
+        }
+    }
+
     static const glm::ivec3 faceNormals[] = {
         {0,-1,0}, {0,1,0}, {0,0,-1}, {0,0,1}, {-1,0,0}, {1,0,0}
     };

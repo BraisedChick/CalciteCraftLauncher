@@ -67,7 +67,10 @@ public:
 
     // 发送背包点击（左键拿取/放下）
     // slotNum: 槽位号（0-45 玩家背包），button: 0=左键 1=右键
-    void sendContainerClick(int slotNum, int button);
+    void sendContainerClick(int slotNum, int button, int containerId = -1);
+
+    // 发送容器关闭包（关闭工作台等外部容器）
+    void sendContainerClose();
 
     // 发送背包拖拽（Quick Craft）操作
     // 原版MC拖拽流程：按住鼠标拖过多个格子 → 松开时均分物品
