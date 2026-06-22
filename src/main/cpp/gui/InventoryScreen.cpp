@@ -415,6 +415,8 @@ void InventoryScreen::renderCraftingTable(float w, float h) {
     const float TEX_RESULT_LEFT = 124.0f;
     const float TEX_RESULT_TOP = 35.0f;
 
+    const float ITEM_Y_OFFSET = -3.0f; // 物品图标上移4像素
+
     float containerW = TEX_CONTAINER_W * S;
     float containerH = TEX_CONTAINER_H * S;
     float containerX = (w - containerW) * 0.5f;
@@ -468,15 +470,15 @@ void InventoryScreen::renderCraftingTable(float w, float h) {
         float iconSize = INV_SLOT - pad * 2;
         ImGui::GetForegroundDrawList()->AddImage(
             (ImTextureID)(intptr_t)tex,
-            ImVec2(sx + pad, sy + pad),
-            ImVec2(sx + pad + iconSize, sy + pad + iconSize));
+            ImVec2(sx + pad, sy + pad + ITEM_Y_OFFSET),
+            ImVec2(sx + pad + iconSize, sy + pad + iconSize + ITEM_Y_OFFSET));
         if (slot.count > 1) {
             char countStr[8];
             snprintf(countStr, sizeof(countStr), "%d", slot.count);
             ImVec2 textSize = ImGui::CalcTextSize(countStr);
             ImGui::GetForegroundDrawList()->AddText(
                 ImVec2(sx + INV_SLOT - textSize.x - 3,
-                       sy + INV_SLOT - textSize.y - 2),
+                       sy + INV_SLOT - textSize.y - 2 + ITEM_Y_OFFSET),
                 IM_COL32(255, 255, 255, 255), countStr);
         }
     };
@@ -491,6 +493,78 @@ void InventoryScreen::renderCraftingTable(float w, float h) {
 
     int containerId = GameUI::getInstance().getOpenContainerId();
 
+    // 全局拖拽检测（与背包一致）
+    auto getCraftSlotAtMouse = [&]() -> int {
+        float mx = io.MousePos.x, my = io.MousePos.y;
+        float craftX = containerX + TEX_CRAFT_LEFT * S;
+        float craftY = containerY + TEX_CRAFT_TOP * S;
+        for (int row = 0; row < 3; row++)
+            for (int col = 0; col < 3; col++) {
+                float sx = craftX + col * INV_SLOT, sy = craftY + row * INV_SLOT;
+                if (mx >= sx && mx < sx + INV_SLOT && my >= sy && my < sy + INV_SLOT)
+                    return 1 + row * 3 + col;
+            }
+        float resultX = containerX + TEX_RESULT_LEFT * S, resultY = containerY + TEX_RESULT_TOP * S;
+        if (mx >= resultX && mx < resultX + INV_SLOT && my >= resultY && my < resultY + INV_SLOT) return 0;
+        for (int row = 0; row < 3; row++)
+            for (int col = 0; col < 9; col++) {
+                float sx = gridX + col * INV_SLOT, rowY = gridY + row * INV_SLOT;
+                if (mx >= sx && mx < sx + INV_SLOT && my >= rowY && my < rowY + INV_SLOT)
+                    return 10 + row * 9 + col;
+            }
+        for (int i = 0; i < 9; i++) {
+            float sx = gridX + i * INV_SLOT;
+            if (mx >= sx && mx < sx + INV_SLOT && my >= hotbarY && my < hotbarY + INV_SLOT)
+                return 37 + i;
+        }
+        return -1;
+    };
+
+    auto* engine = ClientEngine::getInstance();
+    if (engine) {
+        if (isDraggingSlot && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            int hoveredSlot = getCraftSlotAtMouse();
+            if (hoveredSlot >= 0) {
+                bool alreadyAdded = false;
+                for (int s : quickcraftSlots) if (s == hoveredSlot) { alreadyAdded = true; break; }
+                const InvSlot& cursorItem = inv.getCursorItem();
+                if (!alreadyAdded && (int)quickcraftSlots.size() < cursorItem.count)
+                    quickcraftSlots.push_back(hoveredSlot);
+            }
+        }
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && isDraggingSlot) {
+            if (quickcraftSlots.size() > 1) {
+                engine->sendContainerQuickCraft(0, -999, 0);
+                for (int slot : quickcraftSlots) engine->sendContainerQuickCraft(1, slot, 0);
+                engine->sendContainerQuickCraft(2, -999, 0);
+                const InvSlot& cursorItem = inv.getCursorItem();
+                int totalItems = cursorItem.count;
+                int validSlotCount = 0;
+                for (int slot : quickcraftSlots) {
+                    const InvSlot& slotItem = (containerId > 0) ? inv.getContainerSlot(slot) : inv.getSlot(slot);
+                    if (!slotItem.present || slotItem.itemId <= 0 || slotItem.itemId == cursorItem.itemId) validSlotCount++;
+                }
+                int perSlot = (validSlotCount > 0) ? (totalItems / validSlotCount) : 0;
+                int distributed = 0;
+                for (int slot : quickcraftSlots) {
+                    const InvSlot& slotItem = (containerId > 0) ? inv.getContainerSlot(slot) : inv.getSlot(slot);
+                    int availableSpace = 64;
+                    if (slotItem.present && slotItem.itemId > 0)
+                        availableSpace = (slotItem.itemId == cursorItem.itemId) ? 64 - slotItem.count : 0;
+                    distributed += std::min(perSlot, availableSpace);
+                }
+                int remaining = totalItems - distributed;
+                InvSlot updatedCursor = cursorItem;
+                if (remaining > 0) { updatedCursor.count = (int8_t)remaining; }
+                else { updatedCursor.present = false; updatedCursor.itemId = 0; updatedCursor.count = 0; }
+                inv.setCursorItem(updatedCursor);
+            } else if (quickcraftStartSlot >= 0) {
+                engine->sendContainerClick(quickcraftStartSlot, 0);
+            }
+            isDraggingSlot = false; quickcraftStatus = 0; quickcraftSlots.clear(); quickcraftStartSlot = -1;
+        }
+    }
+
     auto handleSlotClick = [&](float sx, float sy, int containerSlot, const char* id) {
         ImGui::SetCursorScreenPos(ImVec2(sx, sy));
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
@@ -502,7 +576,18 @@ void InventoryScreen::renderCraftingTable(float w, float h) {
         auto* eng = ClientEngine::getInstance();
         if (!eng) { ImGui::PopStyleColor(3); return; }
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-            eng->sendContainerClick(containerSlot, 0);
+            const InvSlot& cursor = inv.getCursorItem();
+            if (cursor.present && cursor.count > 1) {
+                isDraggingSlot = true;
+                quickcraftStartSlot = containerSlot;
+                quickcraftStatus = 0;
+                quickcraftSlots.clear();
+            } else {
+                eng->sendContainerClick(containerSlot, 0);
+            }
+        }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+            eng->sendContainerClick(containerSlot, 1);
         }
         ImGui::PopStyleColor(3);
     };

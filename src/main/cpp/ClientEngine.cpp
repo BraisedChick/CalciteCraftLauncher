@@ -639,7 +639,8 @@ void ClientEngine::sendContainerClick(int slotNum, int button, int containerId) 
 
     auto& inv = PlayerInventory::getInstance();
     InvSlot cursor = inv.getCursorItem();
-    InvSlot clicked = inv.getSlot(slotNum);
+    // 根据容器ID读取正确的槽位数组
+    InvSlot clicked = (containerId > 0) ? inv.getContainerSlot(slotNum) : inv.getSlot(slotNum);
 
     // 构建点击后的光标和槽位状态（客户端预测）
     InvSlot newCursor = cursor;
@@ -696,7 +697,11 @@ void ClientEngine::sendContainerClick(int slotNum, int button, int containerId) 
 
     // 更新本地状态
     inv.setCursorItem(newCursor);
-    inv.setLocalSlot(slotNum, newClicked);
+    if (containerId > 0) {
+        inv.setContainerLocalSlot(slotNum, newClicked);
+    } else {
+        inv.setLocalSlot(slotNum, newClicked);
+    }
 
     // 构建 ProtocolCraft Slot 对象
     auto toSlot = [](const InvSlot& is) -> ProtocolCraft::Slot {
@@ -761,7 +766,9 @@ void ClientEngine::sendContainerQuickCraft(int phase, int slotNum, int button) {
     int buttonNum = (type << 2) | phase;
 
     ProtocolCraft::ServerboundContainerClickPacket clickPacket;
-    clickPacket.SetContainerId(0);  // 0 = 玩家背包
+    // 使用当前打开的容器ID（0=玩家背包）
+    int qcContainerId = GameUI::getInstance().getOpenContainerId();
+    clickPacket.SetContainerId((qcContainerId >= 0) ? qcContainerId : 0);
     clickPacket.SetStateId(inv.getStateId());
 
     if (phase == 0 || phase == 2) {

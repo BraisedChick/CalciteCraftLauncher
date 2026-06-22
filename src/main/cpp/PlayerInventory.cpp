@@ -141,6 +141,20 @@ void PlayerInventory::setCursorItem(const InvSlot& item) {
     cursorItem = item;
 }
 
+const InvSlot& PlayerInventory::getContainerSlot(int index) const {
+    static InvSlot empty;
+    if (index < 0 || index >= (int)containerSlots.size()) return empty;
+    std::lock_guard<std::mutex> lock(mutex);
+    return containerSlots[index];
+}
+
+void PlayerInventory::setContainerLocalSlot(int index, const InvSlot& item) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (index >= 0 && index < (int)containerSlots.size()) {
+        containerSlots[index] = item;
+    }
+}
+
 // 合成格子访问方法
 const InvSlot& PlayerInventory::getCraftSlot(int index) const {
     static InvSlot empty;

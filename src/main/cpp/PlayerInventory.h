@@ -24,6 +24,8 @@ public:
     // 外部容器槽位访问（工作台、熔炉等）
     const std::vector<InvSlot>& getContainerSlots() const { return containerSlots; }
     int getContainerSlotCount() const { return (int)containerSlots.size(); }
+    const InvSlot& getContainerSlot(int index) const;
+    void setContainerLocalSlot(int index, const InvSlot& item);
 
     // 快捷栏 (0-8)
     const InvSlot& getHotbarSlot(int index) const;
