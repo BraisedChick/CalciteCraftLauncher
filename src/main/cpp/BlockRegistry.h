@@ -23,6 +23,8 @@ struct BlockInfo {
         std::vector<std::string> values;  // 属性值列表（按协议顺序）
     };
     std::vector<StateProperty> stateProperties;
+
+    float hardness = 0.0f;         // 方块硬度（-1 = 不可破坏，0 = 瞬间破坏）
 };
 
 // 预计算的方块元数据（避免每次循环调用 getBlockName + 字符串比较）
@@ -42,6 +44,7 @@ struct BlockMetadata {
     bool isNoCollision = false;  // 火把、按钮等无碰撞方块
     bool isFullBlock = true;     // 几何上是否为完整 16x16x16 立方体（用于快速路径和面剔除）
     bool isOpaque = true;        // 是否不透明（false=玻璃等透明方块，相邻面不应被剔除）
+    float hardness = 0.0f;       // 方块硬度（-1=不可破坏，0=瞬间破坏，>0=需要时间挖掘）
 };
 
 class BlockRegistry {
@@ -104,4 +107,5 @@ private:
     // 解析 JSON 的辅助函数
     std::string extractString(const std::string& json, const std::string& key) const;
     int32_t extractInt(const std::string& json, const std::string& key) const;
+    float extractFloat(const std::string& json, const std::string& key) const;
 };

@@ -4,8 +4,8 @@
 #include <functional>
 #include <vector>
 #include <mutex>
-#include <chrono>
 #include <GLES3/gl3.h>
+#include "Raycast.h"
 
 enum class UIState {
     MAIN_MENU,
@@ -176,6 +176,9 @@ private:
     void handleCameraTouch(int pointerId, float x, float y, int action);
     void performBlockPlacement();
     void performBlockBreak();
+    void continueDestroyBlock();
+    void stopDestroyBlock();
+    RaycastResult getTargetBlock() const;
     bool isInJoystickArea(float x, float y) const;
     bool isInUpButtonArea(float x, float y) const;
     bool isInDownButtonArea(float x, float y) const;
@@ -229,12 +232,13 @@ private:
 
     bool showDebugInfo = false;
 
-    // 挖掘中断追踪
-    bool digging = false;
-    int digBlockX = 0, digBlockY = 0, digBlockZ = 0;
+    // 挖掘状态（对标原版 MultiPlayerGameMode）
+    bool digging = false;             // isDestroying
+    int digBlockX = 0, digBlockY = 0, digBlockZ = 0;  // destroyBlockPos
     int digFace = 0;
-    std::chrono::steady_clock::time_point digStartTime;
-    float digDuration = 0.0f;
+    float destroyProgress = 0.0f;     // 挖掘进度（0.0→1.0）
+    float destroyAccumulator = 0.0f;  // 时间累加器（用于固定刻率 50ms）
+    int destroyDelay = 0;             // 挖掘后冷却（刻数，每刻50ms）
 
     // 死亡界面状态
     bool deathScreenActive = false;

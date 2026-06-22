@@ -4,7 +4,6 @@
 #include <sstream>
 #include <cstdio>
 #include <cmath>
-#include <chrono>
 
 #define IMGUI_IMPL_OPENGL_ES3
 #define IMGUI_IMPL_OPENGL_LOADER_CUSTOM
@@ -168,42 +167,22 @@ void GameUI::render() {
     ImGui::NewFrame();
 
     if (currentState == UIState::IN_GAME) {
-        if (digging && buttons.attackPressed) {
-            auto* engine = ClientEngine::getInstance();
-            auto* cm = engine ? engine->getChunkManager() : nullptr;
-            // 检测准星是否仍指向原方块
-            bool stillOnTarget = false;
-            if (cm) {
-                auto& cam = CameraController::getInstance();
-                glm::vec3 playerPos = cam.getPosition();
-                float pitch = cam.getPitch(), yaw = cam.getYaw();
-                glm::vec3 dir;
-                dir.x = -std::sin(yaw) * std::cos(pitch);
-                dir.y = -std::sin(pitch);
-                dir.z = std::cos(yaw) * std::cos(pitch);
-                glm::vec3 eyePos = playerPos + glm::vec3(0.0f, 1.62f, 0.0f);
-                auto result = rayCast(eyePos, dir, 5.0f, *cm);
-                if (result.hit && result.blockX == digBlockX &&
-                    result.blockY == digBlockY && result.blockZ == digBlockZ) {
-                    stillOnTarget = true;
-                }
-            }
-            if (!stillOnTarget) {
-                // 准星离开了目标方块，中断挖掘
-                if (engine) engine->sendBlockBreakAbort(digBlockX, digBlockY, digBlockZ, digFace);
-                digging = false;
-            } else {
-                auto now = std::chrono::steady_clock::now();
-                float elapsed = std::chrono::duration<float>(now - digStartTime).count();
-                if (elapsed >= digDuration) {
-                    if (engine) {
-                        engine->sendBlockBreakFinish(digBlockX, digBlockY, digBlockZ, digFace);
-                        digging = false;
-                    }
-                }
+        auto* engine = ClientEngine::getInstance();
+
+        // 挖掘后冷却递减（每刻 50ms）
+        if (destroyDelay > 0) {
+            destroyAccumulator += ImGui::GetIO().DeltaTime;
+            while (destroyAccumulator >= 0.05f) {
+                destroyAccumulator -= 0.05f;
+                --destroyDelay;
+                if (destroyDelay <= 0) break;
             }
         }
-        auto* engine = ClientEngine::getInstance();
+
+        // 持续按住攻击按钮时继续挖掘
+        if (buttons.attackPressed && destroyDelay <= 0) {
+            continueDestroyBlock();
+        }
         float health = engine ? engine->getHealth() : 20.0f;
         if (!deathScreenActive && health <= 0.0f && prevHealth > 0.0f && engine && engine->getGameMode() != 3) {
             deathScreenActive = true;
@@ -466,11 +445,7 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
             case TouchPoint::SPRINT_BUTTON: break;
             case TouchPoint::ATTACK_BUTTON:
                 buttons.attackPressed = false;
-                if (digging) {
-                    digging = false;
-                    auto* engine = ClientEngine::getInstance();
-                    if (engine) engine->sendBlockBreakAbort(digBlockX, digBlockY, digBlockZ, digFace);
-                }
+                stopDestroyBlock();
                 break;
             case TouchPoint::PLACE_BUTTON:
                 buttons.placePressed = false; break;
@@ -551,7 +526,9 @@ void GameUI::performBlockPlacement() {
     engine->sendBlockPlacement(result.blockX, result.blockY, result.blockZ, result.hitFace, 0);
 }
 
-void GameUI::performBlockBreak() {
+// ===== 挖掘逻辑（对标原版 MultiPlayerGameMode）=====
+
+RaycastResult GameUI::getTargetBlock() const {
     auto& cam = CameraController::getInstance();
     glm::vec3 playerPos = cam.getPosition();
     float pitch = cam.getPitch(), yaw = cam.getYaw();
@@ -561,18 +538,136 @@ void GameUI::performBlockBreak() {
     dir.z = std::cos(yaw) * std::cos(pitch);
     glm::vec3 eyePos = playerPos + glm::vec3(0.0f, 1.62f, 0.0f);
     auto* engine = ClientEngine::getInstance();
+    if (!engine) return {};
+    auto* cm = engine->getChunkManager();
+    if (!cm) return {};
+    return rayCast(eyePos, dir, 5.0f, *cm);
+}
+
+// 首次按下攻击按钮时调用
+void GameUI::performBlockBreak() {
+    auto* engine = ClientEngine::getInstance();
+    if (!engine) return;
+    int gameMode = engine->getGameMode();
+    auto result = getTargetBlock();
+    if (!result.hit) return;
+
+    // 创造模式：瞬时破坏 + 5刻冷却
+    if (gameMode == 1) {
+        engine->sendBlockBreakStart(result.blockX, result.blockY, result.blockZ, result.hitFace);
+        destroyDelay = 5;
+        destroyAccumulator = 0.0f;
+        digging = false;
+        return;
+    }
+
+    // 生存/冒险模式：如果正在挖掘且目标变了，先 ABORT 旧的
+    if (digging) {
+        engine->sendBlockBreakAbort(digBlockX, digBlockY, digBlockZ, digFace);
+    }
+
+    // 开始新挖掘
+    engine->sendBlockBreakStart(result.blockX, result.blockY, result.blockZ, result.hitFace);
+    digBlockX = result.blockX; digBlockY = result.blockY; digBlockZ = result.blockZ;
+    digFace = result.hitFace;
+    destroyProgress = 0.0f;
+    destroyAccumulator = 0.0f;
+
+    // 查询方块硬度，瞬时破坏（hardness=0 或空气）
+    auto* cm = engine->getChunkManager();
+    if (cm) {
+        auto chunk = cm->getChunk(result.blockX >> 4, result.blockZ >> 4);
+        if (chunk) {
+            uint32_t state = chunk->getBlockState(result.blockX & 15, result.blockY, result.blockZ & 15);
+            auto meta = BlockRegistry::getInstance().getBlockMetadata(state);
+            if (meta.hardness < 0.0f) {
+                // 不可破坏（基岩等）
+                digging = false;
+                return;
+            }
+            if (meta.hardness == 0.0f) {
+                // 瞬间破坏（火把、花等）
+                engine->sendBlockBreakFinish(result.blockX, result.blockY, result.blockZ, result.hitFace);
+                destroyDelay = 5;
+                destroyAccumulator = 0.0f;
+                digging = false;
+                return;
+            }
+        }
+    }
+
+    digging = true;
+}
+
+// 每帧持续调用（对标 continueDestroyBlock）
+void GameUI::continueDestroyBlock() {
+    auto* engine = ClientEngine::getInstance();
     if (!engine) return;
     auto* cm = engine->getChunkManager();
     if (!cm) return;
-    auto result = rayCast(eyePos, dir, 5.0f, *cm);
-    if (!result.hit) return;
-    digging = true;
-    digBlockX = result.blockX; digBlockY = result.blockY; digBlockZ = result.blockZ;
-    digFace = result.hitFace;
-    digStartTime = std::chrono::steady_clock::now();
-    int gameMode = engine->getGameMode();
-    digDuration = (gameMode == 1) ? 0.0f : 1.0f;
-    engine->sendBlockBreakStart(result.blockX, result.blockY, result.blockZ, result.hitFace);
+
+    auto result = getTargetBlock();
+
+    // 未命中或目标切换：ABORT 旧 + START 新
+    if (!result.hit ||
+        result.blockX != digBlockX || result.blockY != digBlockY || result.blockZ != digBlockZ) {
+        if (digging) {
+            engine->sendBlockBreakAbort(digBlockX, digBlockY, digBlockZ, digFace);
+            digging = false;
+        }
+        if (result.hit) {
+            performBlockBreak();
+        }
+        return;
+    }
+
+    // 未处于挖掘状态（可能刚被 ABORT）
+    if (!digging) return;
+
+    // 查询方块硬度，计算每刻进度增量
+    auto chunk = cm->getChunk(result.blockX >> 4, result.blockZ >> 4);
+    if (!chunk) return;
+    uint32_t state = chunk->getBlockState(result.blockX & 15, result.blockY, result.blockZ & 15);
+    auto meta = BlockRegistry::getInstance().getBlockMetadata(state);
+
+    if (meta.hardness < 0.0f) {
+        // 不可破坏
+        engine->sendBlockBreakAbort(digBlockX, digBlockY, digBlockZ, digFace);
+        digging = false;
+        return;
+    }
+
+    // 原版公式：progressPerTick = 1.0 / hardness / 100.0 （空手无正确工具）
+    float progressPerTick = 1.0f / meta.hardness / 100.0f;
+
+    // 固定刻率（50ms/tick）累加进度
+    destroyAccumulator += ImGui::GetIO().DeltaTime;
+    while (destroyAccumulator >= 0.05f) {
+        destroyAccumulator -= 0.05f;
+        destroyProgress += progressPerTick;
+    }
+
+    // 挖掘完成
+    if (destroyProgress >= 1.0f) {
+        engine->sendBlockBreakFinish(digBlockX, digBlockY, digBlockZ, digFace);
+        digging = false;
+        destroyProgress = 0.0f;
+        destroyDelay = 5;  // 5刻冷却
+        destroyAccumulator = 0.0f;
+    }
+}
+
+// 松开攻击按钮时调用（对标 stopDestroyBlock）
+void GameUI::stopDestroyBlock() {
+    if (digging) {
+        auto* engine = ClientEngine::getInstance();
+        if (engine) {
+            engine->sendBlockBreakAbort(digBlockX, digBlockY, digBlockZ, digFace);
+        }
+        digging = false;
+        destroyProgress = 0.0f;
+        destroyAccumulator = 0.0f;
+    }
 }
 
 void GameUI::handleCameraTouch(int pointerId, float x, float y, int action) {

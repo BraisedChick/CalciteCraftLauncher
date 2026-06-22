@@ -81,6 +81,7 @@ bool BlockRegistry::loadFromJson(const std::string& json) {
         info.minStateId = extractInt(blockJson, "\"minStateId\"");
         info.maxStateId = extractInt(blockJson, "\"maxStateId\"");
         info.defaultState = extractInt(blockJson, "\"defaultState\"");
+        info.hardness = extractFloat(blockJson, "\"hardness\"");
 
         // 解析 states 数组（属性定义顺序，用于正确计算 state ID offset）
         size_t statesPos = blockJson.find("\"states\"");
@@ -288,6 +289,35 @@ int32_t BlockRegistry::extractInt(const std::string& json, const std::string& ke
     }
 }
 
+// 辅助函数：提取浮点数值
+float BlockRegistry::extractFloat(const std::string& json, const std::string& key) const {
+    std::string searchKey = key + ": ";
+    size_t pos = json.find(searchKey);
+    if (pos == std::string::npos) return 0.0f;
+
+    pos += searchKey.length();
+
+    // 跳过空格
+    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) {
+        pos++;
+    }
+
+    // 提取数字（包含小数点和负号）
+    std::string numStr;
+    while (pos < json.size() && (isdigit(json[pos]) || json[pos] == '-' || json[pos] == '.')) {
+        numStr += json[pos];
+        pos++;
+    }
+
+    if (numStr.empty()) return 0.0f;
+
+    try {
+        return std::stof(numStr);
+    } catch (...) {
+        return 0.0f;
+    }
+}
+
 void BlockRegistry::precomputeAll() {
     LOGI("Precomputing metadata for %zu block states...", stateToBlock.size());
     metadataCache.reserve(stateToBlock.size());
@@ -314,6 +344,7 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
     }
     meta.name = info->name;
     meta.minStateId = info->minStateId;
+    meta.hardness = info->hardness;
 
     // ---- 方块类型判断 ----
     meta.isAir = (meta.name == "air" || meta.name == "cave_air" || meta.name == "void_air");
