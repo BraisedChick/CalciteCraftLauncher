@@ -169,13 +169,37 @@ void GameUI::render() {
 
     if (currentState == UIState::IN_GAME) {
         if (digging && buttons.attackPressed) {
-            auto now = std::chrono::steady_clock::now();
-            float elapsed = std::chrono::duration<float>(now - digStartTime).count();
-            if (elapsed >= digDuration) {
-                auto* engine = ClientEngine::getInstance();
-                if (engine) {
-                    engine->sendBlockBreakFinish(digBlockX, digBlockY, digBlockZ, digFace);
-                    digging = false;
+            auto* engine = ClientEngine::getInstance();
+            auto* cm = engine ? engine->getChunkManager() : nullptr;
+            // 检测准星是否仍指向原方块
+            bool stillOnTarget = false;
+            if (cm) {
+                auto& cam = CameraController::getInstance();
+                glm::vec3 playerPos = cam.getPosition();
+                float pitch = cam.getPitch(), yaw = cam.getYaw();
+                glm::vec3 dir;
+                dir.x = -std::sin(yaw) * std::cos(pitch);
+                dir.y = -std::sin(pitch);
+                dir.z = std::cos(yaw) * std::cos(pitch);
+                glm::vec3 eyePos = playerPos + glm::vec3(0.0f, 1.62f, 0.0f);
+                auto result = rayCast(eyePos, dir, 5.0f, *cm);
+                if (result.hit && result.blockX == digBlockX &&
+                    result.blockY == digBlockY && result.blockZ == digBlockZ) {
+                    stillOnTarget = true;
+                }
+            }
+            if (!stillOnTarget) {
+                // 准星离开了目标方块，中断挖掘
+                if (engine) engine->sendBlockBreakAbort(digBlockX, digBlockY, digBlockZ, digFace);
+                digging = false;
+            } else {
+                auto now = std::chrono::steady_clock::now();
+                float elapsed = std::chrono::duration<float>(now - digStartTime).count();
+                if (elapsed >= digDuration) {
+                    if (engine) {
+                        engine->sendBlockBreakFinish(digBlockX, digBlockY, digBlockZ, digFace);
+                        digging = false;
+                    }
                 }
             }
         }
