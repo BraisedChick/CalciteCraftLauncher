@@ -111,7 +111,10 @@ public:
     bool isDebugInfoVisible() const { return showDebugInfo; }
 
     // 死亡界面
-    void setDeathScreenActive(bool active) { deathScreenActive = active; }
+    void setDeathScreenActive(bool active) {
+        deathScreenActive = active;
+        if (!active) deathReason.clear();
+    }
     bool isDeathScreenActive() const { return deathScreenActive; }
     void setDeathReason(const std::string& reason) { deathReason = reason; }
 

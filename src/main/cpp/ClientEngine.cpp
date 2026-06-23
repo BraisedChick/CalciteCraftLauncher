@@ -63,6 +63,7 @@
 #include "EntityRenderer.h"
 #include "protocolCraft/Types/NBT/Tag.hpp"
 #include "protocolCraft/Utilities/Json.hpp"
+#include "3rdparty/json.hpp"
 #include "BiomeColorManager.h"
 #include "PlayerInventory.h"
 #include "gui/GameUI.h"
@@ -74,6 +75,8 @@
 #include <cmath>
 #include <chrono>
 #include <sstream>
+
+using njson = nlohmann::json;
 
 ClientEngine* ClientEngine::instance = nullptr;
 
@@ -624,6 +627,7 @@ void ClientEngine::sendRespawn() {
     ProtocolCraft::WriteContainer writeData;
     cmdPacket.Write(writeData);
     net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+    deathMessage.clear();
     LOGI("Sent respawn request (ClientCommand PERFORM_RESPAWN)");
 }
 
@@ -824,15 +828,14 @@ long long ClientEngine::getWorldDayTime() const {
 
 void ClientEngine::loadLanguage(const std::string& json) {
     try {
-        auto root = ProtocolCraft::Json::Parse(json);
+        auto root = njson::parse(json);
         if (!root.is_object()) {
             LOGE("Language file is not a JSON object");
             return;
         }
-        const auto& obj = root.get_object();
-        for (const auto& [key, value] : obj) {
-            if (value.is_string()) {
-                translations[key] = value.get_string();
+        for (auto it = root.begin(); it != root.end(); ++it) {
+            if (it.value().is_string()) {
+                translations[it.key()] = it.value().get<std::string>();
             }
         }
         LOGI("Loaded %zu translations", translations.size());
@@ -840,6 +843,61 @@ void ClientEngine::loadLanguage(const std::string& json) {
         LOGE("Failed to parse language file: %s", e.what());
     } catch (...) {
         LOGE("Failed to parse language file: unknown error");
+    }
+}
+
+std::string ClientEngine::parseChatComponent(const std::string& raw) const {
+    try {
+        auto j = njson::parse(raw, nullptr, false);
+        if (j.is_discarded() || !j.is_object()) return raw;
+
+        // 纯文本类型：{"text": "..."}
+        if (j.contains("text") && j["text"].is_string() && !j.contains("translate")) {
+            return j["text"].get<std::string>();
+        }
+
+        // 翻译类型：{"translate": "key", "with": [...]}
+        if (!j.contains("translate") || !j["translate"].is_string()) return raw;
+
+        std::string translateKey = j["translate"].get<std::string>();
+        auto it = translations.find(translateKey);
+        if (it == translations.end()) {
+            // 无翻译，尝试 text 字段作为回退
+            return j.contains("text") && j["text"].is_string()
+                ? j["text"].get<std::string>() : raw;
+        }
+
+        std::string result = it->second;
+
+        // 解析 with 数组中的参数
+        std::vector<std::string> args;
+        if (j.contains("with") && j["with"].is_array()) {
+            for (const auto& elem : j["with"]) {
+                if (elem.contains("text") && elem["text"].is_string()) {
+                    args.push_back(elem["text"].get<std::string>());
+                } else if (elem.contains("translate") && elem["translate"].is_string()) {
+                    std::string subKey = elem["translate"].get<std::string>();
+                    auto subIt = translations.find(subKey);
+                    args.push_back(subIt != translations.end() ? subIt->second : subKey);
+                } else {
+                    args.push_back("");
+                }
+            }
+        }
+
+        // 替换 %1$s, %2$s ...
+        for (size_t i = 0; i < args.size(); i++) {
+            std::string placeholder = "%" + std::to_string(i + 1) + "$s";
+            size_t pos = 0;
+            while ((pos = result.find(placeholder, pos)) != std::string::npos) {
+                result.replace(pos, placeholder.length(), args[i]);
+                pos += args[i].length();
+            }
+        }
+
+        return result;
+    } catch (...) {
+        return raw;
     }
 }
 
@@ -1495,59 +1553,7 @@ void ClientEngine::handlePlayPacket(int packetId,
                 killPacket.Read(iter, len);
                 deathMessage = killPacket.GetMessage().GetText();
                 if (deathMessage.empty()) {
-                    // Chat::ParseChat doesn't handle translate-type death messages.
-                    // Use the language file (zh_cn.json) to translate.
-                    const std::string& raw = killPacket.GetMessage().GetRawText();
-                    try {
-                        auto json = ProtocolCraft::Json::Parse(raw);
-                        if (json.is_object() && json.contains("translate")) {
-                            const std::string& translate = json["translate"].get_string();
-                            auto it = translations.find(translate);
-                            if (it != translations.end()) {
-                                // Found a translation template, e.g. "%1$s被%2$s杀死了"
-                                deathMessage = it->second;
-                                // Extract text from "with" array
-                                std::vector<std::string> args;
-                                if (json.contains("with") && json["with"].is_array()) {
-                                    for (size_t i = 0; i < json["with"].size(); i++) {
-                                        const auto& elem = json["with"][i];
-                                        if (elem.contains("text") && elem["text"].is_string()) {
-                                            args.push_back(elem["text"].get_string());
-                                        } else if (elem.contains("translate") && elem["translate"].is_string()) {
-                                            // 实体名称也是 translate 类型，如 entity.minecraft.zombie
-                                            const std::string& subKey = elem["translate"].get_string();
-                                            auto subIt = translations.find(subKey);
-                                            if (subIt != translations.end()) {
-                                                args.push_back(subIt->second);
-                                            } else {
-                                                args.push_back(subKey);
-                                            }
-                                        } else {
-                                            args.push_back("");
-                                        }
-                                    }
-                                }
-                                // Replace %1$s, %2$s, %3$s with args
-                                for (size_t i = 0; i < args.size(); i++) {
-                                    std::string placeholder = "%" + std::to_string(i + 1) + "$s";
-                                    size_t pos = 0;
-                                    while ((pos = deathMessage.find(placeholder, pos)) != std::string::npos) {
-                                        deathMessage.replace(pos, placeholder.length(), args[i]);
-                                        pos += args[i].length();
-                                    }
-                                }
-                            } else if (json.contains("text")) {
-                                deathMessage = json["text"].get_string();
-                            } else {
-                                // No translation found, use raw JSON as fallback
-                                deathMessage = raw;
-                            }
-                        } else if (json.contains("text")) {
-                            deathMessage = json["text"].get_string();
-                        }
-                    } catch (...) {
-                        deathMessage = raw;
-                    }
+                    deathMessage = parseChatComponent(killPacket.GetMessage().GetRawText());
                 }
                 LOGI("Death message: '%s'", deathMessage.c_str());
                 break;

@@ -186,10 +186,8 @@ void GameUI::render() {
         float health = engine ? engine->getHealth() : 20.0f;
         if (!deathScreenActive && health <= 0.0f && prevHealth > 0.0f && engine && engine->getGameMode() != 3) {
             deathScreenActive = true;
-            if (deathReason.empty()) {
-                std::string serverMsg = engine->getDeathMessage();
-                deathReason = serverMsg.empty() ? "你被杀死了" : serverMsg;
-            }
+            std::string serverMsg = engine->getDeathMessage();
+            deathReason = serverMsg.empty() ? "你被杀死了" : serverMsg;
         }
         prevHealth = health;
     }

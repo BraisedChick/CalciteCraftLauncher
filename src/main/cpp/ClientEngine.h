@@ -141,6 +141,9 @@ private:
     size_t calculateNBTSize(const std::vector<uint8_t>& data, size_t startPos);
     void chunkWorkerFunc();
 
+    // Chat Component JSON 解析（translate/with/text 多层结构）
+    std::string parseChatComponent(const std::string& rawJson) const;
+
     std::unique_ptr<ChunkManager> chunkManager;
     std::unique_ptr<NetworkManager> net;
     mutable std::mutex netMutex;
