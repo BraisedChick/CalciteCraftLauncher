@@ -1775,6 +1775,10 @@ void GLRenderer::renderCrackOverlay(const glm::mat4& viewMatrix, const glm::mat4
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_FALSE);
 
+    // 用 PolygonOffset 将覆盖层向相机拉近，避免与方块面 z-fighting
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.0f, -1.0f);
+
     glBindVertexArray(crackVAO);
     glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
     glBindVertexArray(0);
@@ -1783,6 +1787,7 @@ void GLRenderer::renderCrackOverlay(const glm::mat4& viewMatrix, const glm::mat4
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
     glDisable(GL_BLEND);
+    glDisable(GL_POLYGON_OFFSET_FILL);
     glEnable(GL_CULL_FACE);
 }
 
