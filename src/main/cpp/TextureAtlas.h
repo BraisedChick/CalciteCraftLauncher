@@ -132,6 +132,12 @@ public:
     int getGrassBlockSnowLayer() const;
     int getGrassSideLayer() const;
 
+    // 获取破坏阶段纹理图层索引（0-9，返回-1表示未加载）
+    int getDestroyStageLayer(int stage) const {
+        if (stage < 0 || stage > 9) return -1;
+        return destroyStageLayers[stage];
+    }
+
     // 获取方块模型元素数据（模型兼容渲染用）
     // 返回 nullptr 表示无模型数据（应回退到旧立方体渲染）
     const ResolvedBlockModel* getBlockModel(const std::string& blockName) const;
@@ -186,6 +192,9 @@ private:
     int grassSideOverlayLayer = -1;
     int grassBlockSnowLayer = -1;
     int grassSideLayer = -1;
+
+    // 破坏阶段纹理图层索引（destroy_stage_0 ~ destroy_stage_9）
+    int destroyStageLayers[10] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
 
     // 确保特定纹理路径存在，返回图层索引
     int ensureTexture(const std::string& texturePath);

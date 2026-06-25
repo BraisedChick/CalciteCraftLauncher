@@ -1588,6 +1588,9 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         }
     }
 
+    // ===== Phase 4: 方块破坏覆盖层 =====
+    renderCrackOverlay(viewMatrix, projMatrix, shaderCutout);
+
     // 每 60 帧打印统计信息
     if (frameCount % 60 == 0) {
         LOGI("Frame %u: Rendered %d chunks, %d triangles",
@@ -1625,6 +1628,162 @@ bool GLRenderer::initImGui() {
 
 void GLRenderer::renderUI() {
     GameUI::getInstance().render();
+}
+
+// ===== 方块破坏覆盖层渲染 =====
+void GLRenderer::renderCrackOverlay(const glm::mat4& viewMatrix, const glm::mat4& projMatrix,
+                                     const ShaderProgramInfo& shader) {
+    auto& ui = GameUI::getInstance();
+    if (!ui.isDigging()) return;
+
+    int stage = ui.getDestroyStage();
+    if (stage < 0 || stage > 9) return;
+
+    int bx = ui.getDigBlockX();
+    int by = ui.getDigBlockY();
+    int bz = ui.getDigBlockZ();
+
+    int texLayer = TextureAtlas::getInstance().getDestroyStageLayer(stage);
+    if (texLayer < 0) return;
+
+    // 顶点/索引变化时才更新 VAO
+    bool posChanged = (bx != crackLastBlockX || by != crackLastBlockY || bz != crackLastBlockZ || stage != crackLastStage);
+    if (posChanged) {
+        crackLastBlockX = bx;
+        crackLastBlockY = by;
+        crackLastBlockZ = bz;
+        crackLastStage = stage;
+
+        // 生成 6 个面的立方体（24 顶点，36 索引）
+        float minX = (float)bx, minY = (float)by, minZ = (float)bz;
+
+        static const int8_t faceNormals[6][4] = {
+            {0, -1, 0, 0}, {0, 1, 0, 0}, {0, 0, -1, 0},
+            {0, 0, 1, 0}, {-1, 0, 0, 0}, {1, 0, 0, 0}
+        };
+        static const float faceVerts[6][4][3] = {
+            {{0,0,0},{1,0,0},{1,0,1},{0,0,1}},
+            {{0,1,0},{1,1,0},{1,1,1},{0,1,1}},
+            {{0,0,0},{1,0,0},{1,1,0},{0,1,0}},
+            {{1,0,1},{0,0,1},{0,1,1},{1,1,1}},
+            {{0,0,0},{0,0,1},{0,1,1},{0,1,0}},
+            {{1,0,0},{1,0,1},{1,1,1},{1,1,0}}
+        };
+        static const uint16_t faceUVs[6][4][2] = {
+            {{0,0},{65535,0},{65535,65535},{0,65535}},
+            {{0,0},{65535,0},{65535,65535},{0,65535}},
+            {{0,0},{65535,0},{65535,65535},{0,65535}},
+            {{65535,0},{0,0},{0,65535},{65535,65535}},
+            {{0,0},{65535,0},{65535,65535},{0,65535}},
+            {{0,0},{65535,0},{65535,65535},{0,65535}}
+        };
+
+        std::vector<PackedVertex> verts;
+        verts.reserve(24);
+        float texLayerFloat = (float)texLayer;
+        for (int face = 0; face < 6; face++) {
+            for (int v = 0; v < 4; v++) {
+                PackedVertex pv;
+                pv.pos[0] = minX + faceVerts[face][v][0];
+                pv.pos[1] = minY + faceVerts[face][v][1];
+                pv.pos[2] = minZ + faceVerts[face][v][2];
+                pv.texIndex = texLayerFloat;
+                pv.color[0] = 255; pv.color[1] = 255; pv.color[2] = 255; pv.color[3] = 255;
+                pv.uv[0] = faceUVs[face][v][0];
+                pv.uv[1] = faceUVs[face][v][1];
+                pv.uv2[0] = 8; pv.uv2[1] = 8;
+                pv.normal[0] = faceNormals[face][0];
+                pv.normal[1] = faceNormals[face][1];
+                pv.normal[2] = faceNormals[face][2];
+                pv.normal[3] = 0;
+                verts.push_back(pv);
+            }
+        }
+
+        std::vector<uint32_t> idx;
+        idx.reserve(36);
+        for (int f = 0; f < 6; f++) {
+            uint32_t base = f * 4;
+            idx.push_back(base); idx.push_back(base+1); idx.push_back(base+2);
+            idx.push_back(base); idx.push_back(base+2); idx.push_back(base+3);
+        }
+
+        if (crackVAO == 0) {
+            glGenVertexArrays(1, &crackVAO);
+            glGenBuffers(1, &crackVBO);
+            glGenBuffers(1, &crackEBO);
+        }
+
+        glBindVertexArray(crackVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, crackVBO);
+        glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(PackedVertex), verts.data(), GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, crackEBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, idx.size() * sizeof(uint32_t), idx.data(), GL_DYNAMIC_DRAW);
+
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PackedVertex), (void*)offsetof(PackedVertex, pos));
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 2, GL_UNSIGNED_SHORT, GL_TRUE, sizeof(PackedVertex), (void*)offsetof(PackedVertex, uv));
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(PackedVertex), (void*)offsetof(PackedVertex, texIndex));
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(PackedVertex), (void*)offsetof(PackedVertex, color));
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(4, 4, GL_BYTE, GL_TRUE, sizeof(PackedVertex), (void*)offsetof(PackedVertex, normal));
+        glEnableVertexAttribArray(4);
+        glVertexAttribPointer(5, 2, GL_UNSIGNED_SHORT, GL_FALSE, sizeof(PackedVertex), (void*)offsetof(PackedVertex, uv2));
+        glEnableVertexAttribArray(5);
+    }
+
+    // ===== 绘制 =====
+    glUseProgram(shader.program);
+
+    glm::mat4 modelMat(1.0f);
+    glm::mat4 modelViewMat = viewMatrix * modelMat;
+    if (shader.uModelViewMat != -1)
+        glUniformMatrix4fv(shader.uModelViewMat, 1, GL_FALSE, glm::value_ptr(modelViewMat));
+    if (shader.uProjMat != -1)
+        glUniformMatrix4fv(shader.uProjMat, 1, GL_FALSE, glm::value_ptr(projMatrix));
+    if (shader.uChunkOffset != -1)
+        glUniform3f(shader.uChunkOffset, 0.0f, 0.0f, 0.0f);
+    if (shader.uColorModulator != -1)
+        glUniform4f(shader.uColorModulator, 1.0f, 1.0f, 1.0f, 1.0f);
+    if (shader.uFogShape != -1) glUniform1i(shader.uFogShape, 0);
+    if (shader.uTextureMatrix != -1)
+        glUniformMatrix4fv(shader.uTextureMatrix, 1, GL_FALSE, glm::value_ptr(glm::mat4(1.0f)));
+
+    float fogEnd = farPlane;
+    float fogStart = farPlane * 0.7f;
+    float skyR = Light::getInstance().getSkyColorR();
+    float skyG = Light::getInstance().getSkyColorG();
+    float skyB = Light::getInstance().getSkyColorB();
+    if (shader.uFogStart != -1) glUniform1f(shader.uFogStart, fogStart);
+    if (shader.uFogEnd != -1) glUniform1f(shader.uFogEnd, fogEnd);
+    if (shader.uFogColor != -1) glUniform4f(shader.uFogColor, skyR, skyG, skyB, 1.0f);
+
+    // 确保纹理数组绑定到 unit 0（实体渲染可能改变了活跃纹理）
+    glActiveTexture(GL_TEXTURE0);
+    if (textureArrayID != 0)
+        glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayID);
+    if (shader.uSampler0 != -1) glUniform1i(shader.uSampler0, 0);
+    if (shader.uSampler2 != -1) glUniform1i(shader.uSampler2, 2);
+
+    // 禁用面剔除，确保覆盖层从任意角度可见
+    glDisable(GL_CULL_FACE);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_DST_COLOR, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
+
+    glBindVertexArray(crackVAO);
+    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+    glBindVertexArray(0);
+
+    // 恢复 OpenGL 状态
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+    glDisable(GL_BLEND);
+    glEnable(GL_CULL_FACE);
 }
 
 void GLRenderer::setFov(float degrees) {
@@ -2022,6 +2181,11 @@ void GLRenderer::cleanup() {
 
     // 重置 GameUI 的 GL 纹理 ID（context 销毁后旧 ID 失效，下次渲染时重新加载）
     GameUI::getInstance().resetGLResources();
+
+    // 清理破坏覆盖层资源
+    if (crackVAO != 0) { glDeleteVertexArrays(1, &crackVAO); crackVAO = 0; }
+    if (crackVBO != 0) { glDeleteBuffers(1, &crackVBO); crackVBO = 0; }
+    if (crackEBO != 0) { glDeleteBuffers(1, &crackEBO); crackEBO = 0; }
 
     if (display) {
         eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);

@@ -82,6 +82,8 @@ bool BlockRegistry::loadFromJson(const std::string& json) {
         info.maxStateId = extractInt(blockJson, "\"maxStateId\"");
         info.defaultState = extractInt(blockJson, "\"defaultState\"");
         info.hardness = extractFloat(blockJson, "\"hardness\"");
+        info.material = extractString(blockJson, "\"material\"");
+        info.hasHarvestTools = blockJson.find("\"harvestTools\"") != std::string::npos;
 
         // 解析 states 数组（属性定义顺序，用于正确计算 state ID offset）
         size_t statesPos = blockJson.find("\"states\"");
@@ -345,6 +347,8 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
     meta.name = info->name;
     meta.minStateId = info->minStateId;
     meta.hardness = info->hardness;
+    meta.requiresCorrectTool = info->hasHarvestTools;
+    meta.material = info->material;
 
     // ---- 方块类型判断 ----
     meta.isAir = (meta.name == "air" || meta.name == "cave_air" || meta.name == "void_air");

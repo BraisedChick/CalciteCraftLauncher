@@ -872,7 +872,12 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
     ensureTexture("block/grass_block_side_overlay");
     ensureTexture("block/snow");
 
-    // 6. 缓存特殊纹理索引（直接查 map，因为 mutex 已在 initialize 中锁定）
+    // 6. 加载方块破坏动画纹理（destroy_stage_0 ~ destroy_stage_9）
+    for (int i = 0; i < 10; i++) {
+        ensureTexture("block/destroy_stage_" + std::to_string(i));
+    }
+
+    // 7. 缓存特殊纹理索引（直接查 map，因为 mutex 已在 initialize 中锁定）
     auto findLayer = [this](const std::string& path) {
         auto it = texturePathToLayer.find(path);
         return it != texturePathToLayer.end() ? it->second : -1;
@@ -880,6 +885,9 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
     grassSideOverlayLayer = findLayer("block/grass_block_side_overlay");
     grassBlockSnowLayer = findLayer("block/grass_block_top");
     grassSideLayer = findLayer("block/grass_block_side");
+    for (int i = 0; i < 10; i++) {
+        destroyStageLayers[i] = findLayer("block/destroy_stage_" + std::to_string(i));
+    }
     LOGI("DIAG_FINDLAYER: side_overlay=%d grass_side=%d grass_top=%d (from texturePathToLayer)",
          grassSideOverlayLayer, grassSideLayer, grassBlockSnowLayer);
 

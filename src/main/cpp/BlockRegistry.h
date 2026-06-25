@@ -25,6 +25,8 @@ struct BlockInfo {
     std::vector<StateProperty> stateProperties;
 
     float hardness = 0.0f;         // 方块硬度（-1 = 不可破坏，0 = 瞬间破坏）
+    std::string material;          // 材质类型（"default", "mineable/pickaxe" 等）
+    bool hasHarvestTools = false;  // 是否有 harvestTools（需正确工具才能掉落物品）
 };
 
 // 预计算的方块元数据（避免每次循环调用 getBlockName + 字符串比较）
@@ -45,6 +47,8 @@ struct BlockMetadata {
     bool isFullBlock = true;     // 几何上是否为完整 16x16x16 立方体（用于快速路径和面剔除）
     bool isOpaque = true;        // 是否不透明（false=玻璃等透明方块，相邻面不应被剔除）
     float hardness = 0.0f;       // 方块硬度（-1=不可破坏，0=瞬间破坏，>0=需要时间挖掘）
+    bool requiresCorrectTool = false;  // 是否需正确工具才能掉落物品
+    std::string material;          // 材质类型（"default", "mineable/pickaxe" 等）
 };
 
 class BlockRegistry {

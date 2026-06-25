@@ -597,6 +597,69 @@ void GameUI::performBlockBreak() {
     digging = true;
 }
 
+// ===== 原版挖掘公式：playerDigSpeed / hardness / divisor =====
+
+// 根据手持物品计算玩家挖掘速度（对标 ItemStack/DiggerItem.getDestroySpeed）
+// 工具速度加成仅对匹配的方块类型生效
+static float getPlayerDigSpeed(const std::string& material) {
+    auto& inv = PlayerInventory::getInstance();
+    const InvSlot& held = inv.getHotbarSlot(inv.getSelectedSlot());
+    if (!held.present || held.itemId <= 0) return 1.0f; // 空手
+
+    std::string itemName = BlockRegistry::getInstance().getItemName(held.itemId);
+
+    // 判断工具类型是否匹配该方块材质
+    bool isPickaxe = itemName.find("pickaxe") != std::string::npos;
+    bool isAxe = itemName.find("axe") != std::string::npos && !isPickaxe;
+    bool isShovel = itemName.find("shovel") != std::string::npos;
+    bool isHoe = itemName.find("hoe") != std::string::npos;
+
+    // 提取方块材质需求（mineable/后面的部分）
+    std::string requiredType;
+    if (material.find("mineable/") == 0) {
+        requiredType = material.substr(9);
+    }
+
+    bool matches = false;
+    if (requiredType == "pickaxe") matches = isPickaxe;
+    else if (requiredType == "axe") matches = isAxe;
+    else if (requiredType == "shovel") matches = isShovel;
+    else if (requiredType == "hoe") matches = isHoe;
+
+    // 工具不匹配此方块时，返回空手速度 1.0
+    if (!matches) return 1.0f;
+
+    // 工具匹配 → 返回对应材质的工具速度
+    if (itemName.find("wooden_") != std::string::npos) return 2.0f;
+    if (itemName.find("stone_") != std::string::npos) return 4.0f;
+    if (itemName.find("iron_") != std::string::npos) return 6.0f;
+    if (itemName.find("diamond_") != std::string::npos) return 8.0f;
+    if (itemName.find("netherite_") != std::string::npos) return 9.0f;
+    if (itemName.find("golden_") != std::string::npos) return 12.0f;
+
+    return 1.0f; // 非工具物品
+}
+
+// 检查手持物品是否为该材质对应的正确工具
+static bool hasCorrectToolFor(const std::string& material, bool requiresCorrectTool) {
+    if (!requiresCorrectTool) return true; // 不需要工具 → 总是有"正确工具"
+
+    auto& inv = PlayerInventory::getInstance();
+    const InvSlot& held = inv.getHotbarSlot(inv.getSelectedSlot());
+    if (!held.present || held.itemId <= 0) return false; // 空手
+
+    std::string itemName = BlockRegistry::getInstance().getItemName(held.itemId);
+    std::string requiredType = material.substr(9); // "pickaxe", "shovel" 等
+
+    if (requiredType == "pickaxe") return itemName.find("pickaxe") != std::string::npos;
+    if (requiredType == "shovel") return itemName.find("shovel") != std::string::npos;
+    if (requiredType == "axe") return itemName.find("axe") != std::string::npos
+                                    && itemName.find("pickaxe") == std::string::npos;
+    if (requiredType == "hoe") return itemName.find("hoe") != std::string::npos;
+
+    return false;
+}
+
 // 每帧持续调用（对标 continueDestroyBlock）
 void GameUI::continueDestroyBlock() {
     auto* engine = ClientEngine::getInstance();
@@ -622,21 +685,23 @@ void GameUI::continueDestroyBlock() {
     // 未处于挖掘状态（可能刚被 ABORT）
     if (!digging) return;
 
-    // 查询方块硬度，计算每刻进度增量
+    // 查询方块属性，计算每刻进度增量
     auto chunk = cm->getChunk(result.blockX >> 4, result.blockZ >> 4);
     if (!chunk) return;
     uint32_t state = chunk->getBlockState(result.blockX & 15, result.blockY, result.blockZ & 15);
     auto meta = BlockRegistry::getInstance().getBlockMetadata(state);
 
     if (meta.hardness < 0.0f) {
-        // 不可破坏
         engine->sendBlockBreakAbort(digBlockX, digBlockY, digBlockZ, digFace);
         digging = false;
         return;
     }
 
-    // 原版公式：progressPerTick = 1.0 / hardness / 100.0 （空手无正确工具）
-    float progressPerTick = 1.0f / meta.hardness / 100.0f;
+    // 原版公式：progressPerTick = playerDigSpeed / hardness / divisor
+    // divisor = 30（正确工具或不需要工具）, 100（无正确工具）
+    int divisor = hasCorrectToolFor(meta.material, meta.requiresCorrectTool) ? 30 : 100;
+    float playerSpeed = getPlayerDigSpeed(meta.material);
+    float progressPerTick = playerSpeed / meta.hardness / divisor;
 
     // 固定刻率（50ms/tick）累加进度
     destroyAccumulator += ImGui::GetIO().DeltaTime;
@@ -650,7 +715,7 @@ void GameUI::continueDestroyBlock() {
         engine->sendBlockBreakFinish(digBlockX, digBlockY, digBlockZ, digFace);
         digging = false;
         destroyProgress = 0.0f;
-        destroyDelay = 5;  // 5刻冷却
+        destroyDelay = 5;
         destroyAccumulator = 0.0f;
     }
 }

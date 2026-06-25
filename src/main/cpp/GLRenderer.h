@@ -276,7 +276,7 @@ private:
     // 方块图标缓存（物品栏3D模型预渲染）
     std::unordered_map<std::string, GLuint> blockIconCache;
 
-    // ===== 全景背景（主菜单旋转 cubemap → FBO → ImGui 背景图）=====
+    // 全景背景（主菜单旋转 cubemap → FBO → ImGui 背景图）
     GLuint panoramaCubemap = 0;
     GLuint panoramaProgram = 0;
     GLuint panoramaVAO = 0;
@@ -287,4 +287,15 @@ private:
     int panoramaFBOWidth = 0;
     int panoramaFBOHeight = 0;
     bool panoramaLoaded = false;
+
+    // 破坏覆盖层（destroy overlay）
+    GLuint crackVAO = 0;
+    GLuint crackVBO = 0;
+    GLuint crackEBO = 0;
+    int crackLastBlockX = -9999999;
+    int crackLastBlockY = -9999999;
+    int crackLastBlockZ = -9999999;
+    int crackLastStage = -1;
+
+    void renderCrackOverlay(const glm::mat4& viewMatrix, const glm::mat4& projMatrix, const ShaderProgramInfo& shader);
 };

@@ -138,6 +138,19 @@ public:
     float getJoystickKnobX() const { return joystick.knobX; }
     float getJoystickKnobY() const { return joystick.knobY; }
 
+    // 挖掘状态（供 GLRenderer 渲染破坏覆盖层）
+    bool isDigging() const { return digging; }
+    int getDigBlockX() const { return digBlockX; }
+    int getDigBlockY() const { return digBlockY; }
+    int getDigBlockZ() const { return digBlockZ; }
+    int getDestroyStage() const {
+        if (destroyProgress <= 0.0f) return -1;
+        int stage = (int)(destroyProgress * 10.0f);
+        if (stage > 9) stage = 9;
+        if (stage < 0) stage = 0;
+        return stage;
+    }
+
     // 是否有任意游戏内界面打开（阻挡移动输入）
     bool isInGameUIActive() const {
         return gameMenuOpen || optionsOpen || deathScreenActive || inventoryOpen;
