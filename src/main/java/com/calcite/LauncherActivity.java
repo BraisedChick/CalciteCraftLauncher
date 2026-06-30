@@ -12,7 +12,9 @@ import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
 import android.provider.OpenableColumns;
+import android.util.Log;
 import android.database.Cursor;
 import android.view.View;
 import android.view.WindowManager;
@@ -20,6 +22,7 @@ import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import androidx.core.content.FileProvider;
+import android.widget.ImageView;
 import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.RadioButton;
@@ -31,6 +34,7 @@ import android.widget.Toast;
 import com.calcite.account.Account;
 import com.calcite.account.AccountListAdapter;
 import com.calcite.auth.AuthResult;
+import com.calcite.auth.CalciteApiService;
 import com.calcite.auth.MicrosoftAuthService;
 import com.calcite.ui.MioButton;
 import com.calcite.ui.MioTextView;
@@ -55,6 +59,7 @@ public class LauncherActivity extends Activity {
     private static final String KEY_LOGIN_TYPE = "login_type";
     private static final String KEY_SELECTED_ACCOUNT = "selected_account";
     private static final String KEY_ACCOUNTS = "accounts";
+    private static final String KEY_CALCITE_ACCOUNT = "calcite_account";
 
     private String username = "Player";
     private String loginType = "offline";
@@ -65,7 +70,11 @@ public class LauncherActivity extends Activity {
     private AccountListAdapter accountAdapter;
     private String selectedAccountUuid = null;
 
+    /** 启动器账号（独立于 MC 账号列表） */
+    private Account calciteAccount = null;
+
     private View pageHome;
+    private View pageMy;
     private View pageAccount;
     private View pageVersion;
     private View pageRenderer;
@@ -80,6 +89,10 @@ public class LauncherActivity extends Activity {
 
     private static final int REQUEST_OPEN_DIR = 1001;
     private static final int REQUEST_PICK_FILE = 1002;
+    private static final int REQUEST_LAUNCH_GAME = 1003;
+
+    private Handler heartbeatHandler = new Handler();
+    private Runnable heartbeatTask = null;
 
     private static final String[] VERSIONS = {
         "1.8", "1.12",
@@ -148,12 +161,14 @@ public class LauncherActivity extends Activity {
 
     private void initViews() {
         MioButton btnHome = findViewById(R.id.btnHome);
+        MioButton btnMy = findViewById(R.id.btnMy);
         MioButton btnAccount = findViewById(R.id.btnAccount);
         MioButton btnVersion = findViewById(R.id.btnVersion);
         MioButton btnRenderer = findViewById(R.id.btnRenderer);
         MioButton btnSettings = findViewById(R.id.btnSettings);
 
         pageHome = findViewById(R.id.pageHome);
+        pageMy = findViewById(R.id.pageMy);
         pageAccount = findViewById(R.id.pageAccount);
         pageVersion = findViewById(R.id.pageVersion);
         pageRenderer = findViewById(R.id.pageRenderer);
@@ -168,6 +183,7 @@ public class LauncherActivity extends Activity {
         findViewById(R.id.btnLaunch).setOnClickListener(v -> launchGame());
 
         // 各设置页
+        fillMyPage();
         fillAccountPage();
         fillVersionPage();
         fillRendererPage();
@@ -175,6 +191,7 @@ public class LauncherActivity extends Activity {
 
         // 左侧按钮
         btnHome.setOnClickListener(v -> goHome());
+        btnMy.setOnClickListener(v -> switchPage(pageMy));
         btnAccount.setOnClickListener(v -> switchPage(pageAccount));
         btnVersion.setOnClickListener(v -> switchPage(pageVersion));
         btnRenderer.setOnClickListener(v -> switchPage(pageRenderer));
@@ -188,6 +205,9 @@ public class LauncherActivity extends Activity {
         currentPage.setVisibility(View.GONE);
         target.setVisibility(View.VISIBLE);
         currentPage = target;
+        if (target == pageMy) {
+            updateCalciteStatus();
+        }
     }
 
     private void goHome() {
@@ -212,6 +232,64 @@ public class LauncherActivity extends Activity {
         }
         panelVersion.setText(VERSIONS[versionIndex]);
         panelRenderer.setText(useVulkan ? "Vulkan" : "OpenGL");
+    }
+
+    // ===== 我的页面 =====
+
+    private void fillMyPage() {
+        pageMy.findViewById(R.id.btnRegisterCalcite).setOnClickListener(v -> showRegisterDialog());
+        pageMy.findViewById(R.id.btnLoginCalcite).setOnClickListener(v -> showLoginDialog());
+        updateCalciteStatus();
+    }
+
+    private void updateCalciteStatus() {
+        MioTextView tvStatus = pageMy.findViewById(R.id.tvCalciteStatus);
+        View buttonRow = pageMy.findViewById(R.id.layoutCalciteButtons);
+        View layoutPlaytime = pageMy.findViewById(R.id.layoutPlaytime);
+        if (calciteAccount != null) {
+            tvStatus.setText("已登录: " + calciteAccount.getName() + " (" + calciteAccount.getEmail() + ")");
+            buttonRow.setVisibility(View.GONE);
+            layoutPlaytime.setVisibility(View.VISIBLE);
+            queryPlaytime();
+        } else {
+            tvStatus.setText("未登录 Calcite 账号");
+            buttonRow.setVisibility(View.VISIBLE);
+            layoutPlaytime.setVisibility(View.GONE);
+        }
+    }
+
+    private void queryPlaytime() {
+        if (calciteAccount == null || calciteAccount.getCalciteToken() == null) return;
+
+        TextView tvPlaytime = pageMy.findViewById(R.id.tvPlaytime);
+        tvPlaytime.setText("加载中...");
+
+        if (calciteApi == null) calciteApi = new CalciteApiService();
+        calciteApi.fetchPlaytime(calciteAccount.getCalciteToken(), new CalciteApiService.Callback<Integer>() {
+            @Override
+            public void onSuccess(Integer totalSeconds) {
+                runOnUiThread(() -> {
+                    int hours = totalSeconds / 3600;
+                    int minutes = (totalSeconds % 3600) / 60;
+                    int seconds = totalSeconds % 60;
+                    String text;
+                    if (hours > 0) {
+                        text = hours + "小时" + minutes + "分钟";
+                    } else {
+                        text = minutes + "分钟" + seconds + "秒";
+                    }
+                    tvPlaytime.setText(text);
+                });
+            }
+
+            @Override
+            public void onError(String message) {
+                runOnUiThread(() -> {
+                    tvPlaytime.setText("查询失败");
+                    Toast.makeText(LauncherActivity.this, message, Toast.LENGTH_SHORT).show();
+                });
+            }
+        });
     }
 
     // ===== 账号管理 =====
@@ -289,6 +367,7 @@ public class LauncherActivity extends Activity {
     // ===== Microsoft 正版登录 =====
 
     private MicrosoftAuthService authService;
+    private CalciteApiService calciteApi = null;
     private Thread authThread;
     private volatile boolean authCancelled = false;
 
@@ -403,6 +482,153 @@ public class LauncherActivity extends Activity {
         authThread.start();
     }
 
+    // ===== Calcite 账号注册/登录 =====
+
+    private void showRegisterDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        View view = getLayoutInflater().inflate(R.layout.dialog_register_calcite, null);
+        builder.setView(view);
+
+        AlertDialog dialog = builder.create();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        }
+        dialog.show();
+
+        EditText etUsername = view.findViewById(R.id.etRegUsername);
+        EditText etEmail = view.findViewById(R.id.etRegEmail);
+        EditText etPassword = view.findViewById(R.id.etRegPassword);
+        ImageView ivCaptcha = view.findViewById(R.id.ivCaptcha);
+        EditText etCaptcha = view.findViewById(R.id.etCaptchaCode);
+        View btnRefresh = view.findViewById(R.id.btnRefreshCaptcha);
+        View btnConfirm = view.findViewById(R.id.btnConfirmReg);
+        View btnCancel = view.findViewById(R.id.btnCancelReg);
+
+        if (calciteApi == null) calciteApi = new CalciteApiService();
+
+        // 持有当前 captchaId
+        final String[] currentCaptchaId = {null};
+
+        // 加载验证码
+        Runnable loadCaptcha = () -> calciteApi.fetchCaptcha(new CalciteApiService.Callback<CalciteApiService.CaptchaResult>() {
+            @Override
+            public void onSuccess(CalciteApiService.CaptchaResult result) {
+                runOnUiThread(() -> {
+                    currentCaptchaId[0] = result.captchaId;
+                    ivCaptcha.setImageBitmap(result.image);
+                });
+            }
+
+            @Override
+            public void onError(String message) {
+                runOnUiThread(() -> Toast.makeText(LauncherActivity.this, message, Toast.LENGTH_SHORT).show());
+            }
+        });
+        loadCaptcha.run();
+
+        btnRefresh.setOnClickListener(v -> loadCaptcha.run());
+
+        btnConfirm.setOnClickListener(v -> {
+            String name = etUsername.getText().toString().trim();
+            String email = etEmail.getText().toString().trim();
+            String password = etPassword.getText().toString().trim();
+            String captchaCode = etCaptcha.getText().toString().trim();
+
+            if (name.isEmpty() || email.isEmpty() || password.isEmpty() || captchaCode.isEmpty()) {
+                Toast.makeText(this, "请填写所有字段", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (currentCaptchaId[0] == null) {
+                Toast.makeText(this, "验证码未加载，请刷新", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            btnConfirm.setEnabled(false);
+            calciteApi.register(name, email, password, currentCaptchaId[0], captchaCode,
+                new CalciteApiService.Callback<CalciteApiService.AuthResult>() {
+                    @Override
+                    public void onSuccess(CalciteApiService.AuthResult result) {
+                        runOnUiThread(() -> {
+                            String uuid = UUID.nameUUIDFromBytes(("Calcite:" + result.username).getBytes()).toString();
+                            calciteAccount = new Account(result.username, "calcite", uuid);
+                            calciteAccount.setCalciteToken(result.token);
+                            calciteAccount.setEmail(result.email);
+                            saveCalciteAccount();
+                            updateCalciteStatus();
+                            Toast.makeText(LauncherActivity.this, "注册成功: " + result.username, Toast.LENGTH_SHORT).show();
+                            dialog.dismiss();
+                        });
+                    }
+
+                    @Override
+                    public void onError(String message) {
+                        runOnUiThread(() -> {
+                            btnConfirm.setEnabled(true);
+                            Toast.makeText(LauncherActivity.this, "注册失败: " + message, Toast.LENGTH_LONG).show();
+                        });
+                    }
+                });
+        });
+
+        btnCancel.setOnClickListener(v -> dialog.dismiss());
+    }
+
+    private void showLoginDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        View view = getLayoutInflater().inflate(R.layout.dialog_login_calcite, null);
+        builder.setView(view);
+
+        AlertDialog dialog = builder.create();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        }
+        dialog.show();
+
+        EditText etUsername = view.findViewById(R.id.etLoginUsername);
+        EditText etPassword = view.findViewById(R.id.etLoginPassword);
+        View btnConfirm = view.findViewById(R.id.btnConfirmLogin);
+        View btnCancel = view.findViewById(R.id.btnCancelLogin);
+
+        if (calciteApi == null) calciteApi = new CalciteApiService();
+
+        btnConfirm.setOnClickListener(v -> {
+            String name = etUsername.getText().toString().trim();
+            String password = etPassword.getText().toString().trim();
+
+            if (name.isEmpty() || password.isEmpty()) {
+                Toast.makeText(this, "请填写用户名和密码", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            btnConfirm.setEnabled(false);
+            calciteApi.login(name, password, new CalciteApiService.Callback<CalciteApiService.AuthResult>() {
+                @Override
+                public void onSuccess(CalciteApiService.AuthResult result) {
+                    runOnUiThread(() -> {
+                        String uuid = UUID.nameUUIDFromBytes(("Calcite:" + result.username).getBytes()).toString();
+                        calciteAccount = new Account(result.username, "calcite", uuid);
+                        calciteAccount.setCalciteToken(result.token);
+                        calciteAccount.setEmail(result.email);
+                        saveCalciteAccount();
+                        updateCalciteStatus();
+                        Toast.makeText(LauncherActivity.this, "登录成功: " + result.username, Toast.LENGTH_SHORT).show();
+                        dialog.dismiss();
+                    });
+                }
+
+                @Override
+                public void onError(String message) {
+                    runOnUiThread(() -> {
+                        btnConfirm.setEnabled(true);
+                        Toast.makeText(LauncherActivity.this, "登录失败: " + message, Toast.LENGTH_LONG).show();
+                    });
+                }
+            });
+        });
+
+        btnCancel.setOnClickListener(v -> dialog.dismiss());
+    }
+
     /**
      * 刷新正版账号令牌（在启动游戏前调用）
      */
@@ -462,6 +688,8 @@ public class LauncherActivity extends Activity {
                         obj.getString("type"),
                         obj.getString("uuid")
                     );
+                    // calcite 账号由 loadCalciteAccount 单独加载
+                    if (acc.isCalcite()) continue;
                     // 恢复正版账号字段
                     if (acc.isPremium()) {
                         acc.setAccessToken(obj.optString("accessToken", ""));
@@ -483,6 +711,8 @@ public class LauncherActivity extends Activity {
         }
         // 恢复之前选中的账号
         selectedAccountUuid = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(KEY_SELECTED_ACCOUNT, null);
+        // 恢复 Calcite 启动器账号
+        loadCalciteAccount();
     }
 
     private void saveAccounts() {
@@ -508,6 +738,48 @@ public class LauncherActivity extends Activity {
                 .apply();
         } catch (Exception e) {
             e.printStackTrace();
+        }
+    }
+
+    /** 独立保存 Calcite 启动器账号 */
+    private void saveCalciteAccount() {
+        try {
+            if (calciteAccount != null) {
+                JSONObject obj = new JSONObject();
+                obj.put("name", calciteAccount.getName());
+                obj.put("uuid", calciteAccount.getUuid());
+                obj.put("calciteToken", calciteAccount.getCalciteToken() != null ? calciteAccount.getCalciteToken() : "");
+                obj.put("email", calciteAccount.getEmail() != null ? calciteAccount.getEmail() : "");
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .edit()
+                    .putString(KEY_CALCITE_ACCOUNT, obj.toString())
+                    .apply();
+            } else {
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .edit()
+                    .remove(KEY_CALCITE_ACCOUNT)
+                    .apply();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /** 独立加载 Calcite 启动器账号 */
+    private void loadCalciteAccount() {
+        String json = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(KEY_CALCITE_ACCOUNT, "");
+        if (!json.isEmpty()) {
+            try {
+                JSONObject obj = new JSONObject(json);
+                calciteAccount = new Account(
+                    obj.getString("name"), "calcite", obj.getString("uuid")
+                );
+                calciteAccount.setCalciteToken(obj.optString("calciteToken", ""));
+                calciteAccount.setEmail(obj.optString("email", ""));
+            } catch (Exception e) {
+                e.printStackTrace();
+                calciteAccount = null;
+            }
         }
     }
 
@@ -641,6 +913,11 @@ public class LauncherActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_LAUNCH_GAME) {
+            // 游戏退出，停止心跳
+            stopHeartbeat();
+            return;
+        }
         if (resultCode != RESULT_OK || data == null) return;
 
         if (requestCode == REQUEST_PICK_FILE) {
@@ -740,6 +1017,44 @@ public class LauncherActivity extends Activity {
             intent.putExtra("token_type", selected.getTokenType() != null ? selected.getTokenType() : "Bearer");
         }
         intent.setFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-        startActivity(intent);
+        startActivityForResult(intent, REQUEST_LAUNCH_GAME);
+        // 若已登录 Calcite 账号，启动心跳上报
+        if (calciteAccount != null && calciteAccount.getCalciteToken() != null) {
+            startHeartbeat(calciteAccount.getCalciteToken());
+        }
+    }
+
+    // ===== 心跳上报 =====
+
+    private void startHeartbeat(String token) {
+        stopHeartbeat();
+        heartbeatTask = new Runnable() {
+            @Override
+            public void run() {
+                if (calciteApi == null) calciteApi = new CalciteApiService();
+                calciteApi.sendHeartbeat(token, new CalciteApiService.Callback<Void>() {
+                    @Override
+                    public void onSuccess(Void result) {
+                        Log.d("Heartbeat", "心跳上报成功");
+                    }
+
+                    @Override
+                    public void onError(String message) {
+                        Log.w("Heartbeat", "心跳上报失败: " + message);
+                    }
+                });
+                // 每分钟上报一次
+                heartbeatHandler.postDelayed(this, 60000);
+            }
+        };
+        // 立即上报一次
+        heartbeatHandler.post(heartbeatTask);
+    }
+
+    private void stopHeartbeat() {
+        if (heartbeatTask != null) {
+            heartbeatHandler.removeCallbacks(heartbeatTask);
+            heartbeatTask = null;
+        }
     }
 }

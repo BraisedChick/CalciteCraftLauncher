@@ -18,6 +18,15 @@
         android:layout_marginStart="8dp">
 
         <com.calcite.ui.MioButton
+            android:id="@+id/btnMy"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:text="我的"
+            android:textSize="10sp"
+            android:layout_marginBottom="12dp"
+            app:mioShape="oval" />
+
+        <com.calcite.ui.MioButton
             android:id="@+id/btnHome"
             android:layout_width="40dp"
             android:layout_height="40dp"
@@ -79,6 +88,11 @@
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="4">
+
+            <include
+                android:id="@+id/pageMy"
+                layout="@layout/page_my"
+                android:visibility="gone" />
 
             <include
                 android:id="@+id/pageHome"

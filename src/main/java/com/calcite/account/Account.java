@@ -4,7 +4,7 @@ import com.calcite.auth.AuthResult;
 
 public class Account {
     private String name;
-    private String type; // "offline" or "premium"
+    private String type; // "offline", "premium", or "calcite"
     private String uuid;
 
     // 正版账号额外字段
@@ -12,6 +12,10 @@ public class Account {
     private String refreshToken;   // Microsoft 刷新令牌
     private String tokenType;      // 令牌类型（通常为 "Bearer"）
     private long notAfter;         // 访问令牌过期时间（毫秒时间戳）
+
+    // Calcite 账号字段
+    private String calciteToken;   // Calcite JWT 令牌
+    private String email;          // 注册邮箱
 
     public Account(String name, String type, String uuid) {
         this.name = name;
@@ -62,6 +66,7 @@ public class Account {
     public void setNotAfter(long notAfter) { this.notAfter = notAfter; }
 
     public boolean isPremium() { return "premium".equals(type); }
+    public boolean isCalcite() { return "calcite".equals(type); }
 
     /**
      * 检查正版令牌是否已过期
@@ -71,6 +76,14 @@ public class Account {
     }
 
     public String getTypeDisplay() {
-        return "offline".equals(type) ? "离线账号" : "正版账号";
+        if ("offline".equals(type)) return "离线账号";
+        if ("calcite".equals(type)) return "Calcite 账号";
+        return "正版账号";
     }
+
+    // Calcite 账号 getter/setter
+    public String getCalciteToken() { return calciteToken; }
+    public void setCalciteToken(String token) { this.calciteToken = token; }
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
 }
