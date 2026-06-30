@@ -274,9 +274,9 @@ public class LauncherActivity extends Activity {
                     int seconds = totalSeconds % 60;
                     String text;
                     if (hours > 0) {
-                        text = hours + "小时" + minutes + "分钟";
+                        text = String.format("%.1f小时", hours + minutes / 60.0);
                     } else {
-                        text = minutes + "分钟" + seconds + "秒";
+                        text = minutes + "分钟";
                     }
                     tvPlaytime.setText(text);
                 });
