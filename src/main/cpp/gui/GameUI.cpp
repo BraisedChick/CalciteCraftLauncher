@@ -503,25 +503,32 @@ void GameUI::performBlockPlacement() {
     auto result = rayCast(eyePos, dir, 5.0f, *cm);
     if (!result.hit) return;
 
-    // 空手时：检查目标方块是否为可交互方块（工作台等）
-    if (!hasItem) {
-        auto chunk = cm->getChunk(result.blockX >> 4, result.blockZ >> 4);
-        if (!chunk) return;
-        uint32_t state = chunk->getBlockState(result.blockX & 15, result.blockY, result.blockZ & 15);
-        auto meta = BlockRegistry::getInstance().getBlockMetadata(state);
-        // 只对可交互方块发送 UseItemOn（工作台、熔炉、箱子等）
-        if (meta.name != "crafting_table" && meta.name != "furnace" &&
-            meta.name != "chest" && meta.name != "ender_chest" &&
-            meta.name != "anvil" && meta.name != "enchanting_table" &&
-            meta.name != "brewing_stand" && meta.name != "smithing_table") {
-            return;
-        }
-    }
+    auto chunk = cm->getChunk(result.blockX >> 4, result.blockZ >> 4);
+    if (!chunk) return;
+    uint32_t state = chunk->getBlockState(result.blockX & 15, result.blockY, result.blockZ & 15);
+    auto meta = BlockRegistry::getInstance().getBlockMetadata(state);
 
-    static const glm::ivec3 faceNormals[] = {
-        {0,-1,0}, {0,1,0}, {0,0,-1}, {0,0,1}, {-1,0,0}, {1,0,0}
-    };
-    engine->sendBlockPlacement(result.blockX, result.blockY, result.blockZ, result.hitFace, 0);
+    // 检查目标是否为可交互方块（门、活板门、工作台、箱子等）
+    // 门类方块的名称以 _door 或 _trapdoor 结尾，但铁门只能由红石控制
+    bool isDoorLike = (meta.name.length() > 5 &&
+        meta.name.compare(meta.name.length() - 5, 5, "_door") == 0 &&
+        meta.name != "iron_door") ||
+        (meta.name.length() > 9 &&
+        meta.name.compare(meta.name.length() - 9, 9, "_trapdoor") == 0);
+
+    bool isInteractive = isDoorLike ||
+        meta.name == "crafting_table" || meta.name == "furnace" ||
+        meta.name == "chest" || meta.name == "ender_chest" ||
+        meta.name == "anvil" || meta.name == "enchanting_table" ||
+        meta.name == "brewing_stand" || meta.name == "smithing_table";
+
+    if (isInteractive) {
+        // 可交互方块：发送 UseItemOn 打开/切换
+        engine->sendBlockPlacement(result.blockX, result.blockY, result.blockZ, result.hitFace, 0);
+    } else if (hasItem) {
+        // 非交互方块 + 手持物品：在相邻面放置方块
+        engine->sendBlockPlacement(result.blockX, result.blockY, result.blockZ, result.hitFace, 0);
+    }
 }
 
 // ===== 挖掘逻辑（对标原版 MultiPlayerGameMode）=====
