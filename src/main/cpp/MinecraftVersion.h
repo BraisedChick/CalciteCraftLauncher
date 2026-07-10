@@ -122,6 +122,11 @@ public:
     // 获取维度配置
     const DimensionConfig& getDimensionConfig() const { return currentFeatures.dimension; }
     
+    // 更新维度配置（维度切换时调用）
+    void setDimensionConfig(int minY, int maxY) {
+        currentFeatures.dimension = DimensionConfig(minY, maxY, 16);
+    }
+    
     // 获取区块数据格式
     ChunkDataFormat getChunkFormat() const { return currentFeatures.chunkFormat; }
     

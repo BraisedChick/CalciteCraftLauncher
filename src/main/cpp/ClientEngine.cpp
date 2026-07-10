@@ -1206,10 +1206,23 @@ void ClientEngine::handlePlayPacket(int packetId,
                         LOGW("Failed to parse RegistryHolder biomes: %s", e.what());
                     }
 
-                    // Minecraft 1.18+ standard Overworld dimension
-                    // min_y = -64, height = 384 (Y range: -64 to 320)
-                    dimensionMinY = -64;
-                    dimensionHeight = 384;
+                    // 从 Login 包的 DimensionType NBT 解析世界高度参数
+                    // Minecraft 1.18+ 每个维度有自己的 min_y 和 height
+                    // 主世界: min_y=-64, height=384  |  下界/末地: min_y=0, height=256
+                    try {
+                        const auto& dimType = loginPacket.GetDimensionType();
+                        if (dimType.contains("min_y") && dimType.contains("height")) {
+                            dimensionMinY = dimType["min_y"].get<int>();
+                            dimensionHeight = dimType["height"].get<int>();
+                            // 同步更新 VersionManager，确保新创建的 Chunk 使用正确维度
+                            VersionManager::getInstance().setDimensionConfig(dimensionMinY, dimensionMinY + dimensionHeight);
+                        }
+                    } catch (const std::exception& e) {
+                        LOGW("Failed to parse DimensionType from Login: %s", e.what());
+                        dimensionMinY = -64;
+                        dimensionHeight = 384;
+                        VersionManager::getInstance().setDimensionConfig(-64, 320);
+                    }
                     LOGI("Dimension info: min_y=%d, height=%d (Y range: %d to %d)",
                          dimensionMinY, dimensionHeight, dimensionMinY, dimensionMinY + dimensionHeight - 1);
                 } catch (const std::exception& e) {
@@ -1601,7 +1614,7 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x3D: { // Respawn（重生，包含新游戏模式）
+            case 0x3D: { // Respawn（维度切换/重生）
                 ProtocolCraft::ClientboundRespawnPacket respawnPacket;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1610,7 +1623,31 @@ void ClientEngine::handlePlayPacket(int packetId,
                 int newMode = respawnPacket.GetPlayerGameType();
                 gameMode = newMode;
                 Collision::getInstance().setGameMode(newMode);
-                LOGI("Respawn: game mode=%d", newMode);
+
+                // 从 Respawn 包解析新维度的 min_y / height
+                try {
+                    const auto& dimType = respawnPacket.GetDimensionType();
+                    if (dimType.contains("min_y") && dimType.contains("height")) {
+                        dimensionMinY = dimType["min_y"].get<int>();
+                        dimensionHeight = dimType["height"].get<int>();
+                        // 同步更新 VersionManager，后续创建的 Chunk 使用新维度
+                        VersionManager::getInstance().setDimensionConfig(dimensionMinY, dimensionMinY + dimensionHeight);
+                        LOGI("Respawn: New dimension min_y=%d, height=%d", dimensionMinY, dimensionHeight);
+                    }
+                } catch (const std::exception& e) {
+                    LOGW("Failed to parse DimensionType from Respawn: %s", e.what());
+                }
+
+                // 维度切换：清理旧维度的区块和实体
+                // 服务器随后会发送新维度的 ChunkData 和 TeleportEntity 包
+                LOGI("Respawn: Dimension change, clearing chunks and entities");
+                if (chunkManager) {
+                    chunkManager->clear();
+                }
+                if (glRenderer) {
+                    glRenderer->clearChunks();
+                }
+                EntityManager::getInstance().removeAllEntities();
                 break;
             }
 

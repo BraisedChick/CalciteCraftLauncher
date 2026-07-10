@@ -307,6 +307,12 @@ std::unique_ptr<Chunk> ChunkParser::parseExtendedChunk(
 	auto chunk = std::make_unique<Chunk>(chunkX, chunkZ);
     size_t pos = 0;
     
+    // 用实际维度参数覆盖 Chunk 默认维度（主世界 vs 下界/末地）
+    if (dimensionMinY != chunk->dimension.minY) {
+        chunk->dimension.minY = dimensionMinY;
+        chunk->dimension.maxY = dimensionMinY + ((int)chunk->sections.size() * SECTION_HEIGHT);
+    }
+    
     // Initialize all sections as empty
     for (size_t i = 0; i < chunk->sections.size(); i++) {
         if (!chunk->sections[i]) {
