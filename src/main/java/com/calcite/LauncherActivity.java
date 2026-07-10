@@ -239,6 +239,7 @@ public class LauncherActivity extends Activity {
     private void fillMyPage() {
         pageMy.findViewById(R.id.btnRegisterCalcite).setOnClickListener(v -> showRegisterDialog());
         pageMy.findViewById(R.id.btnLoginCalcite).setOnClickListener(v -> showLoginDialog());
+        pageMy.findViewById(R.id.btnLogoutCalcite).setOnClickListener(v -> logoutCalcite());
         updateCalciteStatus();
     }
 
@@ -246,16 +247,26 @@ public class LauncherActivity extends Activity {
         MioTextView tvStatus = pageMy.findViewById(R.id.tvCalciteStatus);
         View buttonRow = pageMy.findViewById(R.id.layoutCalciteButtons);
         View layoutPlaytime = pageMy.findViewById(R.id.layoutPlaytime);
+        View btnLogout = pageMy.findViewById(R.id.btnLogoutCalcite);
         if (calciteAccount != null) {
             tvStatus.setText("已登录: " + calciteAccount.getName() + " (" + calciteAccount.getEmail() + ")");
             buttonRow.setVisibility(View.GONE);
             layoutPlaytime.setVisibility(View.VISIBLE);
+            btnLogout.setVisibility(View.VISIBLE);
             queryPlaytime();
         } else {
             tvStatus.setText("未登录 Calcite 账号");
             buttonRow.setVisibility(View.VISIBLE);
             layoutPlaytime.setVisibility(View.GONE);
+            btnLogout.setVisibility(View.GONE);
         }
+    }
+
+    private void logoutCalcite() {
+        calciteAccount = null;
+        saveCalciteAccount();
+        updateCalciteStatus();
+        Toast.makeText(this, "已退出登录", Toast.LENGTH_SHORT).show();
     }
 
     private void queryPlaytime() {
