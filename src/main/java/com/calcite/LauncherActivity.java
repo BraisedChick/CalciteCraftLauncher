@@ -97,13 +97,13 @@ public class LauncherActivity extends Activity {
     private static final String[] VERSIONS = {
         "1.8", "1.12",
         "1.13", "1.14", "1.15", "1.16", "1.17",
-        "1.18", "1.19", "1.20", "1.21",
+        "1.18.2", "1.19.4", "1.20", "1.21",
         "26.1", "26.2"
     };
     private static final int[] PROTOCOL_VERSIONS = {
         47, 340,
         404, 498, 578, 735, 755,
-        758, 759, 763, 767,
+        758,  762, 763, 767,
         800, 850
     };
 

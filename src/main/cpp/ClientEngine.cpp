@@ -161,7 +161,11 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
         LOGI("Sending login start: %s", username.c_str());
 
         ProtocolCraft::ServerboundHelloPacket loginStart;
-        loginStart.SetGameProfile(username);  // 协议 758 使用 GameProfile 字段
+        #if PROTOCOL_VERSION < 759
+                loginStart.SetGameProfile(username);  // 1.18.2: 直接设置用户名
+        #else
+                loginStart.SetName_(username);  // 1.19+: 设置 Name_ 字段
+        #endif
 
         ProtocolCraft::WriteContainer writeData;
         loginStart.Write(writeData);
@@ -201,7 +205,11 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
 
             try {
                 successPacket.Read(iter, length);
-                LOGI("Logged in as: %s", successPacket.GetUsername().c_str());
+                #if PROTOCOL_VERSION < 759
+                                LOGI("Logged in as: %s", successPacket.GetUsername().c_str());
+                #else
+                                LOGI("Logged in as: %s", successPacket.GetGameProfile().GetName().c_str());
+                #endif
             } catch (const std::exception& e) {
                 LOGE("Failed to parse login success: %s", e.what());
             }
@@ -382,6 +390,11 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
         size_t pos = 0;
         ProtocolCraft::ReadIterator iter = resp.cbegin();
         size_t remaining = resp.size();
+        LOGI("[PLAY] receivePacket: resp.size=%zu, bytes=[%02x %02x %02x %02x %02x]",
+             resp.size(),
+             resp.size()>0?resp[0]:0, resp.size()>1?resp[1]:0,
+             resp.size()>2?resp[2]:0, resp.size()>3?resp[3]:0,
+             resp.size()>4?resp[4]:0);
         int pid = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(iter, remaining);
         pos = resp.size() - remaining;
 
@@ -414,8 +427,13 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
         }
 
         // 紧急包（延迟敏感）：位置、方块更新、生命、保活、游戏事件
+#if PROTOCOL_VERSION >= 762
+        if (pid == 0x3C || pid == 0x0A || pid == 0x43 || pid == 0x57 ||
+            pid == 0x23 || pid == 0x1F || pid == 0x41) {
+#else
         if (pid == 0x38 || pid == 0x0C || pid == 0x3F || pid == 0x52 ||
             pid == 0x21 || pid == 0x1E || pid == 0x3D) {
+#endif
             std::lock_guard<std::mutex> lock(urgentQueueMutex);
             urgentQueue.push({pid, std::move(resp), pos});
             urgentCV.notify_one();
@@ -1073,7 +1091,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                                     const std::vector<uint8_t>& data, size_t startPos) {
     try {
         switch (packetId) {
-            case 0x26: { // Login (Play) - 玩家初始状态
+#if PROTOCOL_VERSION < 762
+            case 0x26:
+#else
+            case 0x28:
+#endif
+            { // Login (Play) - 玩家初始状态
                 LOGI("Received ClientboundLoginPacket (Play)");
 
                 ProtocolCraft::ClientboundLoginPacket loginPacket;
@@ -1206,15 +1229,17 @@ void ClientEngine::handlePlayPacket(int packetId,
                         LOGW("Failed to parse RegistryHolder biomes: %s", e.what());
                     }
 
-                    // 从 Login 包的 DimensionType NBT 解析世界高度参数
+                    // 从 Login 包的 DimensionType 解析世界高度参数
                     // Minecraft 1.18+ 每个维度有自己的 min_y 和 height
                     // 主世界: min_y=-64, height=384  |  下界/末地: min_y=0, height=256
+#if PROTOCOL_VERSION < 759
+                    // 1.18.2: DimensionType 是 NBT 复合标签，直接包含 min_y 和 height
                     try {
                         const auto& dimType = loginPacket.GetDimensionType();
                         if (dimType.contains("min_y") && dimType.contains("height")) {
                             dimensionMinY = dimType["min_y"].get<int>();
                             dimensionHeight = dimType["height"].get<int>();
-                            // 同步更新 VersionManager，确保新创建的 Chunk 使用正确维度
+                            // 同步更新 VersionManager
                             VersionManager::getInstance().setDimensionConfig(dimensionMinY, dimensionMinY + dimensionHeight);
                         }
                     } catch (const std::exception& e) {
@@ -1223,6 +1248,39 @@ void ClientEngine::handlePlayPacket(int packetId,
                         dimensionHeight = 384;
                         VersionManager::getInstance().setDimensionConfig(-64, 320);
                     }
+#else
+                    // 1.19+: DimensionType 是 Identifier，从 RegistryHolder 解析
+                    try {
+                        std::string dimTypeName = loginPacket.GetDimensionType().GetFull();
+                        const auto& registryHolder = loginPacket.GetRegistryHolder();
+                        if (registryHolder.contains("minecraft:dimension_type") &&
+                            registryHolder["minecraft:dimension_type"].contains("value")) {
+                            const auto& value = registryHolder["minecraft:dimension_type"]["value"];
+                            if (value.is_list_of<ProtocolCraft::NBT::TagCompound>()) {
+                                const auto& entries = value.as_list_of<ProtocolCraft::NBT::TagCompound>();
+                                for (const auto& entry : entries) {
+                                    auto nameIt = entry.find("name");
+                                    auto elementIt = entry.find("element");
+                                    if (nameIt == entry.end() || elementIt == entry.end()) continue;
+                                    std::string name = nameIt->second.get<std::string>();
+                                    if (name == dimTypeName && elementIt->second.is<ProtocolCraft::NBT::TagCompound>()) {
+                                        const auto& elem = elementIt->second.get<ProtocolCraft::NBT::TagCompound>();
+                                        auto minYIt = elem.find("min_y");
+                                        auto heightIt = elem.find("height");
+                                        if (minYIt != elem.end() && heightIt != elem.end()) {
+                                            dimensionMinY = minYIt->second.get<int>();
+                                            dimensionHeight = heightIt->second.get<int>();
+                                            VersionManager::getInstance().setDimensionConfig(dimensionMinY, dimensionMinY + dimensionHeight);
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (const std::exception& e) {
+                        LOGW("Failed to parse dimension from RegistryHolder: %s", e.what());
+                    }
+#endif
                     LOGI("Dimension info: min_y=%d, height=%d (Y range: %d to %d)",
                          dimensionMinY, dimensionHeight, dimensionMinY, dimensionMinY + dimensionHeight - 1);
                 } catch (const std::exception& e) {
@@ -1231,7 +1289,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x21: { // Keep Alive (Clientbound)
+#if PROTOCOL_VERSION < 762
+            case 0x21:
+#else
+            case 0x23:
+#endif
+            { // Keep Alive (Clientbound)
                 if (data.size() - startPos >= 8) {
                     // 手动解析 8 字节大端序 Long（ProtocolCraft 有 bug）
                     long long keepAliveId = 0;
@@ -1242,8 +1305,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                     // 手动构造响应包：Packet ID (VarInt) + KeepAlive ID (8 bytes Big Endian)
                     std::vector<uint8_t> response;
 
-                    // Packet ID: 0x0F (Serverbound KeepAlive)
+                    // Packet ID: Serverbound KeepAlive
+#if PROTOCOL_VERSION >= 762
+                    response.push_back(0x12);
+#else
                     response.push_back(0x0F);
+#endif
 
                     // KeepAlive ID: 8 bytes Big Endian
                     for (int i = 7; i >= 0; i--) {
@@ -1258,7 +1325,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x38: { // Player Position And Look
+#if PROTOCOL_VERSION < 762
+            case 0x38:
+#else
+            case 0x3C:
+#endif
+            { // Player Position And Look
                 ProtocolCraft::ClientboundPlayerPositionPacket posPacket;
                 std::vector<unsigned char> packetData(data.begin() + startPos, data.end());
                 auto iter = packetData.cbegin();
@@ -1334,7 +1406,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x22: { // Chunk Data (Level Chunk with Light) — 入队异步处理，不阻塞网络循环
+#if PROTOCOL_VERSION < 762
+            case 0x22:
+#else
+            case 0x24:
+#endif
+            { // Chunk Data (Level Chunk with Light) — 入队异步处理，不阻塞网络循环
                 {
                     std::lock_guard<std::mutex> lock(chunkQueueMutex);
                     chunkQueue.push({std::vector<uint8_t>(data.begin() + startPos, data.end())});
@@ -1343,7 +1420,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x0C: { // Block Update（单一方块更新）
+#if PROTOCOL_VERSION < 762
+            case 0x0C:
+#else
+            case 0x0A:
+#endif
+            { // Block Update（单一方块更新）
                 ProtocolCraft::ClientboundBlockUpdatePacket blockPacket;
                 std::vector<unsigned char> packetData(data.begin() + startPos, data.end());
                 auto iter = packetData.cbegin();
@@ -1378,7 +1460,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x25: { // Light Update
+#if PROTOCOL_VERSION < 762
+            case 0x25:
+#else
+            case 0x27:
+#endif
+            { // Light Update
                 try {
                     ProtocolCraft::ClientboundLightUpdatePacket lightPacket;
                     std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
@@ -1437,7 +1524,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x3F: { // Section Blocks Update（多方块批量更新）
+#if PROTOCOL_VERSION < 762
+            case 0x3F:
+#else
+            case 0x43:
+#endif
+            { // Section Blocks Update（多方块批量更新）
                 ProtocolCraft::ClientboundSectionBlocksUpdatePacket sectionPacket;
                 std::vector<unsigned char> packetData(data.begin() + startPos, data.end());
                 auto iter = packetData.cbegin();
@@ -1483,7 +1575,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x14: { // Container Set Content（设置容器全部物品）
+#if PROTOCOL_VERSION < 762
+            case 0x14:
+#else
+            case 0x12:
+#endif
+            { // Container Set Content（设置容器全部物品）
                 ProtocolCraft::ClientboundContainerSetContentPacket containerPacket;
                 std::vector<unsigned char> packetData(data.begin() + startPos, data.end());
                 auto iter = packetData.cbegin();
@@ -1534,7 +1631,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x16: { // Container Set Slot（设置单个格子）
+#if PROTOCOL_VERSION < 762
+            case 0x16:
+#else
+            case 0x14:
+#endif
+            { // Container Set Slot（设置单个格子）
                 ProtocolCraft::ClientboundContainerSetSlotPacket slotPacket;
                 std::vector<unsigned char> packetData(data.begin() + startPos, data.end());
                 auto iter = packetData.cbegin();
@@ -1558,7 +1660,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                      containerId, slotIndex, is.present, is.itemId, is.count);
                 break;
             }
-            case 0x35: { // Combat Kill (death message)
+#if PROTOCOL_VERSION < 762
+            case 0x35:
+#else
+            case 0x38:
+#endif
+            { // Combat Kill (death message)
                 ProtocolCraft::ClientboundPlayerCombatKillPacket killPacket;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1573,7 +1680,12 @@ void ClientEngine::handlePlayPacket(int packetId,
             }
 
 
-            case 0x51: { // Set Experience（经验值更新）
+#if PROTOCOL_VERSION < 762
+            case 0x51:
+#else
+            case 0x56:
+#endif
+            { // Set Experience（经验值更新）
                 ProtocolCraft::ClientboundSetExperiencePacket expPacket;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1585,7 +1697,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x52: { // Set Health（玩家生命/饥饿值更新）
+#if PROTOCOL_VERSION < 762
+            case 0x52:
+#else
+            case 0x57:
+#endif
+            { // Set Health（玩家生命/饥饿值更新）
                 ProtocolCraft::ClientboundSetHealthPacket healthPacket;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1599,7 +1716,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x1E: { // Game Event（包含游戏模式变更）
+#if PROTOCOL_VERSION < 762
+            case 0x1E:
+#else
+            case 0x1F:
+#endif
+            { // Game Event（包含游戏模式变更）
                 ProtocolCraft::ClientboundGameEventPacket gameEventPacket;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1614,7 +1736,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x3D: { // Respawn（维度切换/重生）
+#if PROTOCOL_VERSION < 762
+            case 0x3D:
+#else
+            case 0x41:
+#endif
+            { // Respawn（维度切换/重生）
                 ProtocolCraft::ClientboundRespawnPacket respawnPacket;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1625,18 +1752,25 @@ void ClientEngine::handlePlayPacket(int packetId,
                 Collision::getInstance().setGameMode(newMode);
 
                 // 从 Respawn 包解析新维度的 min_y / height
+#if PROTOCOL_VERSION < 759
+                // 1.18.2: DimensionType 是 NBT 复合标签
                 try {
                     const auto& dimType = respawnPacket.GetDimensionType();
                     if (dimType.contains("min_y") && dimType.contains("height")) {
                         dimensionMinY = dimType["min_y"].get<int>();
                         dimensionHeight = dimType["height"].get<int>();
-                        // 同步更新 VersionManager，后续创建的 Chunk 使用新维度
                         VersionManager::getInstance().setDimensionConfig(dimensionMinY, dimensionMinY + dimensionHeight);
                         LOGI("Respawn: New dimension min_y=%d, height=%d", dimensionMinY, dimensionHeight);
                     }
                 } catch (const std::exception& e) {
                     LOGW("Failed to parse DimensionType from Respawn: %s", e.what());
                 }
+#else
+                // 1.19+: DimensionType 是 Identifier，Respawn 包不含 RegistryHolder
+                // 维度参数已在 Login 时从 RegistryHolder 解析并缓存
+                LOGI("Respawn: dimension changed to %s",
+                     respawnPacket.GetDimensionType().GetFull().c_str());
+#endif
 
                 // 维度切换：清理旧维度的区块和实体
                 // 服务器随后会发送新维度的 ChunkData 和 TeleportEntity 包
@@ -1651,7 +1785,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x59: { // Set Time（昼夜时间更新）
+#if PROTOCOL_VERSION < 762
+            case 0x59:
+#else
+            case 0x5E:
+#endif
+            { // Set Time（昼夜时间更新）
                 ProtocolCraft::ClientboundSetTimePacket timePacket;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1661,7 +1800,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x48: { // Set Carried Item（服务器同步手持槽位）
+#if PROTOCOL_VERSION < 762
+            case 0x48:
+#else
+            case 0x4D:
+#endif
+            { // Set Carried Item（服务器同步手持槽位）
                 ProtocolCraft::ClientboundSetCarriedItemPacket carriedPacket;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1675,7 +1819,29 @@ void ClientEngine::handlePlayPacket(int packetId,
             }
 
             // ===== 实体包处理 =====
-            case 0x00: { // Spawn Entity（通用实体生成）
+#if PROTOCOL_VERSION >= 762
+            case 0x00: { // BundlePacket（包捆绑标记，跳过）
+                break;
+            }
+#endif
+
+#if PROTOCOL_VERSION < 762
+            case 0x00:
+#else
+            case 0x01:
+#endif
+            { // Spawn Entity（通用实体生成）
+                // 1.19.4+: 服务器可能发送 BundleMarker（空包体 0x00）
+                if (data.size() <= startPos + 1) {
+                    // Body 为空的 0x00 包 = BundleMarker（包捆绑标记），跳过
+                    break;
+                }
+                LOGI("AddEntity: data.size=%zu, startPos=%zu, bodySize=%zu",
+                     data.size(), startPos, (data.size() > startPos) ? (data.size() - startPos) : 0);
+                if (data.size() <= startPos) {
+                    LOGE("AddEntity: packet data too short, skipping");
+                    break;
+                }
                 ProtocolCraft::ClientboundAddEntityPacket pkt;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1722,7 +1888,12 @@ void ClientEngine::handlePlayPacket(int packetId,
 #endif
 
 #if PROTOCOL_VERSION < 764
-            case 0x04: { // Spawn Player（玩家生成，1.20.1 及以下）
+#if PROTOCOL_VERSION < 762
+            case 0x04:
+#else
+            case 0x03:
+#endif
+            { // Spawn Player（玩家生成，1.20.1 及以下）
                 ProtocolCraft::ClientboundAddPlayerPacket pkt;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1742,7 +1913,12 @@ void ClientEngine::handlePlayPacket(int packetId,
             }
 #endif
 
-            case 0x2A: { // Entity Position and Rotation（相对移动+旋转）
+#if PROTOCOL_VERSION < 762
+            case 0x2A:
+#else
+            case 0x2C:
+#endif
+            { // Entity Position and Rotation（相对移动+旋转）
                 ProtocolCraft::ClientboundMoveEntityPacketPosRot pkt;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1756,7 +1932,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x29: { // Entity Position（相对移动，无旋转）
+#if PROTOCOL_VERSION < 762
+            case 0x29:
+#else
+            case 0x2B:
+#endif
+            { // Entity Position（相对移动，无旋转）
                 ProtocolCraft::ClientboundMoveEntityPacketPos pkt;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1767,7 +1948,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x2B: { // Entity Rotation（仅旋转）
+#if PROTOCOL_VERSION < 762
+            case 0x2B:
+#else
+            case 0x2D:
+#endif
+            { // Entity Rotation（仅旋转）
                 ProtocolCraft::ClientboundMoveEntityPacketRot pkt;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1779,7 +1965,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x62: { // Teleport Entity（绝对传送）
+#if PROTOCOL_VERSION < 762
+            case 0x62:
+#else
+            case 0x68:
+#endif
+            { // Teleport Entity（绝对传送）
                 ProtocolCraft::ClientboundTeleportEntityPacket pkt;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1793,7 +1984,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x3A: { // Remove Entities（移除实体）
+#if PROTOCOL_VERSION < 762
+            case 0x3A:
+#else
+            case 0x3E:
+#endif
+            { // Remove Entities（移除实体）
                 ProtocolCraft::ClientboundRemoveEntitiesPacket pkt;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1806,7 +2002,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x4F: { // Set Entity Motion（设置速度）
+#if PROTOCOL_VERSION < 762
+            case 0x4F:
+#else
+            case 0x54:
+#endif
+            { // Set Entity Motion（设置速度）
                 ProtocolCraft::ClientboundSetEntityMotionPacket pkt;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1817,7 +2018,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x2E: { // Open Screen（服务器打开容器 UI）
+#if PROTOCOL_VERSION < 762
+            case 0x2E:
+#else
+            case 0x30:
+#endif
+            { // Open Screen（服务器打开容器 UI）
                 ProtocolCraft::ClientboundOpenScreenPacket pkt;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
                 auto iter = pktData.cbegin();
@@ -1830,7 +2036,12 @@ void ClientEngine::handlePlayPacket(int packetId,
                 break;
             }
 
-            case 0x13: { // Container Close（服务器关闭容器）
+#if PROTOCOL_VERSION < 762
+            case 0x13:
+#else
+            case 0x11:
+#endif
+            { // Container Close（服务器关闭容器）
                 GameUI::getInstance().closeContainer();
                 LOGI("Container closed by server");
                 break;

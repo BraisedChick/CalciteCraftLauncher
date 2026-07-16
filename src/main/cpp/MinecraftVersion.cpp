@@ -88,6 +88,14 @@ void VersionManager::initializeVersionMap() {
         DimensionConfig(-64, 320, 16)
     );
     
+    // 1.19.1-1.19.4: Extended 格式（与 1.18+ 相同）
+    versionMap[ProtocolVersion::V1_19_4] = ProtocolFeatures(
+        ProtocolVersion::V1_19_4,
+        ChunkDataFormat::Extended,
+        BlockStateEncoding::BitArray,
+        DimensionConfig(-64, 320, 16)
+    );
+    
     versionMap[ProtocolVersion::V1_20] = ProtocolFeatures(
         ProtocolVersion::V1_20,
         ChunkDataFormat::Extended,

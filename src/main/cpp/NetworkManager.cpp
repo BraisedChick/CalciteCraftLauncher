@@ -235,8 +235,10 @@ std::vector<uint8_t> NetworkManager::receiveEncryptedPacket() {
             size_t remainingStart = rawData.size() - length;
             std::vector<uint8_t> rest(rawData.begin() + remainingStart, rawData.end());
             if (uncompressedLen == 0) {
+                // 数据未压缩
                 return rest;
             } else {
+                // 需要解压
                 return Compression::decompress(rest, uncompressedLen);
             }
         } catch (...) {

@@ -147,6 +147,7 @@ private:
     std::unique_ptr<ChunkManager> chunkManager;
     std::unique_ptr<NetworkManager> net;
     mutable std::mutex netMutex;
+
     GLRenderer* glRenderer = nullptr;
 
     static ClientEngine* instance;

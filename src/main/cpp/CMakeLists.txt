@@ -18,7 +18,7 @@ message(STATUS "Using local GLM from: ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/glm")
 # ============================================================
 # 协议版本列表：在此添加新版本号即可自动生成对应的 libmc_<版本>.so
 # ============================================================
-set(SUPPORTED_VERSIONS 758)
+set(SUPPORTED_VERSIONS 758 762)
 
 # ============================================================
 # protocolCraft 源文件（从 protocolCraft/CMakeLists.txt 同步）
