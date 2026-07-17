@@ -58,38 +58,46 @@ bool MusicManager::init() {
 
 void MusicManager::shutdown() {
     if (!initialized) return;
+    initialized = false;
 
-    stopPlaying();
+    LOGI("MusicManager shutdown...");
 
-    // 清理 one-shot 音效
-    for (auto& os : activeOneShots) {
-        if (os.sound) {
-            ma_sound* s = static_cast<ma_sound*>(os.sound);
-            ma_sound_stop(s);
-            ma_sound_uninit(s);
-            delete s;
-        }
-        if (os.buffer) {
-            ma_audio_buffer_uninit(static_cast<ma_audio_buffer*>(os.buffer));
-            delete static_cast<ma_audio_buffer*>(os.buffer);
-        }
-    }
-    activeOneShots.clear();
-
-    // 清理点击音效 PCM 缓存
-    if (clickPcmData) {
-        delete[] clickPcmData;
-        clickPcmData = nullptr;
-    }
-
+    // 1. 先停引擎——这会停止音频线程，所有 ma_sound/ma_buffer 内部资源随之释放
     if (engine) {
         ma_engine_uninit(static_cast<ma_engine*>(engine));
         delete static_cast<ma_engine*>(engine);
         engine = nullptr;
     }
 
-    initialized = false;
-    LOGI("MusicManager shutdown");
+    // 2. 音频线程已停，安全释放 C++ 层包装和 PCM 数据
+    //    （miniaudio 对象内部资源已在 engine uninit 时释放，只需 delete 包装）
+    if (currentSound) {
+        delete static_cast<ma_sound*>(currentSound);
+        currentSound = nullptr;
+    }
+    if (audioBuffer) {
+        delete static_cast<ma_audio_buffer*>(audioBuffer);
+        audioBuffer = nullptr;
+    }
+
+    for (auto& os : activeOneShots) {
+        if (os.sound) delete static_cast<ma_sound*>(os.sound);
+        if (os.buffer) delete static_cast<ma_audio_buffer*>(os.buffer);
+    }
+    activeOneShots.clear();
+
+    if (pcmData) {
+        delete[] pcmData;
+        pcmData = nullptr;
+    }
+    if (clickPcmData) {
+        delete[] clickPcmData;
+        clickPcmData = nullptr;
+    }
+    clickSoundLoaded = false;
+    currentMusicPath.clear();
+
+    LOGI("MusicManager shutdown complete");
 }
 
 static float getCurrentTime() {
