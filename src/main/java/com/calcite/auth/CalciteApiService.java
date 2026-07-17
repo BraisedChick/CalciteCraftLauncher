@@ -5,6 +5,8 @@ import android.graphics.BitmapFactory;
 import android.util.Base64;
 import android.util.Log;
 
+import com.calcite.util.DohResolver;
+
 import org.json.JSONObject;
 
 import java.io.OutputStream;
@@ -16,6 +18,10 @@ public class CalciteApiService {
 
     private static final String TAG = "CalciteApi";
     public static final String BASE_URL = "https://api.calcite.eu.cc:25000";
+
+    private HttpURLConnection openDoh(String path) throws Exception {
+        return DohResolver.openConnection(BASE_URL + path);
+    }
 
     public interface Callback<T> {
         void onSuccess(T result);
@@ -52,7 +58,7 @@ public class CalciteApiService {
     public void fetchCaptcha(Callback<CaptchaResult> callback) {
         new Thread(() -> {
             try {
-                HttpURLConnection conn = (HttpURLConnection) new URL(BASE_URL + "/captcha").openConnection();
+                HttpURLConnection conn = openDoh("/captcha");
                 conn.setRequestMethod("GET");
                 conn.setConnectTimeout(10000);
                 conn.setReadTimeout(10000);
@@ -94,7 +100,7 @@ public class CalciteApiService {
                 body.put("captchaId", captchaId);
                 body.put("captchaCode", captchaCode);
 
-                HttpURLConnection conn = (HttpURLConnection) new URL(BASE_URL + "/users").openConnection();
+                HttpURLConnection conn = openDoh("/users");
                 conn.setRequestMethod("POST");
                 conn.setRequestProperty("Content-Type", "application/json");
                 conn.setConnectTimeout(10000);
@@ -135,7 +141,7 @@ public class CalciteApiService {
                 body.put("username", username);
                 body.put("password", password);
 
-                HttpURLConnection conn = (HttpURLConnection) new URL(BASE_URL + "/sessions").openConnection();
+                HttpURLConnection conn = openDoh("/sessions");
                 conn.setRequestMethod("POST");
                 conn.setRequestProperty("Content-Type", "application/json");
                 conn.setConnectTimeout(10000);
@@ -172,7 +178,7 @@ public class CalciteApiService {
     public void fetchPlaytime(String token, Callback<Integer> callback) {
         new Thread(() -> {
             try {
-                HttpURLConnection conn = (HttpURLConnection) new URL(BASE_URL + "/users/time").openConnection();
+                HttpURLConnection conn = openDoh("/users/time");
                 conn.setRequestMethod("GET");
                 conn.setRequestProperty("Authorization", "Bearer " + token);
                 conn.setConnectTimeout(10000);
@@ -202,7 +208,7 @@ public class CalciteApiService {
     public void sendHeartbeat(String token, Callback<Void> callback) {
         new Thread(() -> {
             try {
-                HttpURLConnection conn = (HttpURLConnection) new URL(BASE_URL + "/users/time").openConnection();
+                HttpURLConnection conn = openDoh("/users/time");
                 conn.setRequestMethod("POST");
                 conn.setRequestProperty("Authorization", "Bearer " + token);
                 conn.setRequestProperty("Content-Type", "application/json");

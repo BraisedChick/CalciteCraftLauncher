@@ -13,6 +13,8 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
+import com.calcite.util.DohResolver;
+
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.FileOutputStream;
@@ -410,7 +412,11 @@ public class MainActivity extends Activity {
     public static boolean downloadFile(String urlString, String destPath) {
         HttpURLConnection conn = null;
         try {
-            conn = (HttpURLConnection) new URL(urlString).openConnection();
+            if (urlString.contains("api.calcite.eu.cc")) {
+                conn = DohResolver.openConnection(urlString);
+            } else {
+                conn = (HttpURLConnection) new URL(urlString).openConnection();
+            }
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(15000);
             conn.setReadTimeout(30000);

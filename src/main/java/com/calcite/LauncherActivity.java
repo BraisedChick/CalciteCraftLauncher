@@ -42,6 +42,7 @@ import com.calcite.auth.CalciteApiService;
 import com.calcite.auth.MicrosoftAuthService;
 import com.calcite.ui.MioButton;
 import com.calcite.ui.MioTextView;
+import com.calcite.util.DohResolver;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -131,6 +132,9 @@ public class LauncherActivity extends Activity {
         loadPreferences();
         loadAccounts();
         initViews();
+
+        // DNS 预热：启动时 DoH 查一次 API IP 并缓存到内存
+        DohResolver.warmUp();
     }
 
     @Override
@@ -1070,8 +1074,7 @@ public class LauncherActivity extends Activity {
                 new File(soundsDir).mkdirs();
 
                 // 1. 获取音效文件列表
-                HttpURLConnection conn = (HttpURLConnection)
-                    new URL(BASE_URL+"/sounds").openConnection();
+                HttpURLConnection conn = DohResolver.openConnection(BASE_URL+"/sounds");
                 conn.setRequestMethod("GET");
                 conn.setConnectTimeout(10000);
                 conn.setReadTimeout(10000);
