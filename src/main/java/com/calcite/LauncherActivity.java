@@ -1,5 +1,7 @@
 package com.calcite;
 
+import static com.calcite.auth.CalciteApiService.BASE_URL;
+
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ClipData;
@@ -1067,7 +1069,7 @@ public class LauncherActivity extends Activity {
 
                 // 1. 获取音效文件列表
                 HttpURLConnection conn = (HttpURLConnection)
-                    new URL("https://api.calcite.eu.cc:25000/sounds").openConnection();
+                    new URL(BASE_URL+"/sounds").openConnection();
                 conn.setRequestMethod("GET");
                 conn.setConnectTimeout(10000);
                 conn.setReadTimeout(10000);
@@ -1104,7 +1106,7 @@ public class LauncherActivity extends Activity {
                     File parent = localFile.getParentFile();
                     if (parent != null && !parent.exists()) parent.mkdirs();
 
-                    String fileUrl = "https://api.calcite.eu.cc:25000/sounds/file?path=" + path;
+                    String fileUrl = BASE_URL + "/sounds/file?path=" + path;
                     boolean ok = MainActivity.downloadFile(fileUrl, localFile.getAbsolutePath());
 
                     if (ok) completed++;

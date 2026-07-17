@@ -559,9 +559,7 @@ Java_com_calcite_MainActivity_cleanupRenderer(
 
     JNI_LOGI("=== cleanupRenderer called ===");
 
-    // 清除 GL 纹理缓存，防止切回前台时纹理 ID 失效变黑
-    ResourcepackManager::getInstance().clear();
-
+    // 1. 先停渲染线程（确保 EGL context 不再被使用）
     if (g_rendering) {
         g_rendering = false;
         if (g_renderThread.joinable()) {
@@ -571,6 +569,15 @@ Java_com_calcite_MainActivity_cleanupRenderer(
         }
     }
 
+    // 2. 使 EGL context 在当前线程活跃，才能安全删除 GL 资源
+    if (g_glRenderer) {
+        g_glRenderer->makeCurrent();
+    }
+
+    // 3. 清除 GL 纹理缓存（现在 context 是当前的，glDeleteTextures 有效）
+    ResourcepackManager::getInstance().clear();
+
+    // 4. 删除渲染器（内部 cleanup 会销毁 EGL context）
     if (g_vulkanRenderer) {
         delete g_vulkanRenderer;
         g_vulkanRenderer = nullptr;

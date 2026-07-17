@@ -15,7 +15,7 @@ import java.nio.charset.StandardCharsets;
 public class CalciteApiService {
 
     private static final String TAG = "CalciteApi";
-    private static final String BASE_URL = "https://api.calcite.eu.cc:25000";
+    public static final String BASE_URL = "https://api.calcite.eu.cc:25000";
 
     public interface Callback<T> {
         void onSuccess(T result);
