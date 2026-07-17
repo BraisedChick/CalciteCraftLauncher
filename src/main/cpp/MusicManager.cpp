@@ -202,9 +202,9 @@ std::string MusicManager::extractOggToTemp(const std::string& resourcePath) {
     }
 
     // 从 Java 层下载的 sounds 目录读取
-    // Java 下载 GET /sounds/download 并解压到 /data/data/com.calcite/files/sounds/
+    // Java 下载到 /storage/emulated/0/Android/data/com.calcite/files/sounds/
     // 文件路径格式：music/menu/menu1.ogg
-    std::string soundsDir = "/data/data/com.calcite/files/sounds";
+    std::string soundsDir = "/storage/emulated/0/Android/data/com.calcite/files/sounds";
     std::string srcPath = soundsDir + "/" + resourcePath + ".ogg";
 
     FILE* srcFile = fopen(srcPath.c_str(), "rb");

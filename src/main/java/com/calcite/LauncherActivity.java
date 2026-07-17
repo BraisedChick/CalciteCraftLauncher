@@ -14,6 +14,7 @@ import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.provider.OpenableColumns;
 import android.util.Log;
@@ -1012,7 +1013,8 @@ public class LauncherActivity extends Activity {
      * 校验音效文件是否已下载完整，不完整则先下载再启动
      */
     private void checkSoundsAndLaunch(Account selected, String versionName, int protocolVersion) {
-        String soundsDir = getFilesDir().getAbsolutePath() + "/sounds";
+        String soundsDir = Environment.getExternalStorageDirectory().getAbsolutePath()
+            + "/Android/data/com.calcite/files/sounds";
 
         // 快速检查关键文件是否存在
         if (new File(soundsDir + "/music/menu/menu1.ogg").exists()) {
