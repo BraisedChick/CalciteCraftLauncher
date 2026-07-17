@@ -25,9 +25,6 @@ MusicManager& MusicManager::getInstance() {
 bool MusicManager::init() {
     if (initialized) return true;
 
-    tempDir = "/data/data/com.calcite/cache";
-    // 该目录由 Android 系统自动创建，无需 mkdir
-
     // 初始化 miniaudio 引擎
     ma_engine* eng = new ma_engine();
     ma_engine_config config = ma_engine_config_init();
@@ -48,7 +45,7 @@ bool MusicManager::init() {
     nextPlayTime = 5.0f;
 
     initialized = true;
-    LOGI("MusicManager initialized, tempDir=%s", tempDir.c_str());
+    LOGI("MusicManager initialized");
 
     // 预加载按钮点击音效
     loadClickSound();
