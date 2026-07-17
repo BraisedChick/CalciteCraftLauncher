@@ -91,27 +91,12 @@ inline float drawMcText(float x, float y, const std::string& text, ImU32 default
 
 // ===== MC 风格九宫格按钮 =====
 
-// 按钮纹理缓存（懒加载）
-struct McWidgetTextures {
-    GLuint button = 0;
-    GLuint buttonHighlighted = 0;
-    GLuint buttonDisabled = 0;
-    bool loaded = false;
-
-    void ensureLoaded() {
-        if (loaded) return;
-        auto& rm = ResourcepackManager::getInstance();
-        button = rm.getGuiTexture("sprites/widget/button");
-        buttonHighlighted = rm.getGuiTexture("sprites/widget/button_highlighted");
-        buttonDisabled = rm.getGuiTexture("sprites/widget/button_disabled");
-        loaded = true;
-    }
-};
-
-inline McWidgetTextures& getWidgetTextures() {
-    static McWidgetTextures tex;
-    tex.ensureLoaded();
-    return tex;
+// 按钮纹理即时获取（不缓存 GL ID，由 ResourcepackManager 统一管理缓存）
+inline void ensureWidgetTextures(GLuint& button, GLuint& buttonHighlighted, GLuint& buttonDisabled) {
+    auto& rm = ResourcepackManager::getInstance();
+    button = rm.getGuiTexture("sprites/widget/button");
+    buttonHighlighted = rm.getGuiTexture("sprites/widget/button_highlighted");
+    buttonDisabled = rm.getGuiTexture("sprites/widget/button_disabled");
 }
 
 // 九宫格绘制（MC .mcmeta nine_slice 规范）
@@ -142,7 +127,8 @@ inline void drawNineSlice(ImDrawList* dl, GLuint tex,
 // MC 风格按钮：九宫格纹理 + 居中文字 + 黑色阴影
 // 返回 true 当按钮被点击（与 ImGui::Button 相同语义）
 inline bool McButton(const char* label, ImVec2 size, bool enabled = true) {
-    auto& wt = getWidgetTextures();
+    GLuint btn, btnHl, btnDis;
+    ensureWidgetTextures(btn, btnHl, btnDis);
 
     // 不可见按钮做点击/悬停检测
     bool clicked = false;
@@ -154,16 +140,16 @@ inline bool McButton(const char* label, ImVec2 size, bool enabled = true) {
     GLuint tex;
     ImU32 textColor;
     if (!enabled) {
-        tex = wt.buttonDisabled;
+        tex = btnDis;
         textColor = IM_COL32(160, 160, 160, 255);
     } else if (ImGui::IsItemActive()) {
-        tex = wt.buttonHighlighted;
+        tex = btnHl;
         textColor = IM_COL32(255, 255, 160, 255);
     } else if (ImGui::IsItemHovered()) {
-        tex = wt.buttonHighlighted;
+        tex = btnHl;
         textColor = IM_COL32(255, 255, 160, 255);
     } else {
-        tex = wt.button;
+        tex = btn;
         textColor = IM_COL32(224, 224, 224, 255);
     }
 

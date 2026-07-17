@@ -7,6 +7,7 @@
 #include "PauseScreen.h"
 #include "GameUI.h"
 #include "GuiUtils.h"
+#include "MinecraftVersion.h"
 #include <android/log.h>
 
 #define LOG_TAG "TitleScreen"
@@ -119,8 +120,9 @@ void TitleScreen::render(int mouseX, int mouseY) {
         if (cb) cb();
     }
 
-    ImGui::SetCursorPos(ImVec2(w * 0.5f - 80.0f, h - 40.0f));
-    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "v1.18.2");
+    ImGui::SetCursorPos(ImVec2(10.0f, h - 40.0f));
+    std::string verLabel = "Minecraft " + VersionManager::getInstance().getVersionName();
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", verLabel.c_str());
 
     ImGui::End();
 }
