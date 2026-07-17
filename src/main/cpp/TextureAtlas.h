@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <mutex>
 #include <functional>
+#include "3rdparty/json.hpp"
 
 // ============================================================
 // 方块纹理配置：定义每个方块各面使用哪个纹理层
@@ -206,41 +207,33 @@ private:
     using TextureMap = std::unordered_map<std::string, std::string>;
     static TextureMap resolveModelTextures(
         const std::string& modelName,
-        const std::string& jsonContent,
+        const nlohmann::json& j,
         std::unordered_map<std::string, TextureMap>& cache,
-        const std::unordered_map<std::string, std::string>* modelContentCache = nullptr);
-
-    // JSON 解析辅助
-    static std::string jsonExtractString(const std::string& json, const std::string& key);
-    static std::string jsonExtractParent(const std::string& json);
-    static std::unordered_map<std::string, std::string> jsonExtractTextures(const std::string& json);
+        const std::unordered_map<std::string, nlohmann::json>* modelContentCache = nullptr);
 
     // ===== 模型元素解析（模型兼容渲染） =====
 
     // 解析 JSON 中的 elements 数组
     static void jsonExtractElement(std::vector<ModelElementData>& elements,
-                                   const std::string& json,
+                                   const nlohmann::json& modelJson,
                                    const TextureMap& resolvedTextures,
                                    const std::unordered_map<std::string, int>& pathToLayer);
-
-    // 提取 elements 字符串片段（整个 "elements": [...] 的内容）
-    static std::string jsonExtractElementsArray(const std::string& json);
 
     // 提取面方向字符串（"north"/"south"/etc → FaceDir）
     static FaceDir faceDirFromString(const std::string& dir);
 
     // 解析单个 element 的 faces
     static void parseElementFaces(ModelElementData& element,
-                                  const std::string& facesJson,
+                                  const nlohmann::json& faces,
                                   const TextureMap& resolvedTextures,
                                   const std::unordered_map<std::string, int>& pathToLayer);
 
     // 解析 element rotation
-    static void parseElementRotation(ModelElementData& element, const std::string& rotationJson);
+    static void parseElementRotation(ModelElementData& element, const nlohmann::json& rot);
 
     // 解析单个 element（from/to/faces/rotation）
     static void parseSingleElement(ModelElementData& element,
-                                   const std::string& elementJson,
+                                   const nlohmann::json& elem,
                                    const TextureMap& resolvedTextures,
                                    const std::unordered_map<std::string, int>& pathToLayer);
 
@@ -248,9 +241,9 @@ private:
     // 返回的 bool 表示是否有有效元素
     bool resolveBlockModelElements(
         const std::string& blockName,
-        const std::string& jsonContent,
+        const nlohmann::json& j,
         std::unordered_map<std::string, bool>& elementCache,
-        const std::unordered_map<std::string, std::string>* modelContentCache);
+        const std::unordered_map<std::string, nlohmann::json>* modelContentCache);
 
     // blockName → 解析后的模型数据
     std::unordered_map<std::string, ResolvedBlockModel> blockModelCache;
@@ -260,10 +253,10 @@ private:
     std::unordered_map<std::string, std::vector<BlockStateVariant>> blockstateVariantCache;
 
     // 解析单个 blockstate JSON（variants 或 multipart）
-    void parseBlockState(const std::string& blockName, const std::string& json);
+    void parseBlockState(const std::string& blockName, const nlohmann::json& j);
 
     // 解析 multipart 格式 blockstate（玻璃板、栅栏等）
-    void parseMultipart(const std::string& blockName, const std::string& json);
+    void parseMultipart(const std::string& blockName, const nlohmann::json& j);
 
     // 从变体键解析属性值对（如 "facing=east,half=bottom" → [{facing,east},{half,bottom}]）
     static std::vector<std::pair<std::string, std::string>> parseVariantKey(const std::string& key);

@@ -1,6 +1,7 @@
 #include "TextureAtlas.h"
 #include "TextureLoader.h"
 #include "BlockRegistry.h"
+#include "3rdparty/json.hpp"
 #include <android/log.h>
 #include <algorithm>
 #include <cmath>
@@ -10,6 +11,9 @@
 #define LOG_TAG "TextureAtlas"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
+
+using json = nlohmann::json;
 
 TextureAtlas& TextureAtlas::getInstance() {
     static TextureAtlas instance;
@@ -17,71 +21,25 @@ TextureAtlas& TextureAtlas::getInstance() {
 }
 
 // ============================================================
-// JSON 解析辅助函数
+// 辅助函数
 // ============================================================
 
-std::string TextureAtlas::jsonExtractString(const std::string& json, const std::string& key) {
-    std::string search = "\"" + key + "\": \"";
-    size_t pos = json.find(search);
-    if (pos == std::string::npos) return "";
-    pos += search.size();
-    size_t end = json.find('\"', pos);
-    if (end == std::string::npos) return "";
-    return json.substr(pos, end - pos);
-}
-
-std::string TextureAtlas::jsonExtractParent(const std::string& json) {
-    return jsonExtractString(json, "parent");
-}
-
-std::unordered_map<std::string, std::string> TextureAtlas::jsonExtractTextures(const std::string& json) {
-    std::unordered_map<std::string, std::string> result;
-
-    size_t texPos = json.find("\"textures\"");
-    if (texPos == std::string::npos) return result;
-
-    size_t bracePos = json.find('{', texPos);
-    if (bracePos == std::string::npos) return result;
-
-    size_t braceEnd = json.find('}', bracePos);
-    if (braceEnd == std::string::npos) return result;
-
-    std::string section = json.substr(bracePos + 1, braceEnd - bracePos - 1);
-
-    size_t pos = 0;
-    while (pos < section.size()) {
-        // 跳过空白和逗号
-        while (pos < section.size() && (section[pos] == ' ' || section[pos] == '\t' ||
-               section[pos] == '\n' || section[pos] == '\r' || section[pos] == ',')) pos++;
-        if (pos >= section.size()) break;
-
-        if (section[pos] != '"') break;
-        size_t keyStart = pos + 1;
-        size_t keyEnd = section.find('"', keyStart);
-        if (keyEnd == std::string::npos) break;
-        std::string key = section.substr(keyStart, keyEnd - keyStart);
-
-        pos = section.find(':', keyEnd);
-        if (pos == std::string::npos) break;
-        pos++;
-
-        while (pos < section.size() && (section[pos] == ' ' || section[pos] == '\t' ||
-               section[pos] == '\n' || section[pos] == '\r')) pos++;
-        if (pos >= section.size()) break;
-
-        if (section[pos] == '"') {
-            size_t valStart = pos + 1;
-            size_t valEnd = section.find('"', valStart);
-            if (valEnd == std::string::npos) break;
-            std::string value = section.substr(valStart, valEnd - valStart);
-            result[key] = value;
-            pos = valEnd + 1;
-        } else {
-            break;
-        }
+static std::string normalizeTexturePath(const std::string& path) {
+    size_t colonPos = path.find(':');
+    if (colonPos != std::string::npos) {
+        return path.substr(colonPos + 1);
     }
+    return path;
+}
 
-    return result;
+FaceDir TextureAtlas::faceDirFromString(const std::string& dir) {
+    if (dir == "down")  return FACE_DOWN;
+    if (dir == "up")    return FACE_UP;
+    if (dir == "north") return FACE_NORTH;
+    if (dir == "south") return FACE_SOUTH;
+    if (dir == "west")  return FACE_WEST;
+    if (dir == "east")  return FACE_EAST;
+    return FACE_NONE;
 }
 
 // ============================================================
@@ -90,65 +48,62 @@ std::unordered_map<std::string, std::string> TextureAtlas::jsonExtractTextures(c
 
 TextureAtlas::TextureMap TextureAtlas::resolveModelTextures(
     const std::string& modelName,
-    const std::string& jsonContent,
+    const json& j,
     std::unordered_map<std::string, TextureMap>& cache,
-    const std::unordered_map<std::string, std::string>* modelContentCache) {
+    const std::unordered_map<std::string, json>* modelContentCache) {
 
-    // 查缓存
     {
         auto it = cache.find(modelName);
         if (it != cache.end()) return it->second;
     }
 
-    if (jsonContent.empty()) {
+    if (j.is_null()) {
         cache[modelName] = {};
         return {};
     }
 
-    auto ownTextures = jsonExtractTextures(jsonContent);
-    std::string parent = jsonExtractParent(jsonContent);
+    // 提取 textures 对象
+    TextureMap ownTextures;
+    if (j.contains("textures") && j["textures"].is_object()) {
+        for (auto it = j["textures"].begin(); it != j["textures"].end(); ++it) {
+            if (it->is_string()) {
+                ownTextures[it.key()] = it->get<std::string>();
+            }
+        }
+    }
 
+    std::string parent = j.value("parent", "");
     TextureMap result;
 
     if (!parent.empty()) {
-        // 标准化 parent 路径：去掉 "minecraft:" 前缀
-        std::string parentModel = parent;
-        size_t colonPos = parentModel.find(':');
-        if (colonPos != std::string::npos) {
-            parentModel = parentModel.substr(colonPos + 1);
-        }
+        std::string parentModel = normalizeTexturePath(parent);
 
-        // 优先从内容缓存获取 parent 的 JSON，避免 ZIP I/O
-        std::string parentJson;
+        json parentJson;
         if (modelContentCache) {
-            // 尝试从 block 模型缓存中找
             auto it = modelContentCache->find(parentModel);
             if (it != modelContentCache->end()) {
                 parentJson = it->second;
             }
         }
-        if (parentJson.empty()) {
-            // 不在 block 缓存中，尝试从 item 目录读取
-            parentJson = TextureLoader::readTextFromZip("models/" + parentModel + ".json");
+        if (parentJson.is_null()) {
+            std::string raw = TextureLoader::readTextFromZip("models/" + parentModel + ".json");
+            if (!raw.empty()) {
+                try { parentJson = json::parse(raw); } catch (...) {}
+            }
         }
 
-        // 递归解析 parent 链
         auto parentResolved = resolveModelTextures(parentModel, parentJson, cache, modelContentCache);
         result = std::move(parentResolved);
 
-        // 合并自身纹理（child override parent）
         for (const auto& [key, value] : ownTextures) {
             if (value == "*") {
-                // * 表示继承父级的同名变量，不做任何操作
                 continue;
             } else if (!value.empty() && value[0] == '#') {
-                // #varname 引用：从当前已合并的结果中查找
                 std::string varName = value.substr(1);
                 auto varIt = result.find(varName);
                 if (varIt != result.end()) {
                     result[key] = varIt->second;
                 } else {
-                    // 暂时无法解析（目标变量由子模型定义），存储引用原样，后续不动点解析
                     result[key] = value;
                 }
             } else {
@@ -156,9 +111,6 @@ TextureAtlas::TextureMap TextureAtlas::resolveModelTextures(
             }
         }
 
-        // 不动点解析所有 #variable 引用
-        // cube_column 定义 "down": "#end"，但 "end" 由子模型 oak_log 提供，
-        // 经过此轮解析后 "down" → "block/oak_log_top"
         {
             bool changed = true;
             while (changed) {
@@ -183,17 +135,16 @@ TextureAtlas::TextureMap TextureAtlas::resolveModelTextures(
     return result;
 }
 
+
 // ============================================================
 // 纹理路径 → 文件名（"block/stone" → "stone.png"）
 // ============================================================
 std::string TextureAtlas::texturePathToFilename(const std::string& texturePath) {
     std::string path = texturePath;
-    // 去命名空间前缀
     size_t colonPos = path.find(':');
     if (colonPos != std::string::npos) {
         path = path.substr(colonPos + 1);
     }
-    // 去 "block/" 前缀
     if (path.find("block/") == 0) {
         path = path.substr(6);
     }
@@ -222,203 +173,59 @@ int TextureAtlas::ensureTexture(const std::string& texturePath) {
 }
 
 // ============================================================
-// 模型元素解析（ELEMENTS 解析）
+// 模型元素解析（ELEMENTS 解析）— 全部改用 json 对象参数
 // ============================================================
 
-// 标准化纹理路径（去掉 "minecraft:" 前缀）
-static std::string normalizeTexturePath(const std::string& path) {
-    size_t colonPos = path.find(':');
-    if (colonPos != std::string::npos) {
-        return path.substr(colonPos + 1);
+// 从 json 数组中提取 float[3]
+static bool extractFloatArray(const json& j, float out[3]) {
+    if (!j.is_array() || j.size() < 3) return false;
+    for (int i = 0; i < 3; i++) {
+        out[i] = j[i].get<float>();
     }
-    return path;
+    return true;
 }
 
-// 提取 JSON 数组中的 float 值 [x, y, z]
-static bool extractFloatArray(const std::string& json, size_t startPos, float out[3]) {
-    // 找到 [
-    size_t bracketPos = json.find('[', startPos);
-    if (bracketPos == std::string::npos) return false;
-    size_t bracketEnd = json.find(']', bracketPos);
-    if (bracketEnd == std::string::npos) return false;
+void TextureAtlas::parseElementRotation(ModelElementData& element, const json& rot) {
+    if (rot.is_null()) return;
 
-    std::string content = json.substr(bracketPos + 1, bracketEnd - bracketPos - 1);
-    int count = 0;
-    size_t pos = 0;
-    while (pos < content.size() && count < 3) {
-        while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' ||
-               content[pos] == '\n' || content[pos] == '\r' || content[pos] == ',')) pos++;
-        if (pos >= content.size()) break;
-        char* end = nullptr;
-        float val = std::strtof(content.c_str() + pos, &end);
-        if (end == content.c_str() + pos) break;
-        out[count++] = val;
-        pos = (size_t)(end - content.c_str());
+    if (rot.contains("origin") && rot["origin"].is_array()) {
+        extractFloatArray(rot["origin"], element.rotation.origin);
     }
-    return count == 3;
-}
 
-// 提取 JSON 布尔值
-static bool extractBool(const std::string& json, const std::string& key, bool defaultVal) {
-    std::string search = "\"" + key + "\": ";
-    size_t pos = json.find(search);
-    if (pos == std::string::npos) return defaultVal;
-    pos += search.size();
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
-    if (pos >= json.size()) return defaultVal;
-    if (json.substr(pos, 4) == "true") return true;
-    if (json.substr(pos, 5) == "false") return false;
-    return defaultVal;
-}
-
-// 提取 JSON 整数
-static int extractIntValue(const std::string& json, const std::string& key, int defaultVal) {
-    std::string search = "\"" + key + "\": ";
-    size_t pos = json.find(search);
-    if (pos == std::string::npos) return defaultVal;
-    pos += search.size();
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
-    if (pos >= json.size()) return defaultVal;
-    char* end = nullptr;
-    long val = std::strtol(json.c_str() + pos, &end, 10);
-    if (end == json.c_str() + pos) return defaultVal;
-    return (int)val;
-}
-
-// 提取 JSON float
-static float extractFloatValue(const std::string& json, const std::string& key, float defaultVal) {
-    std::string search = "\"" + key + "\": ";
-    size_t pos = json.find(search);
-    if (pos == std::string::npos) return defaultVal;
-    pos += search.size();
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
-    if (pos >= json.size()) return defaultVal;
-    char* end = nullptr;
-    float val = std::strtof(json.c_str() + pos, &end);
-    if (end == json.c_str() + pos) return defaultVal;
-    return val;
-}
-
-// 提取 JSON 字符串值
-static std::string extractStringValue(const std::string& json, const std::string& key) {
-    std::string search = "\"" + key + "\": \"";
-    size_t pos = json.find(search);
-    if (pos == std::string::npos) return "";
-    pos += search.size();
-    size_t end = json.find('\"', pos);
-    if (end == std::string::npos) return "";
-    return json.substr(pos, end - pos);
-}
-
-FaceDir TextureAtlas::faceDirFromString(const std::string& dir) {
-    if (dir == "down")  return FACE_DOWN;
-    if (dir == "up")    return FACE_UP;
-    if (dir == "north") return FACE_NORTH;
-    if (dir == "south") return FACE_SOUTH;
-    if (dir == "west")  return FACE_WEST;
-    if (dir == "east")  return FACE_EAST;
-    return FACE_NONE;
-}
-
-std::string TextureAtlas::jsonExtractElementsArray(const std::string& json) {
-    size_t elemsPos = json.find("\"elements\"");
-    if (elemsPos == std::string::npos) return "";
-
-    size_t colonPos = json.find(':', elemsPos);
-    if (colonPos == std::string::npos) return "";
-
-    // 找到数组起始 [
-    size_t arrayStart = json.find('[', colonPos);
-    if (arrayStart == std::string::npos) return "";
-
-    // 花括号嵌套匹配找到对应的 ]
-    int depth = 0;
-    bool inString = false;
-    size_t pos = arrayStart;
-    for (; pos < json.size(); pos++) {
-        char c = json[pos];
-        if (inString) {
-            if (c == '\\') { pos++; continue; }
-            if (c == '"') inString = false;
-            continue;
-        }
-        if (c == '"') { inString = true; continue; }
-        if (c == '{' || c == '[') depth++;
-        if (c == '}' || c == ']') {
-            depth--;
-            if (depth == 0) break;
-        }
-    }
-    if (depth != 0 || pos == json.size()) return "";
-
-    return json.substr(arrayStart, pos - arrayStart + 1);
-}
-
-void TextureAtlas::parseElementRotation(ModelElementData& element, const std::string& rotationJson) {
-    if (rotationJson.empty()) return;
-
-    // 提取 origin
-    extractFloatArray(rotationJson, 0, element.rotation.origin);
-
-    // 提取 axis
-    std::string axisStr = extractStringValue(rotationJson, "axis");
+    std::string axisStr = rot.value("axis", "");
     if (axisStr == "x") element.rotation.axis = 0;
     else if (axisStr == "y") element.rotation.axis = 1;
     else if (axisStr == "z") element.rotation.axis = 2;
 
-    // 提取 angle
-    element.rotation.angle = extractFloatValue(rotationJson, "angle", 0.0f);
-
-    // 提取 rescale
-    element.rotation.rescale = extractBool(rotationJson, "rescale", false);
+    element.rotation.angle = rot.value("angle", 0.0f);
+    element.rotation.rescale = rot.value("rescale", false);
 }
 
 void TextureAtlas::parseElementFaces(ModelElementData& element,
-                                     const std::string& facesJson,
+                                     const json& faces,
                                      const TextureMap& resolvedTextures,
                                      const std::unordered_map<std::string, int>& pathToLayer) {
-    // facesJson 是 { "north": {...}, "south": {...}, ... }
-    // 遍历每个 face 对象找到键值对
-
     static const char* faceNames[] = {"down", "up", "north", "south", "west", "east"};
     for (const char* faceName : faceNames) {
+        if (!faces.contains(faceName)) continue;
+
         FaceDir dir = faceDirFromString(faceName);
         if (dir == FACE_NONE) continue;
 
-        // 先找 "faceName"，再向后找第一个 {（忽略冒号和空白）
-        std::string keySearch = "\"" + std::string(faceName) + "\"";
-        size_t keyPos = facesJson.find(keySearch);
-        if (keyPos == std::string::npos) continue;
-        size_t braceStart = facesJson.find('{', keyPos + keySearch.size());
-        if (braceStart == std::string::npos) continue;
-        if (braceStart == std::string::npos) continue;
-
-        int depth = 0;
-        bool inStr = false;
-        size_t braceEnd = braceStart;
-        for (; braceEnd < facesJson.size(); braceEnd++) {
-            char c = facesJson[braceEnd];
-            if (inStr) { if (c == '\\') { braceEnd++; continue; } if (c == '"') inStr = false; continue; }
-            if (c == '"') { inStr = true; continue; }
-            if (c == '{') depth++;
-            if (c == '}') { depth--; if (depth == 0) break; }
-        }
-        if (depth != 0 || braceEnd == facesJson.size()) continue;
-
-        std::string faceContent = facesJson.substr(braceStart + 1, braceEnd - braceStart - 1);
+        const json& fc = faces[faceName];
+        if (!fc.is_object()) continue;
 
         ModelFaceData& face = element.faces[dir];
         element.hasFaces[dir] = true;
         face.shade = element.shade;
 
         // UV
-        size_t uvPos = faceContent.find("\"uv\"");
-        if (uvPos != std::string::npos) {
-            extractFloatArray(faceContent, uvPos, face.uv);
+        if (fc.contains("uv") && fc["uv"].is_array()) {
+            extractFloatArray(fc["uv"], face.uv);
         }
 
-        // texture (#varname → 实际路径 → layer 索引)
-        std::string texRef = extractStringValue(faceContent, "texture");
+        // texture
+        std::string texRef = fc.value("texture", "");
         if (!texRef.empty() && texRef[0] == '#') {
             std::string varName = texRef.substr(1);
             auto varIt = resolvedTextures.find(varName);
@@ -428,219 +235,136 @@ void TextureAtlas::parseElementFaces(ModelElementData& element,
                 if (layerIt != pathToLayer.end()) {
                     face.textureLayer = layerIt->second;
                 } else {
-                    // 尝试直接作为 minecraft:block/xxx 查找
-                    // 可能路径以 "minecraft:" 开头但不在 map 中，
-                    // fallback 到 0
                     face.textureLayer = 0;
                 }
             }
         }
 
         // cullface
-        std::string cullStr = extractStringValue(faceContent, "cullface");
+        std::string cullStr = fc.value("cullface", "");
         if (!cullStr.empty()) {
             face.cullface = (int8_t)faceDirFromString(cullStr);
         }
 
         // tintindex
-        face.tintindex = (int8_t)extractIntValue(faceContent, "tintindex", -1);
+        face.tintindex = (int8_t)fc.value("tintindex", -1);
     }
 }
 
 void TextureAtlas::parseSingleElement(ModelElementData& element,
-                                      const std::string& elementJson,
+                                      const json& elem,
                                       const TextureMap& resolvedTextures,
                                       const std::unordered_map<std::string, int>& pathToLayer) {
-    // from
-    extractFloatArray(elementJson, 0, element.from);
-    // to
-    size_t toPos = elementJson.find("\"to\"");
-    if (toPos != std::string::npos) {
-        extractFloatArray(elementJson, toPos, element.to);
+    // from / to
+    if (elem.contains("from") && elem["from"].is_array()) {
+        extractFloatArray(elem["from"], element.from);
+    }
+    if (elem.contains("to") && elem["to"].is_array()) {
+        extractFloatArray(elem["to"], element.to);
     }
 
     // shade
-    element.shade = extractBool(elementJson, "shade", true);
+    element.shade = elem.value("shade", true);
 
     // faces
-    size_t facesPos = elementJson.find("\"faces\"");
-    if (facesPos != std::string::npos) {
-        size_t bracePos = elementJson.find('{', facesPos);
-        if (bracePos != std::string::npos) {
-            // 找到匹配的 }
-            int depth = 0;
-            bool inStr = false;
-            size_t braceEnd = bracePos;
-            for (; braceEnd < elementJson.size(); braceEnd++) {
-                char c = elementJson[braceEnd];
-                if (inStr) { if (c == '\\') { braceEnd++; continue; } if (c == '"') inStr = false; continue; }
-                if (c == '"') { inStr = true; continue; }
-                if (c == '{') depth++;
-                if (c == '}') { depth--; if (depth == 0) break; }
-            }
-            if (depth == 0 && braceEnd != elementJson.size()) {
-                std::string facesContent = elementJson.substr(bracePos, braceEnd - bracePos + 1);
-                // 去掉了外层的 {}，使得 facesContent 是 {"north":{...}, ...} 格式
-                // parseElementFaces 需要接收这个完整的内容再提取各个 face
-                parseElementFaces(element, facesContent, resolvedTextures, pathToLayer);
-            }
-        }
+    if (elem.contains("faces") && elem["faces"].is_object()) {
+        parseElementFaces(element, elem["faces"], resolvedTextures, pathToLayer);
     }
 
     // rotation
-    size_t rotPos = elementJson.find("\"rotation\"");
-    if (rotPos != std::string::npos) {
-        size_t rotBrace = elementJson.find('{', rotPos);
-        if (rotBrace != std::string::npos) {
-            int depth = 0;
-            bool inStr = false;
-            size_t rotEnd = rotBrace;
-            for (; rotEnd < elementJson.size(); rotEnd++) {
-                char c = elementJson[rotEnd];
-                if (inStr) { if (c == '\\') { rotEnd++; continue; } if (c == '"') inStr = false; continue; }
-                if (c == '"') { inStr = true; continue; }
-                if (c == '{') depth++;
-                if (c == '}') { depth--; if (depth == 0) break; }
-            }
-            if (depth == 0 && rotEnd != elementJson.size()) {
-                std::string rotContent = elementJson.substr(rotBrace, rotEnd - rotBrace + 1);
-                parseElementRotation(element, rotContent);
-            }
-        }
+    if (elem.contains("rotation") && elem["rotation"].is_object()) {
+        parseElementRotation(element, elem["rotation"]);
     }
 }
 
 void TextureAtlas::jsonExtractElement(std::vector<ModelElementData>& elements,
-                                      const std::string& json,
+                                      const json& modelJson,
                                       const TextureMap& resolvedTextures,
                                       const std::unordered_map<std::string, int>& pathToLayer) {
-    std::string arrayContent = jsonExtractElementsArray(json);
-    if (arrayContent.empty()) return;
+    if (!modelJson.contains("elements") || !modelJson["elements"].is_array()) return;
 
-    // 解析数组中的每个 element 对象 { ... }
-    size_t pos = 0;
-    while (pos < arrayContent.size()) {
-        // 找到下一个 {
-        size_t objStart = arrayContent.find('{', pos);
-        if (objStart == std::string::npos) break;
-
-        // 匹配 }
-        int depth = 0;
-        bool inStr = false;
-        size_t objEnd = objStart;
-        for (; objEnd < arrayContent.size(); objEnd++) {
-            char c = arrayContent[objEnd];
-            if (inStr) { if (c == '\\') { objEnd++; continue; } if (c == '"') inStr = false; continue; }
-            if (c == '"') { inStr = true; continue; }
-            if (c == '{') depth++;
-            if (c == '}') { depth--; if (depth == 0) break; }
-        }
-        if (depth != 0 || objEnd == arrayContent.size()) break;
-
-        std::string elementJson = arrayContent.substr(objStart, objEnd - objStart + 1);
-
+    for (const auto& elemJson : modelJson["elements"]) {
+        if (!elemJson.is_object()) continue;
         ModelElementData element;
-        parseSingleElement(element, elementJson, resolvedTextures, pathToLayer);
+        parseSingleElement(element, elemJson, resolvedTextures, pathToLayer);
         elements.push_back(std::move(element));
-
-        pos = objEnd + 1;
     }
 }
 
+
 bool TextureAtlas::resolveBlockModelElements(
     const std::string& blockName,
-    const std::string& jsonContent,
+    const json& j,
     std::unordered_map<std::string, bool>& elementCache,
-    const std::unordered_map<std::string, std::string>* modelContentCache) {
+    const std::unordered_map<std::string, json>* modelContentCache) {
 
-    // 查缓存
     {
         auto it = elementCache.find(blockName);
         if (it != elementCache.end()) return it->second;
-        // 标记处理中（防止循环引用）
         elementCache[blockName] = false;
     }
 
-    if (jsonContent.empty()) {
+    if (j.is_null()) {
         elementCache[blockName] = false;
         return false;
     }
 
-    // 检查自身是否有 elements
-    std::string elementsArray = jsonExtractElementsArray(jsonContent);
-    bool hasOwnElements = !elementsArray.empty();
-
-    // 解析 parent
-    std::string parent = jsonExtractParent(jsonContent);
+    bool hasOwnElements = j.contains("elements") && j["elements"].is_array();
+    std::string parent = j.value("parent", "");
     bool parentHasElements = false;
 
     if (!parent.empty()) {
         std::string parentModel = normalizeTexturePath(parent);
 
-        std::string parentJson;
+        json parentJson;
         if (modelContentCache) {
             auto it = modelContentCache->find(parentModel);
             if (it != modelContentCache->end()) {
                 parentJson = it->second;
             }
         }
-        if (parentJson.empty()) {
-            parentJson = TextureLoader::readTextFromZip("models/" + parentModel + ".json");
+        if (parentJson.is_null()) {
+            std::string raw = TextureLoader::readTextFromZip("models/" + parentModel + ".json");
+            if (!raw.empty()) {
+                try { parentJson = json::parse(raw); } catch (...) {}
+            }
         }
 
         parentHasElements = resolveBlockModelElements(parentModel, parentJson, elementCache, modelContentCache);
     }
 
-    // 解析成功：只有自身有 elements 或继承父的
     if (!hasOwnElements && !parentHasElements) {
         elementCache[blockName] = false;
         return false;
     }
 
-    // 现在解析 elements 数据
-    // 首先获取该 block 的 resolved textures（复用已有的 resolutionCache）
-    // 但我们已经解析过了，需要从 blockTextureMap 获取 resolved 纹理路径
-    // 对于 elements 中的 #varname 引用，我们需要 resolvedTextures 映射
-
     // 重新解析这个 block 的 texture map
     std::unordered_map<std::string, TextureMap> tempCache;
-    auto resolvedTextures = resolveModelTextures(blockName, jsonContent, tempCache, modelContentCache);
+    auto resolvedTextures = resolveModelTextures(blockName, j, tempCache, modelContentCache);
 
-    // 创建或获取模型数据
     ResolvedBlockModel& model = blockModelCache[blockName];
 
     if (hasOwnElements) {
-        // 自身定义 elements → 解析它
-        jsonExtractElement(model.elements, jsonContent, resolvedTextures, texturePathToLayer);
+        jsonExtractElement(model.elements, j, resolvedTextures, texturePathToLayer);
     } else {
-        // 继承父的 elements → 复制父的模型数据
-        std::string parentModel = normalizeTexturePath(jsonExtractParent(jsonContent));
+        // 继承父的 elements
+        std::string parentModel = normalizeTexturePath(j.value("parent", ""));
         auto parentIt = blockModelCache.find(parentModel);
-        if (parentIt != blockModelCache.end()) {
-            model = parentIt->second; // 复制
-            // 但纹理引用需要在当前 block 的 resolvedTextures 下重新解析
-            // 不过 elements 中的纹理引用已经在父级解析时用父级的 resolvedTextures 解析了
-            // 如果子级定义了一些纹理变量，会导致父级 elements 中的 #varname 引用不同
-            // 所以我们需要用当前 block 的 resolvedTextures 重新解析 faces 中的纹理索引
-
-            // 简单但正确的方法：重新解析 elements（使用当前的 resolvedTextures）
-            // 但保留几何数据（from/to/rotation）
-            // 实际上，更健壮的做法是复制父的 elements 然后重新解析纹理 layer 索引
-
-            // 获取父的原始 JSON 中的 elements
-            std::string parentJson;
-            if (modelContentCache) {
-                auto it = modelContentCache->find(parentModel);
-                if (it != modelContentCache->end()) parentJson = it->second;
+        // 获取父的原始 JSON 重新解析（用当前的 resolvedTextures）
+        json parentJson;
+        if (modelContentCache) {
+            auto it = modelContentCache->find(parentModel);
+            if (it != modelContentCache->end()) parentJson = it->second;
+        }
+        if (parentJson.is_null()) {
+            std::string raw = TextureLoader::readTextFromZip("models/" + parentModel + ".json");
+            if (!raw.empty()) {
+                try { parentJson = json::parse(raw); } catch (...) {}
             }
-            if (parentJson.empty()) {
-                parentJson = TextureLoader::readTextFromZip("models/" + parentModel + ".json");
-            }
-
-            if (!parentJson.empty()) {
-                model.elements.clear();
-                jsonExtractElement(model.elements, parentJson, resolvedTextures, texturePathToLayer);
-            }
+        }
+        if (!parentJson.is_null()) {
+            model.elements.clear();
+            jsonExtractElement(model.elements, parentJson, resolvedTextures, texturePathToLayer);
         }
     }
 
@@ -670,6 +394,7 @@ static std::string getFirstTexture(const std::unordered_map<std::string, std::st
     return "";
 }
 
+
 // ============================================================
 // 初始化：遍历所有模型 JSON，构建纹理索引
 // ============================================================
@@ -680,13 +405,12 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
 
     LOGI("Initializing TextureAtlas from models/block/*.json...");
 
-    if (progressCallback) progressCallback(0.0f, "读取模型文件...");
+    if (progressCallback) progressCallback(0.0f, "\u8bfb\u53d6\u6a21\u578b\u6587\u4ef6...");
 
-    // 1. 读取所有模型 JSON（一次 ZIP 遍历，避免后续逐文件读取）
+    // 1. 读取所有模型 JSON
     auto modelFiles = TextureLoader::readAllTextFromZip("models/block/");
     if (modelFiles.empty()) {
         LOGE("No model files found in ZIP at models/block/");
-        // 最小回退：加载一些基础纹理
         ensureTexture("block/stone");
         ensureTexture("block/dirt");
         ensureTexture("block/grass_block_top");
@@ -703,8 +427,8 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
 
     LOGI("Found %zu model files in ZIP", modelFiles.size());
 
-    // 2. 构建模型内容缓存（blockName → JSON 内容），避免后续逐文件 ZIP 读取
-    std::unordered_map<std::string, std::string> modelContentCache;
+    // 2. 构建模型内容缓存（blockName → json 对象），一次 parse 避免重复解析
+    std::unordered_map<std::string, json> modelContentCache;
     modelContentCache.reserve(modelFiles.size());
     for (const auto& [entryPath, content] : modelFiles) {
         std::string blockName = entryPath;
@@ -713,80 +437,73 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
         size_t extPos = blockName.rfind(".json");
         if (extPos != std::string::npos) blockName = blockName.substr(0, extPos);
         if (!blockName.empty()) {
-            modelContentCache[blockName] = content;
+            try {
+                modelContentCache[blockName] = json::parse(content);
+            } catch (...) {
+                LOGW("Failed to parse JSON for model: %s", blockName.c_str());
+            }
         }
     }
     LOGI("Cached %zu model contents", modelContentCache.size());
 
-    // 3. 解析模型缓存（父模型只需要解析一次）
+    // 3. 解析模型缓存
     std::unordered_map<std::string, TextureMap> resolutionCache;
 
-    // 4. 遍历所有 block 模型，解析纹理和模型 elements
+    // 4. 遍历所有 block 模型
     int parsedCount = 0;
     int totalModels = static_cast<int>(modelContentCache.size());
-    std::unordered_map<std::string, bool> elementResolveCache;
-    for (const auto& [blockName, content] : modelContentCache) {
-        // 解析 parent 链（传入内容缓存避免重复 ZIP 读取）
-        auto resolved = resolveModelTextures(blockName, content, resolutionCache, &modelContentCache);
+    for (const auto& [blockName, j] : modelContentCache) {
+        auto resolved = resolveModelTextures(blockName, j, resolutionCache, &modelContentCache);
         if (resolved.empty()) continue;
 
-        // 提取 top/side/bottom 纹理
         ModelTextures mt;
         mt.top = getFirstTexture(resolved, {"up", "top", "all", "end", "particle"});
         mt.side = getFirstTexture(resolved, {"north", "south", "east", "west", "side", "all", "end", "particle"});
         mt.bottom = getFirstTexture(resolved, {"down", "bottom", "all", "end", "particle"});
 
-        // 回退
         if (mt.top.empty())    mt.top = "block/stone";
         if (mt.side.empty())   mt.side = "block/stone";
         if (mt.bottom.empty()) mt.bottom = "block/stone";
 
         blockTextureMap[blockName] = mt;
 
-        // 确保所有模型纹理路径已注册（包括 #edge 等非 top/side/bottom 路径）
         for (const auto& [varName, texPath] : resolved) {
-            if (!texPath.empty()) {
-                ensureTexture(texPath);
-            }
+            if (!texPath.empty()) ensureTexture(texPath);
         }
 
-        // 解析模型 elements（用于模型兼容渲染）
-        // 策略：如果自身 JSON 有 elements 则用自身的，否则在 parent 链中查找
-        if (!jsonExtractElementsArray(content).empty()) {
-            // 自身有 elements，直接用当前 block 的 resolved textures 解析
-            jsonExtractElement(blockModelCache[blockName].elements, content, resolved, texturePathToLayer);
+        // 解析模型 elements
+        if (j.contains("elements") && j["elements"].is_array()) {
+            jsonExtractElement(blockModelCache[blockName].elements, j, resolved, texturePathToLayer);
         } else {
-            // 自身无 elements，在 parent 链中查找
-            std::string parent = jsonExtractParent(content);
+            std::string parent = j.value("parent", "");
             if (!parent.empty()) {
                 std::string parentModel = normalizeTexturePath(parent);
-                // 从 modelContentCache 或 ZIP 中获取父级 JSON
-                std::string parentJson;
+                json parentJson;
                 auto cacheIt = modelContentCache.find(parentModel);
                 if (cacheIt != modelContentCache.end()) {
                     parentJson = cacheIt->second;
                 } else {
-                    parentJson = TextureLoader::readTextFromZip("models/" + parentModel + ".json");
+                    std::string raw = TextureLoader::readTextFromZip("models/" + parentModel + ".json");
+                    if (!raw.empty()) { try { parentJson = json::parse(raw); } catch (...) {} }
                 }
-                // 递归查找父链中的 elements（用当前 block 的 resolved textures）
-                // 这里需要沿 parent 链向上找 elements，但每次都用当前 block 的纹理映射
-                std::string currentJson = parentJson;
                 std::string currentName = parentModel;
-                while (!currentJson.empty()) {
-                    if (!jsonExtractElementsArray(currentJson).empty()) {
+                json currentJson = parentJson;
+                while (!currentJson.is_null()) {
+                    if (currentJson.contains("elements") && currentJson["elements"].is_array()) {
                         jsonExtractElement(blockModelCache[blockName].elements, currentJson, resolved, texturePathToLayer);
                         break;
                     }
-                    std::string nextParent = jsonExtractParent(currentJson);
+                    std::string nextParent = currentJson.value("parent", "");
                     if (nextParent.empty()) break;
                     std::string nextName = normalizeTexturePath(nextParent);
-                    if (nextName == currentName) break; // 防止循环
-                    // 获取父级的 JSON
+                    if (nextName == currentName) break;
                     auto nextIt = modelContentCache.find(nextName);
                     if (nextIt != modelContentCache.end()) {
                         currentJson = nextIt->second;
                     } else {
-                        currentJson = TextureLoader::readTextFromZip("models/" + nextName + ".json");
+                        std::string raw = TextureLoader::readTextFromZip("models/" + nextName + ".json");
+                        if (!raw.empty()) { try { currentJson = json::parse(raw); } catch (...) { currentJson = nullptr; } }
+                        else { currentJson = nullptr; }
                     }
                     currentName = nextName;
                 }
@@ -797,22 +514,20 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
         if (progressCallback && (parsedCount % 200 == 0 || parsedCount == totalModels)) {
             float p = 0.01f + 0.04f * (float)parsedCount / (float)totalModels;
             char buf[64];
-            snprintf(buf, sizeof(buf), "解析方块模型 %d/%d", parsedCount, totalModels);
+            snprintf(buf, sizeof(buf), "\u89e3\u6790\u65b9\u5757\u6a21\u578b %d/%d", parsedCount, totalModels);
             progressCallback(p, buf);
         }
     }
 
-    // 循环结束后确保进度条走到最终位置（防止 parsedCount != totalModels 导致卡住）
     if (progressCallback) {
         float p = 0.05f;
         char buf[64];
-        snprintf(buf, sizeof(buf), "解析方块模型 %d/%d", parsedCount, totalModels);
+        snprintf(buf, sizeof(buf), "\u89e3\u6790\u65b9\u5757\u6a21\u578b %d/%d", parsedCount, totalModels);
         progressCallback(p, buf);
     }
 
     LOGI("Parsed %d/%zu block models", parsedCount, modelFiles.size());
 
-    // 统计带 elements 的 block model
     {
         int elemCount = 0;
         for (const auto& [name, model] : blockModelCache) {
@@ -821,7 +536,7 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
         LOGI("Resolved %d block models with geometry elements", elemCount);
     }
 
-    // 4.5 加载 blockstate JSON，解析变体映射
+    // 4.5 加载 blockstate JSON
     {
         auto blockstateFiles = TextureLoader::readAllTextFromZip("blockstates/");
         int bsCount = 0;
@@ -832,14 +547,16 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
             size_t dot = blockName.rfind(".json");
             if (dot != std::string::npos) blockName = blockName.substr(0, dot);
             if (!blockName.empty()) {
-                parseBlockState(blockName, content);
+                json j;
+                try { j = json::parse(content); } catch (...) { continue; }
+                parseBlockState(blockName, j);
                 bsCount++;
             }
         }
         LOGI("Parsed %d blockstate files", bsCount);
     }
 
-    // 4.6 加载 models/item/*.json（物品图标对应的方块模型映射）
+    // 4.6 加载 models/item/*.json
     {
         auto itemModelFiles = TextureLoader::readAllTextFromZip("models/item/");
         int itemCount = 0;
@@ -850,16 +567,13 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
             size_t dot = itemName.rfind(".json");
             if (dot != std::string::npos) itemName = itemName.substr(0, dot);
             if (!itemName.empty()) {
-                std::string parent = jsonExtractParent(content);
+                json j;
+                try { j = json::parse(content); } catch (...) { continue; }
+                std::string parent = j.value("parent", "");
                 if (!parent.empty()) {
                     size_t colonPos = parent.find(':');
-                    if (colonPos != std::string::npos) {
-                        parent = parent.substr(colonPos + 1);
-                    }
-                    // 去掉 "block/" 前缀（parent 可能是 "minecraft:block/oak_stairs"）
-                    if (parent.find("block/") == 0) {
-                        parent = parent.substr(6);
-                    }
+                    if (colonPos != std::string::npos) parent = parent.substr(colonPos + 1);
+                    if (parent.find("block/") == 0) parent = parent.substr(6);
                     itemModelCache[itemName] = parent;
                     itemCount++;
                 }
@@ -868,16 +582,16 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
         LOGI("Parsed %d item model references", itemCount);
     }
 
-    // 5. 强制加入特殊纹理（MeshGenerator 需要，但可能不被任何模型引用）
+    // 5. 强制加入特殊纹理
     ensureTexture("block/grass_block_side_overlay");
     ensureTexture("block/snow");
 
-    // 6. 加载方块破坏动画纹理（destroy_stage_0 ~ destroy_stage_9）
+    // 6. 加载方块破坏动画纹理
     for (int i = 0; i < 10; i++) {
         ensureTexture("block/destroy_stage_" + std::to_string(i));
     }
 
-    // 7. 缓存特殊纹理索引（直接查 map，因为 mutex 已在 initialize 中锁定）
+    // 7. 缓存特殊纹理索引
     auto findLayer = [this](const std::string& path) {
         auto it = texturePathToLayer.find(path);
         return it != texturePathToLayer.end() ? it->second : -1;
@@ -888,10 +602,9 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
     for (int i = 0; i < 10; i++) {
         destroyStageLayers[i] = findLayer("block/destroy_stage_" + std::to_string(i));
     }
-    LOGI("DIAG_FINDLAYER: side_overlay=%d grass_side=%d grass_top=%d (from texturePathToLayer)",
+    LOGI("DIAG_FINDLAYER: side_overlay=%d grass_side=%d grass_top=%d",
          grassSideOverlayLayer, grassSideLayer, grassBlockSnowLayer);
 
-    // 如果某些特殊纹理找不到，用 stone 回退
     if (grassSideOverlayLayer < 0) grassSideOverlayLayer = findLayer("block/stone");
     if (grassBlockSnowLayer < 0)   grassBlockSnowLayer = findLayer("block/stone");
     if (grassSideLayer < 0)        grassSideLayer = findLayer("block/stone");
@@ -900,7 +613,6 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
     LOGI("TextureAtlas initialized: %d texture layers, %d block mappings",
          getLayerCount(), (int)blockTextureMap.size());
 
-    // 打印前 20 个 block 映射 key 用于调试
     {
         int count = 0;
         for (const auto& [key, val] : blockTextureMap) {
@@ -910,7 +622,6 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
         }
     }
 
-    // 打印调试：前 20 个纹理
     for (int i = 0; i < std::min(20, getLayerCount()); i++) {
         LOGI("  Layer %d: %s", i, textureList[i].c_str());
     }
@@ -918,19 +629,16 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
     return true;
 }
 
+
 // ============================================================
 // 查询方块纹理
 // ============================================================
 BlockTextureConfig TextureAtlas::getBlockTexture(const std::string& blockName) const {
-    if (!initialized) {
-        return {0, 0, 0};
-    }
-
+    if (!initialized) return {0, 0, 0};
     std::lock_guard<std::mutex> lock(mutex);
 
     auto it = blockTextureMap.find(blockName);
     if (it == blockTextureMap.end()) {
-        // 调试：打印前 10 个未匹配的方块名
         static std::atomic<int> debugMissCount{0};
         int miss = debugMissCount.fetch_add(1);
         if (miss < 10) {
@@ -939,7 +647,6 @@ BlockTextureConfig TextureAtlas::getBlockTexture(const std::string& blockName) c
             LOGI("getBlockTexture: ... (suppressing further miss logs)");
         }
 
-        // 未知方块：尝试 "block/name" 启发式查找（如 snow → block/snow）
         std::string heuristic = "block/" + blockName;
         auto heurIt = texturePathToLayer.find(heuristic);
         if (heurIt != texturePathToLayer.end()) {
@@ -947,20 +654,15 @@ BlockTextureConfig TextureAtlas::getBlockTexture(const std::string& blockName) c
             return {layer, layer, layer};
         }
 
-        // 回退到 stone 纹理
         auto stoneIt = texturePathToLayer.find("block/stone");
         int stoneLayer = (stoneIt != texturePathToLayer.end()) ? stoneIt->second : 0;
         if (stoneLayer < 0) stoneLayer = 0;
         return {stoneLayer, stoneLayer, stoneLayer};
     }
 
-    // 标准化纹理路径：去掉 "minecraft:" 前缀（模型文件中常包含此前缀，
-    // 但 ensureTexture() 存储时已去掉，所以查询时也需要去掉）
     auto normalizePath = [](const std::string& path) -> std::string {
         size_t colonPos = path.find(':');
-        if (colonPos != std::string::npos) {
-            return path.substr(colonPos + 1);
-        }
+        if (colonPos != std::string::npos) return path.substr(colonPos + 1);
         return path;
     };
 
@@ -975,9 +677,6 @@ BlockTextureConfig TextureAtlas::getBlockTexture(const std::string& blockName) c
     return {top, side, bottom};
 }
 
-// ============================================================
-// 获取第 layer 层的纹理文件名（用于 GLRenderer 纹理数组加载）
-// ============================================================
 std::string TextureAtlas::getTextureFileName(int layer) const {
     if (layer < 0 || layer >= static_cast<int>(textureList.size())) {
         return "stone.png";
@@ -985,42 +684,29 @@ std::string TextureAtlas::getTextureFileName(int layer) const {
     return textureList[layer];
 }
 
-// ============================================================
-// 占位色（当纹理文件不存在时）
-// ============================================================
 void TextureAtlas::getPlaceholderColor(int /*layer*/, uint8_t& r, uint8_t& g, uint8_t& b) const {
-    r = 0xAA; g = 0x44; b = 0xAA; // 紫色
+    r = 0xAA; g = 0x44; b = 0xAA;
 }
 
-// ============================================================
-// 纹理路径 → 图层索引
-// ============================================================
 int TextureAtlas::getLayerByTexturePath(const std::string& texturePath) const {
     std::string normalized = texturePath;
     size_t colonPos = normalized.find(':');
-    if (colonPos != std::string::npos) {
-        normalized = normalized.substr(colonPos + 1);
-    }
-
+    if (colonPos != std::string::npos) normalized = normalized.substr(colonPos + 1);
     std::lock_guard<std::mutex> lock(mutex);
     auto it = texturePathToLayer.find(normalized);
-    if (it != texturePathToLayer.end()) return it->second;
-    return -1;
+    return (it != texturePathToLayer.end()) ? it->second : -1;
 }
 
-// ============================================================
-// 特殊纹理查询
-// ============================================================
 int TextureAtlas::getGrassSideOverlayLayer() const { return grassSideOverlayLayer; }
 int TextureAtlas::getGrassBlockSnowLayer() const    { return grassBlockSnowLayer; }
 int TextureAtlas::getGrassSideLayer() const         { return grassSideLayer; }
+
 
 // ============================================================
 // Blockstate 变体解析
 // ============================================================
 
 std::vector<std::pair<std::string, std::string>> TextureAtlas::parseVariantKey(const std::string& key) {
-    // key 如 "axis=x" 或 "facing=east,half=bottom,shape=straight" 或 ""（空）
     std::vector<std::pair<std::string, std::string>> result;
     if (key.empty()) return result;
 
@@ -1040,40 +726,20 @@ std::vector<std::pair<std::string, std::string>> TextureAtlas::parseVariantKey(c
         }
         result.emplace_back(propName, propVal);
     }
-    // 按属性名字母序排序（Minecraft blockState 编码顺序）
     std::sort(result.begin(), result.end(),
         [](const auto& a, const auto& b) { return a.first < b.first; });
     return result;
 }
 
-void TextureAtlas::parseBlockState(const std::string& blockName, const std::string& json) {
-    // 查找 "variants": {
-    size_t varPos = json.find("\"variants\"");
-    if (varPos == std::string::npos) {
-        // 没有 variants → 尝试 multipart（玻璃板、栅栏等）
-        parseMultipart(blockName, json);
+void TextureAtlas::parseBlockState(const std::string& blockName, const json& j) {
+    if (!j.contains("variants") || !j["variants"].is_object()) {
+        parseMultipart(blockName, j);
         return;
     }
 
-    size_t bracePos = json.find('{', varPos);
-    if (bracePos == std::string::npos) return;
+    const json& variants = j["variants"];
 
-    // 大括号匹配提取 variants 对象内容
-    int depth = 0;
-    bool inStr = false;
-    size_t braceEnd = bracePos;
-    for (; braceEnd < json.size(); braceEnd++) {
-        char c = json[braceEnd];
-        if (inStr) { if (c == '\\') { braceEnd++; continue; } if (c == '"') inStr = false; continue; }
-        if (c == '"') { inStr = true; continue; }
-        if (c == '{') depth++;
-        if (c == '}') { depth--; if (depth == 0) break; }
-    }
-    if (depth != 0 || braceEnd == json.size()) return;
-
-    std::string varContent = json.substr(bracePos + 1, braceEnd - bracePos - 1);
-
-    // 第一遍：解析所有变体，收集各属性的所有可能值
+    // 第一遍：解析所有变体
     struct ParsedEntry {
         std::vector<std::pair<std::string, std::string>> props;
         BlockStateVariant bsv;
@@ -1082,81 +748,38 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
     std::unordered_map<std::string, std::unordered_set<std::string>> propValueSet;
     bool hasSimpleVariant = false;
 
-    size_t pos = 0;
-    while (pos < varContent.size()) {
-        size_t keyStart = varContent.find('"', pos);
-        if (keyStart == std::string::npos) break;
-        size_t keyEnd = varContent.find('"', keyStart + 1);
-        if (keyEnd == std::string::npos) break;
+    for (auto it = variants.begin(); it != variants.end(); ++it) {
+        const std::string& variantKey = it.key();
+        const json& val = it.value();
 
-        std::string variantKey = varContent.substr(keyStart + 1, keyEnd - keyStart - 1);
-
-        size_t colonPos = varContent.find(':', keyEnd);
-        if (colonPos == std::string::npos) break;
-
-        size_t valStart = colonPos + 1;
-        while (valStart < varContent.size() &&
-               (varContent[valStart] == ' ' || varContent[valStart] == '\t' ||
-                varContent[valStart] == '\n' || varContent[valStart] == '\r'))
-            valStart++;
-
-        if (valStart >= varContent.size()) break;
-
-        bool isArray = (varContent[valStart] == '[');
-        size_t actualStart = varContent.find_first_of('{', valStart);
-        if (actualStart == std::string::npos) { pos = valStart + 1; continue; }
-
-        depth = 0;
-        inStr = false;
-        size_t valEnd = actualStart;
-        char closeChar = isArray ? ']' : '}';
-        for (; valEnd < varContent.size(); valEnd++) {
-            char c = varContent[valEnd];
-            if (inStr) { if (c == '\\') { valEnd++; continue; } if (c == '"') inStr = false; continue; }
-            if (c == '"') { inStr = true; continue; }
-            if (c == '{' || c == '[') depth++;
-            if (c == closeChar) { depth--; if (depth == 0) break; }
-        }
-        if (depth != 0) { pos = valEnd + 1; continue; }
-
-        size_t entryContentStart, entryContentEnd;
-        if (isArray) {
-            size_t firstObj = varContent.find('{', actualStart);
-            if (firstObj == std::string::npos || firstObj > valEnd) { pos = valEnd + 1; continue; }
-            int objDepth = 0;
-            size_t objEnd = firstObj;
-            inStr = false;
-            for (; objEnd <= valEnd; objEnd++) {
-                char c = varContent[objEnd];
-                if (inStr) { if (c == '\\') { objEnd++; continue; } if (c == '"') inStr = false; continue; }
-                if (c == '"') { inStr = true; continue; }
-                if (c == '{') objDepth++;
-                if (c == '}') { objDepth--; if (objDepth == 0) break; }
+        // 解析值（可能是单个对象 {model:..., x:..., y:...} 或数组 [{...}, {...}]）
+        std::vector<json> models;
+        if (val.is_array()) {
+            for (const auto& m : val) {
+                if (m.is_object()) models.push_back(m);
             }
-            if (objDepth != 0) { pos = valEnd + 1; continue; }
-            entryContentStart = firstObj;
-            entryContentEnd = objEnd;
-        } else {
-            entryContentStart = actualStart;
-            entryContentEnd = valEnd;
+        } else if (val.is_object()) {
+            models.push_back(val);
         }
 
-        std::string entryContent = varContent.substr(entryContentStart, entryContentEnd - entryContentStart + 1);
+        if (models.empty()) continue;
 
         BlockStateVariant bsv;
-        {
-            std::string mname = extractStringValue(entryContent, "model");
-            if (mname.empty()) { pos = valEnd + 1; continue; }
+        for (const auto& m : models) {
+            std::string mname = m.value("model", "");
+            if (mname.empty()) continue;
             size_t mcPos = mname.find(':');
             if (mcPos != std::string::npos) mname = mname.substr(mcPos + 1);
             if (mname.find("block/") == 0) mname = mname.substr(6);
             BlockStateVariant::ModelEntry me;
             me.modelName = mname;
-            me.rotX = extractIntValue(entryContent, "x", 0);
-            me.rotY = extractIntValue(entryContent, "y", 0);
-            me.uvlock = extractBool(entryContent, "uvlock", false);
+            me.rotX = m.value("x", 0);
+            me.rotY = m.value("y", 0);
+            me.uvlock = m.value("uvlock", false);
             bsv.models.push_back(std::move(me));
         }
+
+        if (bsv.models.empty()) continue;
 
         auto props = parseVariantKey(variantKey);
 
@@ -1169,13 +792,10 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
             }
             entries.push_back({props, bsv});
         }
-
-        pos = valEnd + 1;
     }
 
     if (entries.empty()) return;
 
-    // 无属性变体（如 grass 的 "" 键）
     if (hasSimpleVariant && propValueSet.empty()) {
         std::vector<BlockStateVariant> variants(1);
         variants[0] = entries[0].bsv;
@@ -1183,7 +803,7 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
         return;
     }
 
-    // 已知属性值顺序（匹配 Minecraft BlockStateDefinition 定义顺序）
+    // 已知属性值顺序
     static const std::unordered_map<std::string, std::vector<std::string>> knownPropOrder = {
         {"axis",     {"x", "y", "z"}},
         {"facing",   {"down", "up", "north", "south", "west", "east"}},
@@ -1199,34 +819,24 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
         {"stage",    {"0", "1", "2", "3"}},
     };
 
-    // 将属性值集合按已知顺序（或用字母序回退）排序
     std::map<std::string, std::vector<std::string>> propValueList;
     for (const auto& [prop, collectedValues] : propValueSet) {
         auto knownIt = knownPropOrder.find(prop);
         if (knownIt != knownPropOrder.end()) {
-            // 用已知顺序，只保留 blockstate 中存在的值
             std::vector<std::string> ordered;
             for (const auto& val : knownIt->second) {
-                if (collectedValues.find(val) != collectedValues.end()) {
-                    ordered.push_back(val);
-                }
+                if (collectedValues.find(val) != collectedValues.end()) ordered.push_back(val);
             }
-            // 已知列表中未覆盖的值（如 half=lower/upper）追到末尾
             for (const auto& val : collectedValues) {
-                if (std::find(ordered.begin(), ordered.end(), val) == ordered.end()) {
-                    ordered.push_back(val);
-                }
+                if (std::find(ordered.begin(), ordered.end(), val) == ordered.end()) ordered.push_back(val);
             }
             propValueList[prop] = std::move(ordered);
         } else {
-            // 检查是否是布尔属性（值恰好为 "true" 和 "false"）
-            // Minecraft 的 BooleanProperty 使用 [true, false] 顺序，而非字母序
             if (collectedValues.size() == 2 &&
                 collectedValues.find("true") != collectedValues.end() &&
                 collectedValues.find("false") != collectedValues.end()) {
                 propValueList[prop] = {"true", "false"};
             } else {
-                // 其他未知属性：字母序回退
                 std::vector<std::string> sorted(collectedValues.begin(), collectedValues.end());
                 std::sort(sorted.begin(), sorted.end());
                 propValueList[prop] = std::move(sorted);
@@ -1236,10 +846,7 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
 
     std::unordered_set<std::string> autoAddedProps;
 
-    // ===== 检测并补充缺失的布尔属性（waterlogged、powered 等）=====
-    // Minecraft 1.13+ 中许多方块有 waterlogged/powered 等 boolean 属性，
-    // 但 blockstate JSON 的 variant keys 中可能不包含它们（因为默认值为 false），
-    // 导致偏移量计算缺少了 2^n 倍因子。
+    // 检测并补充缺失的布尔属性
     if (propValueList.find("waterlogged") == propValueList.end() && !hasSimpleVariant) {
         const auto& registry = BlockRegistry::getInstance();
         const auto* blockInfo = registry.getBlockInfoByName(blockName);
@@ -1251,7 +858,6 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
             int actualStates = blockInfo->maxStateId - blockInfo->minStateId + 1;
             if (actualStates > expectedStates && actualStates % expectedStates == 0) {
                 int factor = actualStates / expectedStates;
-                // factor 必须是 2 的幂（缺失 n 个 boolean 属性时 factor = 2^n）
                 if (factor == 2 || factor == 4) {
                     autoAddedProps.insert("waterlogged");
                     propValueList["waterlogged"] = {"false", "true"};
@@ -1265,7 +871,6 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
                             entry.props.emplace_back("powered", "false");
                         }
                     }
-                    // 按字母序排序（Minecraft 协议使用 ImmutableSortedMap）
                     for (auto& entry : entries) {
                         std::sort(entry.props.begin(), entry.props.end(),
                             [](const auto& a, const auto& b) { return a.first < b.first; });
@@ -1274,12 +879,8 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
             }
         }
     }
-    // ===== END 布尔属性检测 =====
 
-    // 注意：Minecraft 协议使用字母序（ImmutableSortedMap）排列属性
-    // 不需要特殊处理，保持原有字母序逻辑即可
-
-    // 第二遍：用实际值列表计算 offset
+    // 第二遍：计算 offset
     int maxOffset = -1;
     std::unordered_map<int, BlockStateVariant> offsetMap;
 
@@ -1297,10 +898,7 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
             const auto& values = propValueList[propName];
             int valueIndex = 0;
             for (size_t vi = 0; vi < values.size(); vi++) {
-                if (values[vi] == propValue) {
-                    valueIndex = (int)vi;
-                    break;
-                }
+                if (values[vi] == propValue) { valueIndex = (int)vi; break; }
             }
             offset += valueIndex * stride;
             stride *= (int)values.size();
@@ -1309,561 +907,249 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const std::stri
         if (offset > maxOffset) maxOffset = offset;
     }
 
-    // ===== 补充自动添加的布尔属性变体条目 =====
-    // 对于自动检测添加的属性（如 powered、waterlogged），
-    // 原始条目只包含默认值（false），需复制到所有 true 组合
-    if (!autoAddedProps.empty()) {
-        int expandBits = 0;
-        for (const auto& prop : autoAddedProps) {
-            auto setIt = propValueSet.find(prop);
-            bool hasBothValues = (setIt != propValueSet.end() &&
-                                  setIt->second.find("true") != setIt->second.end());
-            if (!hasBothValues) expandBits++;
-        }
-        if (expandBits > 0) {
-            int expandFactor = 1 << expandBits;
-            std::unordered_map<int, BlockStateVariant> expandedMap;
-            for (const auto& [off, variant] : offsetMap) {
-                for (int b = 0; b < expandFactor; b++) {
-                    expandedMap[off + b] = variant;
-                }
-            }
-            offsetMap.swap(expandedMap);
-            maxOffset = maxOffset + (expandFactor - 1);
-        }
-    }
-    // ===== END 布尔属性补充 =====
-
-    if (offsetMap.empty()) return;
-
-    // 构建按 offset 索引的数组
-    int arraySize = maxOffset + 1;
-    if (hasSimpleVariant && arraySize < 1) arraySize = 1;
-    std::vector<BlockStateVariant> variants(arraySize);
-    for (auto& v : variants) {
-        BlockStateVariant::ModelEntry me;
-        me.modelName = blockName;
-        v.models.push_back(std::move(me));
-    }
-
-    for (auto& [off, variant] : offsetMap) {
-        if (off >= 0 && off < arraySize) {
-            variants[off] = std::move(variant);
+    // 填充未出现的 offset 为前一个变体
+    std::vector<BlockStateVariant> orderedVariants(maxOffset + 1);
+    BlockStateVariant lastValid;
+    for (int i = 0; i <= maxOffset; i++) {
+        auto it = offsetMap.find(i);
+        if (it != offsetMap.end()) {
+            orderedVariants[i] = it->second;
+            lastValid = it->second;
+        } else {
+            orderedVariants[i] = lastValid;
         }
     }
 
-    blockstateVariantCache[blockName] = std::move(variants);
+    LOGI("BlockState %s: %d variants, %d offsets, autoAdded=%zu",
+         blockName.c_str(), (int)entries.size(), maxOffset + 1, autoAddedProps.size());
+    blockstateVariantCache[blockName] = std::move(orderedVariants);
 }
 
-void TextureAtlas::parseMultipart(const std::string& blockName, const std::string& json) {
-    // 查找 "multipart": [
-    size_t arrStart = json.find("\"multipart\"");
-    if (arrStart == std::string::npos) return;
-    arrStart = json.find('[', arrStart);
-    if (arrStart == std::string::npos) return;
+void TextureAtlas::parseMultipart(const std::string& blockName, const json& j) {
+    if (!j.contains("multipart") || !j["multipart"].is_array()) return;
 
-    size_t arrEnd = arrStart;
-    {
-        int depth = 0;
-        bool inStr = false;
-        for (; arrEnd < json.size(); arrEnd++) {
-            char c = json[arrEnd];
-            if (inStr) { if (c == '\\') { arrEnd++; continue; } if (c == '"') inStr = false; continue; }
-            if (c == '"') { inStr = true; continue; }
-            if (c == '[') depth++;
-            if (c == ']') { depth--; if (depth == 0) break; }
-        }
-        if (depth != 0 || arrEnd == json.size()) return;
-    }
+    const auto& multipart = j["multipart"];
+    if (multipart.empty()) return;
 
-    // ===== 1. 解析所有 multipart entries =====
-    struct MultipartWhen {
-        std::vector<std::pair<std::string, std::string>> andProps; // AND 条件
+    // 收集所有可能出现的属性和值
+    struct MultiPartEntry {
+        json when;          // when 条件（可能为 null）
+        BlockStateVariant bsv;
     };
-    struct MultipartEntry {
-        std::vector<MultipartWhen> whenOrs;  // OR 条件（空=始终应用）
-        BlockStateVariant::ModelEntry modelEntry;
-    };
-    std::vector<MultipartEntry> multipartEntries;
+    std::vector<MultiPartEntry> entries;
+    std::map<std::string, std::unordered_set<std::string>> propValues;
 
-    size_t pos = arrStart + 1;
-    while (pos < arrEnd) {
-        size_t objStart = json.find('{', pos);
-        if (objStart == std::string::npos || objStart >= arrEnd) break;
+    for (const auto& part : multipart) {
+        if (!part.is_object()) continue;
 
-        int depth = 0;
-        bool inStr = false;
-        size_t objEnd = objStart;
-        for (; objEnd < arrEnd; objEnd++) {
-            char c = json[objEnd];
-            if (inStr) { if (c == '\\') { objEnd++; continue; } if (c == '"') inStr = false; continue; }
-            if (c == '"') { inStr = true; continue; }
-            if (c == '{') depth++;
-            if (c == '}') { depth--; if (depth == 0) break; }
+        json when = part.contains("when") ? part["when"] : json();
+
+        // 解析 apply
+        if (!part.contains("apply")) continue;
+        const json& apply = part["apply"];
+        std::vector<json> models;
+        if (apply.is_array()) {
+            for (const auto& m : apply) { if (m.is_object()) models.push_back(m); }
+        } else if (apply.is_object()) {
+            models.push_back(apply);
         }
-        if (depth != 0 || objEnd >= arrEnd) break;
+        if (models.empty()) continue;
 
-        std::string entryJson = json.substr(objStart, objEnd - objStart + 1);
-
-        MultipartEntry entry;
-
-        // 解析 "apply"（必需）
-        size_t applyPos = entryJson.find("\"apply\"");
-        if (applyPos == std::string::npos) { pos = objEnd + 1; continue; }
-        size_t applyBrace = entryJson.find('{', applyPos);
-        if (applyBrace == std::string::npos) { pos = objEnd + 1; continue; }
-        depth = 0; inStr = false;
-        size_t applyEnd = applyBrace;
-        for (; applyEnd < entryJson.size(); applyEnd++) {
-            char c = entryJson[applyEnd];
-            if (inStr) { if (c == '\\') { applyEnd++; continue; } if (c == '"') inStr = false; continue; }
-            if (c == '"') { inStr = true; continue; }
-            if (c == '{') depth++;
-            if (c == '}') { depth--; if (depth == 0) break; }
+        BlockStateVariant bsv;
+        for (const auto& m : models) {
+            std::string mname = m.value("model", "");
+            if (mname.empty()) continue;
+            size_t mcPos = mname.find(':');
+            if (mcPos != std::string::npos) mname = mname.substr(mcPos + 1);
+            if (mname.find("block/") == 0) mname = mname.substr(6);
+            BlockStateVariant::ModelEntry me;
+            me.modelName = mname;
+            me.rotX = m.value("x", 0);
+            me.rotY = m.value("y", 0);
+            me.uvlock = m.value("uvlock", false);
+            bsv.models.push_back(std::move(me));
         }
-        if (depth != 0) { pos = objEnd + 1; continue; }
-        std::string applyContent = entryJson.substr(applyBrace, applyEnd - applyBrace + 1);
+        if (bsv.models.empty()) continue;
 
-        std::string mname = extractStringValue(applyContent, "model");
-        if (mname.empty()) { pos = objEnd + 1; continue; }
-        size_t mcPos2 = mname.find(':');
-        if (mcPos2 != std::string::npos) mname = mname.substr(mcPos2 + 1);
-        if (mname.find("block/") == 0) mname = mname.substr(6);
+        entries.push_back({when, bsv});
 
-        entry.modelEntry.modelName = mname;
-        entry.modelEntry.rotX = extractIntValue(applyContent, "x", 0);
-        entry.modelEntry.rotY = extractIntValue(applyContent, "y", 0);
-        entry.modelEntry.uvlock = extractBool(applyContent, "uvlock", false);
-
-        // 解析 "when"（可选）
-        size_t whenPos = entryJson.find("\"when\"");
-        if (whenPos != std::string::npos && whenPos < applyPos) {
-            // when 可能是对象 {key:val,...} 或数组 [{...},{...}]
-            size_t whenVal = entryJson.find_first_of("{[", whenPos + 6);
-            if (whenVal != std::string::npos) {
-                // 辅助函数：解析单个 when 对象
-                auto parseWhenObject = [](const std::string& whenObj) -> MultipartWhen {
-                    MultipartWhen mw;
-                    size_t kp = 0;
-                    while ((kp = whenObj.find('"', kp)) != std::string::npos) {
-                        size_t ke = whenObj.find('"', kp + 1);
-                        if (ke == std::string::npos) break;
-                        std::string key = whenObj.substr(kp + 1, ke - kp - 1);
-                        size_t col2 = whenObj.find(':', ke);
-                        if (col2 == std::string::npos) break;
-                        size_t vs = col2 + 1;
-                        while (vs < whenObj.size() && (whenObj[vs] == ' ' || whenObj[vs] == '\t')) vs++;
-                        if (vs >= whenObj.size()) break;
-                        std::string val;
-                        if (whenObj[vs] == '"') {
-                            vs++;
-                            size_t ve = whenObj.find('"', vs);
-                            if (ve == std::string::npos) break;
-                            val = whenObj.substr(vs, ve - vs);
-                        } else {
-                            size_t ve = whenObj.find_first_of(",}", vs);
-                            if (ve == std::string::npos) ve = whenObj.size();
-                            val = whenObj.substr(vs, ve - vs);
-                            while (!val.empty() && (val.back() == ' ' || val.back() == '\t')) val.pop_back();
-                        }
-                        if (!key.empty() && !val.empty()) mw.andProps.emplace_back(key, val);
-                        kp = (whenObj[vs == col2 + 1 ? vs : 0] == '"') ? whenObj.find('"', vs + val.size()) : whenObj.find_first_of(",}", vs);
-                        if (kp == std::string::npos) break;
-                    }
-                    return mw;
-                };
-                
-                if (entryJson[whenVal] == '[') {
-                    // OR 条件数组
-                    size_t arrEnd2 = whenVal;
-                    depth = 0; inStr = false;
-                    for (; arrEnd2 < entryJson.size(); arrEnd2++) {
-                        char c = entryJson[arrEnd2];
-                        if (inStr) { if (c == '\\') { arrEnd2++; continue; } if (c == '"') inStr = false; continue; }
-                        if (c == '"') { inStr = true; continue; }
-                        if (c == '[') depth++;
-                        if (c == ']') { depth--; if (depth == 0) break; }
-                    }
-                    if (depth == 0) {
-                        size_t ap = whenVal + 1;
-                        while (ap < arrEnd2) {
-                            size_t ob = entryJson.find('{', ap);
-                            if (ob == std::string::npos || ob >= arrEnd2) break;
-                            size_t oe = entryJson.find('}', ob);
-                            if (oe == std::string::npos || oe >= arrEnd2) break;
-                            std::string whenObj = entryJson.substr(ob, oe - ob + 1);
-                            MultipartWhen mw = parseWhenObject(whenObj);
-                            if (!mw.andProps.empty()) entry.whenOrs.push_back(std::move(mw));
-                            ap = oe + 1;
+        // 收集 when 条件中的属性值
+        if (!when.is_null()) {
+            std::function<void(const json&, bool)> collectProps;
+            collectProps = [&](const json& node, bool isOr) {
+                if (node.is_object()) {
+                    for (auto it = node.begin(); it != node.end(); ++it) {
+                        if (it.key() == "OR" && it->is_array()) {
+                            for (const auto& item : *it) collectProps(item, true);
+                        } else if (it->is_string()) {
+                            propValues[it.key()].insert(it->get<std::string>());
                         }
                     }
-                } else {
-                    // 单个条件对象，但可能包含 "OR" 键
-                    // 先找到匹配的 }（处理嵌套）
-                    size_t objEnd = whenVal;
-                    depth = 0; inStr = false;
-                    for (; objEnd < entryJson.size(); objEnd++) {
-                        char c = entryJson[objEnd];
-                        if (inStr) { if (c == '\\') { objEnd++; continue; } if (c == '"') inStr = false; continue; }
-                        if (c == '"') { inStr = true; continue; }
-                        if (c == '{') depth++;
-                        if (c == '}') { depth--; if (depth == 0) break; }
-                    }
-                    
-                    std::string whenObj = entryJson.substr(whenVal, objEnd - whenVal + 1);
-                    
-                    // 检查是否包含 "OR" 键
-                    size_t orPos = whenObj.find("\"OR\"");
-                    if (orPos != std::string::npos) {
-                        // 找到 OR 后面的数组
-                        size_t orArrStart = whenObj.find('[', orPos);
-                        if (orArrStart != std::string::npos) {
-                            size_t orArrEnd = orArrStart;
-                            depth = 0; inStr = false;
-                            for (; orArrEnd < whenObj.size(); orArrEnd++) {
-                                char c = whenObj[orArrEnd];
-                                if (inStr) { if (c == '\\') { orArrEnd++; continue; } if (c == '"') inStr = false; continue; }
-                                if (c == '"') { inStr = true; continue; }
-                                if (c == '[') depth++;
-                                if (c == ']') { depth--; if (depth == 0) break; }
-                            }
-                            if (depth == 0) {
-                                // 解析 OR 数组中的每个对象
-                                size_t ap = orArrStart + 1;
-                                while (ap < orArrEnd) {
-                                    size_t ob = whenObj.find('{', ap);
-                                    if (ob == std::string::npos || ob >= orArrEnd) break;
-                                    size_t oe = whenObj.find('}', ob);
-                                    if (oe == std::string::npos || oe >= orArrEnd) break;
-                                    std::string orObj = whenObj.substr(ob, oe - ob + 1);
-                                    MultipartWhen mw = parseWhenObject(orObj);
-                                    if (!mw.andProps.empty()) entry.whenOrs.push_back(std::move(mw));
-                                    ap = oe + 1;
-                                }
-                            }
-                        }
-                    } else {
-                        // 普通条件对象
-                        MultipartWhen mw = parseWhenObject(whenObj);
-                        if (!mw.andProps.empty()) entry.whenOrs.push_back(std::move(mw));
-                    }
                 }
-            }
-        }
-
-        multipartEntries.push_back(std::move(entry));
-        pos = objEnd + 1;
-    }
-
-    if (multipartEntries.empty()) return;
-
-    // ===== 2. 从 when 条件中收集所有属性和值 =====
-    std::map<std::string, std::unordered_set<std::string>> propValueSet;
-    bool hasUnconditional = false;
-    for (const auto& entry : multipartEntries) {
-        if (entry.whenOrs.empty()) { hasUnconditional = true; continue; }
-        for (const auto& when : entry.whenOrs) {
-            for (const auto& [prop, val] : when.andProps) {
-                // 处理 "side|up" 这样的 OR 语法
-                size_t pipePos = 0;
-                while (pipePos < val.size()) {
-                    size_t nextPipe = val.find('|', pipePos);
-                    std::string option = (nextPipe == std::string::npos) 
-                        ? val.substr(pipePos) 
-                        : val.substr(pipePos, nextPipe - pipePos);
-                    propValueSet[prop].insert(option);
-                    if (nextPipe == std::string::npos) break;
-                    pipePos = nextPipe + 1;
-                }
-            }
+            };
+            collectProps(when, false);
         }
     }
 
-    // ===== 3. 构建属性值列表（必须包含所有属性，使用 blocks.json 定义）=====
-    const auto& registry = BlockRegistry::getInstance();
-    const auto* blockInfo = registry.getBlockInfoByName(blockName);
-    
-    std::map<std::string, std::vector<std::string>> propValueList;
-    
-    // 必须包含 blocks.json 中定义的所有属性（包括 when 条件中未出现的）
-    if (blockInfo && !blockInfo->stateProperties.empty()) {
-        for (const auto& sp : blockInfo->stateProperties) {
-            propValueList[sp.name] = sp.values;
-        }
-    }
-    
-    // 对于 when 条件中有但 blocks.json 中没有的属性，使用字母序
-    for (const auto& [prop, collected] : propValueSet) {
-        if (propValueList.find(prop) != propValueList.end()) continue;  // 已处理
-        
-        if (collected.size() == 1 && collected.find("true") != collected.end()) {
-            propValueList[prop] = {"true", "false"};
-        } else if (collected.size() == 2 &&
-                   collected.find("true") != collected.end() &&
-                   collected.find("false") != collected.end()) {
-            propValueList[prop] = {"true", "false"};
-        } else {
-            std::vector<std::string> sorted(collected.begin(), collected.end());
-            std::sort(sorted.begin(), sorted.end());
-            propValueList[prop] = std::move(sorted);
-        }
+    if (entries.empty()) return;
+    if (propValues.empty()) {
+        // 无条件 multipart，每个 apply 都应用
+        std::vector<BlockStateVariant> single(1);
+        single[0] = entries[0].bsv;
+        blockstateVariantCache[blockName] = std::move(single);
+        return;
     }
 
-    // ===== 4. 计算总状态数，检测 waterlogged =====
-    // registry 和 blockInfo 已在 section 3 中声明
-    int totalStates = 1;
-    for (const auto& [prop, values] : propValueList) {
-        totalStates *= (int)values.size();
-    }
-
-    bool hasAutoWaterlogged = false;
-    bool hasAutoPowered = false;
-    if (blockInfo && propValueList.find("waterlogged") == propValueList.end()) {
-        int actualStates = blockInfo->maxStateId - blockInfo->minStateId + 1;
-        if (actualStates > totalStates && actualStates % totalStates == 0) {
-            int factor2 = actualStates / totalStates;
-            if (factor2 == 2 || factor2 == 4) {
-                hasAutoWaterlogged = true;
-                propValueList["waterlogged"] = {"true", "false"};
-                totalStates *= 2;
-                if (factor2 == 4) {
-                    hasAutoPowered = true;
-                    propValueList["powered"] = {"true", "false"};
-                    totalStates *= 2;
-                }
-            }
-        }
-    }
-
-    if (totalStates <= 0) return;
-
-    // ===== 5. 构建属性值索引映射（用于快速解码 offset）=====
+    // 构建所有可能的状态组合
     std::vector<std::string> propNames;
-    std::vector<std::vector<std::string>> propValues;
-    for (auto& [prop, values] : propValueList) {
-        propNames.push_back(prop);
-        propValues.push_back(values);
+    std::vector<std::vector<std::string>> propValueList;
+    for (auto& [name, vals] : propValues) {
+        propNames.push_back(name);
+        std::vector<std::string> sorted(vals.begin(), vals.end());
+        std::sort(sorted.begin(), sorted.end());
+        // 检查布尔属性
+        if (sorted.size() == 2 && sorted[0] == "false" && sorted[1] == "true") {
+            // 保持 false, true 顺序
+        } else {
+            std::sort(sorted.begin(), sorted.end());
+        }
+        propValueList.push_back(std::move(sorted));
     }
 
-    // ===== 6. 遍历所有 offset，匹配 multipart entries =====
-    std::vector<BlockStateVariant> variants(totalStates);
-    for (int off = 0; off < totalStates; off++) {
-        // 解码 offset 对应的属性值
-        std::unordered_map<std::string, std::string> propMap;
-        int remaining = off;
+    // 计算总组合数
+    int totalCombos = 1;
+    for (const auto& vals : propValueList) totalCombos *= (int)vals.size();
+
+    std::vector<BlockStateVariant> result(totalCombos);
+
+    // 对每个排列组合检查条件
+    for (int combo = 0; combo < totalCombos; combo++) {
+        // 构建当前组合的属性映射
+        std::unordered_map<std::string, std::string> stateProps;
+        int tmp = combo;
         for (size_t i = 0; i < propNames.size(); i++) {
-            int stride = 1;
-            for (size_t j = i + 1; j < propNames.size(); j++) {
-                stride *= (int)propValues[j].size();
-            }
-            int idx = remaining / stride;
-            if (idx >= (int)propValues[i].size()) idx = 0;
-            propMap[propNames[i]] = propValues[i][idx];
-            remaining %= stride;
+            int idx = tmp % (int)propValueList[i].size();
+            tmp /= (int)propValueList[i].size();
+            stateProps[propNames[i]] = propValueList[i][idx];
         }
 
-        // 检查每个 multipart entry 是否匹配
-        for (const auto& entry : multipartEntries) {
-            bool matches = false;
-            if (entry.whenOrs.empty()) {
-                // 无条件：始终匹配，且只匹配一次
-                variants[off].models.push_back(entry.modelEntry);
+        // 检查所有 apply 条目的 when 条件
+        // 默认为蓝色玻璃等无条件 multipart 保留最后一个 apply
+        BlockStateVariant accumulated;
+        for (const auto& entry : entries) {
+            if (entry.when.is_null()) {
+                accumulated = entry.bsv;
                 continue;
             }
-            // OR 语义：任一 when 块匹配即可
-            for (const auto& when : entry.whenOrs) {
-                bool andMatch = true;
-                for (const auto& [prop, reqVal] : when.andProps) {
-                    auto pmIt = propMap.find(prop);
-                    if (pmIt == propMap.end()) {
-                        andMatch = false;
-                        break;
-                    }
-                    // 处理 "side|up" 这样的 OR 语法
-                    const std::string& actualVal = pmIt->second;
-                    bool valMatch = false;
-                    size_t pipePos = 0;
-                    while (pipePos < reqVal.size()) {
-                        size_t nextPipe = reqVal.find('|', pipePos);
-                        std::string option = (nextPipe == std::string::npos) 
-                            ? reqVal.substr(pipePos) 
-                            : reqVal.substr(pipePos, nextPipe - pipePos);
-                        if (actualVal == option) {
-                            valMatch = true;
-                            break;
+
+            // 检查 when 条件是否匹配
+            std::function<bool(const json&)> matchWhen;
+            matchWhen = [&](const json& node) -> bool {
+                if (node.is_object()) {
+                    for (auto it = node.begin(); it != node.end(); ++it) {
+                        if (it.key() == "OR" && it->is_array()) {
+                            for (const auto& item : *it) {
+                                if (matchWhen(item)) return true;
+                            }
+                            return false;
                         }
-                        if (nextPipe == std::string::npos) break;
-                        pipePos = nextPipe + 1;
+                        // 普通属性
+                        if (it->is_string()) {
+                            auto propIt = stateProps.find(it.key());
+                            if (propIt == stateProps.end()) return false;
+                            // 支持逗号分隔的值列表
+                            std::string valStr = it->get<std::string>();
+                            size_t comma = valStr.find(',');
+                            if (comma != std::string::npos) {
+                                size_t start = 0;
+                                bool matched = false;
+                                while (start < valStr.size()) {
+                                    size_t end = valStr.find(',', start);
+                                    std::string v = (end == std::string::npos) ? valStr.substr(start) : valStr.substr(start, end - start);
+                                    if (propIt->second == v) { matched = true; break; }
+                                    start = (end == std::string::npos) ? valStr.size() : end + 1;
+                                }
+                                if (!matched) return false;
+                            } else if (propIt->second != valStr) {
+                                return false;
+                            }
+                        }
                     }
-                    if (!valMatch) {
-                        andMatch = false;
-                        break;
-                    }
+                    return true;
                 }
-                if (andMatch) {
-                    matches = true;
-                    break;
-                }
+                return false;
+            };
+
+            if (entry.when.is_object() && matchWhen(entry.when)) {
+                accumulated = entry.bsv;
             }
-            if (matches) {
-                variants[off].models.push_back(entry.modelEntry);
+        }
+        result[combo] = accumulated;
+    }
+
+    LOGI("BlockState %s: multipart -> %d combos", blockName.c_str(), totalCombos);
+    blockstateVariantCache[blockName] = std::move(result);
+}
+
+// ============================================================
+// BlockState 变体查询
+// ============================================================
+const BlockStateVariant* TextureAtlas::getBlockStateVariant(
+    const std::string& blockName, int32_t blockState, int32_t minStateId) const {
+    auto it = blockstateVariantCache.find(blockName);
+    if (it == blockstateVariantCache.end()) return nullptr;
+    const auto& variants = it->second;
+    int offset = (int)(blockState - minStateId);
+    if (offset < 0 || offset >= (int)variants.size()) return nullptr;
+    return &variants[offset];
+}
+
+std::vector<CollisionBox> TextureAtlas::getBlockCollisionBoxes(
+    const std::string& blockName, int32_t blockState, int32_t minStateId) const {
+    std::vector<CollisionBox> boxes;
+
+    // 先查 blockstate 变体
+    if (minStateId >= 0) {
+        const auto* variant = getBlockStateVariant(blockName, blockState, minStateId);
+        if (variant && !variant->models.empty()) {
+            for (const auto& me : variant->models) {
+                const auto* model = getBlockModel(me.modelName);
+                if (model) {
+                    for (const auto& elem : model->elements) {
+                        CollisionBox box;
+                        box.minX = elem.from[0] / 16.0f;
+                        box.minY = elem.from[1] / 16.0f;
+                        box.minZ = elem.from[2] / 16.0f;
+                        box.maxX = elem.to[0] / 16.0f;
+                        box.maxY = elem.to[1] / 16.0f;
+                        box.maxZ = elem.to[2] / 16.0f;
+                        boxes.push_back(box);
+                    }
+                    if (!model->elements.empty()) return boxes;
+                }
             }
         }
     }
 
-    blockstateVariantCache[blockName] = std::move(variants);
-
-    LOGI("parseMultipart: '%s' -> %d properties, %d states, %zu multipart entries",
-         blockName.c_str(), (int)propNames.size(), (int)variants.size(), multipartEntries.size());
-}
-
-const BlockStateVariant* TextureAtlas::getBlockStateVariant(
-    const std::string& blockName, int32_t blockState, int32_t minStateId) const {
-    int32_t offset = blockState - minStateId;
-    auto it = blockstateVariantCache.find(blockName);
-    if (it == blockstateVariantCache.end()) return nullptr;
-    if (offset < 0 || offset >= (int32_t)it->second.size()) return nullptr;
-    return &it->second[offset];
+    // fallback: 查默认模型
+    const auto* model = getBlockModel(blockName);
+    if (model) {
+        for (const auto& elem : model->elements) {
+            CollisionBox box;
+            box.minX = elem.from[0] / 16.0f;
+            box.minY = elem.from[1] / 16.0f;
+            box.minZ = elem.from[2] / 16.0f;
+            box.maxX = elem.to[0] / 16.0f;
+            box.maxY = elem.to[1] / 16.0f;
+            box.maxZ = elem.to[2] / 16.0f;
+            boxes.push_back(box);
+        }
+    }
+    return boxes;
 }
 
 const std::string* TextureAtlas::getItemModelParent(const std::string& itemName) const {
     auto it = itemModelCache.find(itemName);
-    if (it != itemModelCache.end()) {
-        return &it->second;
-    }
+    if (it != itemModelCache.end()) return &it->second;
     return nullptr;
-}
-
-// ============================================================
-// 从模型元素解析碰撞箱
-// ============================================================
-
-std::vector<CollisionBox> TextureAtlas::getBlockCollisionBoxes(
-    const std::string& blockName, int32_t blockState, int32_t minStateId) const
-{
-    // 1. 获取 blockstate 变体（模型名 + 旋转）
-    const auto* variant = getBlockStateVariant(blockName, blockState, minStateId);
-    const std::string* modelName = variant ? &variant->modelName() : &blockName;
-    int bsRotX = variant ? variant->rotX() : 0;
-    int bsRotY = variant ? variant->rotY() : 0;
-
-    // 2. 获取模型 elements
-    auto modelIt = blockModelCache.find(*modelName);
-    if (modelIt == blockModelCache.end() || modelIt->second.elements.empty()) {
-        return {};  // 无模型数据 → 调用方使用全方块碰撞
-    }
-
-    // 3. 将每个 element 转为碰撞箱（在 0-16 像素空间操作，最后 /16 归一化到 0-1）
-    const auto& elements = modelIt->second.elements;
-    std::vector<CollisionBox> boxes;
-    boxes.reserve(elements.size());
-
-    for (const auto& elem : elements) {
-        // 获取 8 个顶点
-        float corners[8][3];
-        int idx = 0;
-        for (int ci = 0; ci < 2; ci++) {
-            float x = (ci == 0) ? elem.from[0] : elem.to[0];
-            for (int cj = 0; cj < 2; cj++) {
-                float y = (cj == 0) ? elem.from[1] : elem.to[1];
-                for (int ck = 0; ck < 2; ck++) {
-                    float z = (ck == 0) ? elem.from[2] : elem.to[2];
-                    corners[idx][0] = x;
-                    corners[idx][1] = y;
-                    corners[idx][2] = z;
-                    idx++;
-                }
-            }
-        }
-
-        // 应用 element 自身旋转（绕 origin，与渲染一致）
-        if (elem.rotation.angle != 0.0f) {
-            float ox = elem.rotation.origin[0];
-            float oy = elem.rotation.origin[1];
-            float oz = elem.rotation.origin[2];
-            float rad = elem.rotation.angle * (3.14159265f / 180.0f);
-            float cosA = cosf(rad), sinA = sinf(rad);
-
-            for (int c = 0; c < 8; c++) {
-                float dx = corners[c][0] - ox;
-                float dy = corners[c][1] - oy;
-                float dz = corners[c][2] - oz;
-                float nx, ny, nz;
-
-                switch (elem.rotation.axis) {
-                    case 0: // X
-                        ny = dy * cosA - dz * sinA;
-                        nz = dy * sinA + dz * cosA;
-                        nx = dx;
-                        break;
-                    case 1: // Y
-                        nx = dx * cosA + dz * sinA;
-                        nz = -dx * sinA + dz * cosA;
-                        ny = dy;
-                        break;
-                    case 2: // Z
-                        nx = dx * cosA - dy * sinA;
-                        ny = dx * sinA + dy * cosA;
-                        nz = dz;
-                        break;
-                    default:
-                        nx = dx; ny = dy; nz = dz;
-                }
-
-                corners[c][0] = ox + nx;
-                corners[c][1] = oy + ny;
-                corners[c][2] = oz + nz;
-            }
-        }
-
-        // 应用 blockstate 旋转（绕方块中心 8,8,8）
-        if (bsRotX != 0 || bsRotY != 0) {
-            for (int c = 0; c < 8; c++) {
-                float px = corners[c][0] - 8.0f;
-                float py = corners[c][1] - 8.0f;
-                float pz = corners[c][2] - 8.0f;
-
-                if (bsRotX != 0) {
-                    float rad = -bsRotX * (3.14159265f / 180.0f);
-                    float cosA = cosf(rad), sinA = sinf(rad);
-                    float ny = py * cosA - pz * sinA;
-                    float nz = py * sinA + pz * cosA;
-                    py = ny; pz = nz;
-                }
-                if (bsRotY != 0) {
-                    float rad = -bsRotY * (3.14159265f / 180.0f);
-                    float cosA = cosf(rad), sinA = sinf(rad);
-                    float nx = px * cosA + pz * sinA;
-                    float nz = -px * sinA + pz * cosA;
-                    px = nx; pz = nz;
-                }
-
-                corners[c][0] = px + 8.0f;
-                corners[c][1] = py + 8.0f;
-                corners[c][2] = pz + 8.0f;
-            }
-        }
-
-        // 求旋转后的轴对齐边界并归一化到 0-1
-        float minX = INFINITY, minY = INFINITY, minZ = INFINITY;
-        float maxX = -INFINITY, maxY = -INFINITY, maxZ = -INFINITY;
-        for (int c = 0; c < 8; c++) {
-            float x = corners[c][0] / 16.0f;
-            float y = corners[c][1] / 16.0f;
-            float z = corners[c][2] / 16.0f;
-            if (x < minX) minX = x;
-            if (y < minY) minY = y;
-            if (z < minZ) minZ = z;
-            if (x > maxX) maxX = x;
-            if (y > maxY) maxY = y;
-            if (z > maxZ) maxZ = z;
-        }
-
-        // 跳过无体积或负体积元素
-        if (maxX <= minX || maxY <= minY || maxZ <= minZ) continue;
-
-        boxes.push_back({minX, minY, minZ, maxX, maxY, maxZ});
-    }
-
-    return boxes;
 }

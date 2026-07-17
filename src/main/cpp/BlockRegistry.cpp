@@ -1,5 +1,6 @@
 #include "BlockRegistry.h"
 #include "TextureAtlas.h"
+#include "3rdparty/json.hpp"
 #include <fstream>
 #include <sstream>
 #include <cstdlib>
@@ -9,138 +10,81 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-// 辅助函数：提取匹配的 JSON 对象（处理嵌套大括号）
-static size_t findMatchingBrace(const std::string& json, size_t start) {
-    if (start >= json.size() || json[start] != '{') return std::string::npos;
-    int depth = 0;
-    bool inStr = false;
-    for (size_t i = start; i < json.size(); i++) {
-        char c = json[i];
-        if (inStr) {
-            if (c == '\\' && i + 1 < json.size()) { i++; continue; }
-            if (c == '"') inStr = false;
-            continue;
-        }
-        if (c == '"') { inStr = true; continue; }
-        if (c == '{') depth++;
-        if (c == '}') { depth--; if (depth == 0) return i; }
-    }
-    return std::string::npos;
-}
+using json = nlohmann::json;
 
-// 辅助函数：提取匹配的 JSON 数组（处理嵌套方括号）
-static size_t findMatchingBracket(const std::string& json, size_t start) {
-    if (start >= json.size() || json[start] != '[') return std::string::npos;
-    int depth = 0;
-    bool inStr = false;
-    for (size_t i = start; i < json.size(); i++) {
-        char c = json[i];
-        if (inStr) {
-            if (c == '\\' && i + 1 < json.size()) { i++; continue; }
-            if (c == '"') inStr = false;
-            continue;
-        }
-        if (c == '"') { inStr = true; continue; }
-        if (c == '[') depth++;
-        if (c == ']') { depth--; if (depth == 0) return i; }
-    }
-    return std::string::npos;
-}
+bool BlockRegistry::loadFromJson(const std::string& jsonStr) {
+    LOGI("Loading blocks from JSON string (%zu bytes)", jsonStr.size());
 
-bool BlockRegistry::loadFromJson(const std::string& json) {
-    LOGI("Loading blocks from JSON string (%zu bytes)", json.size());
-
-    if (json.empty()) {
+    if (jsonStr.empty()) {
         LOGE("blocks.json content is empty!");
         return false;
     }
 
-    // 简单的 JSON 解析（针对 blocks.json 格式）
-    // 查找所有方块对象
-    size_t pos = 0;
+    json root;
+    try {
+        root = json::parse(jsonStr);
+    } catch (const json::parse_error& e) {
+        LOGE("JSON parse error in blocks.json: %s", e.what());
+        return false;
+    }
+
+    if (!root.is_array()) {
+        LOGE("blocks.json root is not an array");
+        return false;
+    }
+
     int blockCount = 0;
 
-    while ((pos = json.find("{", pos)) != std::string::npos) {
-        size_t endPos = findMatchingBrace(json, pos);
-        if (endPos == std::string::npos) break;
-
-        std::string blockJson = json.substr(pos, endPos - pos + 1);
-
-        // 提取字段
+    for (const auto& item : root) {
         BlockInfo info;
-        info.id = extractInt(blockJson, "\"id\"");
-        info.name = extractString(blockJson, "\"name\"");
-        // 去掉 "minecraft:" 前缀，确保与 blockstate 文件名和模型名一致
+        info.id = item.value("id", -1);
+        info.name = item.value("name", "");
+        // 去掉 "minecraft:" 前缀
         {
             size_t mcPos = info.name.find(':');
             if (mcPos != std::string::npos) {
                 info.name = info.name.substr(mcPos + 1);
             }
         }
-        info.displayName = extractString(blockJson, "\"displayName\"");
-        info.minStateId = extractInt(blockJson, "\"minStateId\"");
-        info.maxStateId = extractInt(blockJson, "\"maxStateId\"");
-        info.defaultState = extractInt(blockJson, "\"defaultState\"");
-        info.hardness = extractFloat(blockJson, "\"hardness\"");
-        info.material = extractString(blockJson, "\"material\"");
-        info.hasHarvestTools = blockJson.find("\"harvestTools\"") != std::string::npos;
+        info.displayName = item.value("displayName", "");
+        info.minStateId = item.value("minStateId", -1);
+        info.maxStateId = item.value("maxStateId", -1);
+        info.defaultState = item.value("defaultState", -1);
+        info.hardness = (item.contains("hardness") && !item["hardness"].is_null())
+            ? item["hardness"].get<float>()
+            : 0.0f;
+        info.material = item.value("material", "");
+        info.hasHarvestTools = item.contains("harvestTools");
 
-        // 解析 states 数组（属性定义顺序，用于正确计算 state ID offset）
-        size_t statesPos = blockJson.find("\"states\"");
-        if (statesPos != std::string::npos) {
-            size_t arrStart = blockJson.find('[', statesPos);
-            if (arrStart != std::string::npos) {
-                size_t arrEnd = findMatchingBracket(blockJson, arrStart);
-                if (arrEnd != std::string::npos) {
-                    std::string statesJson = blockJson.substr(arrStart + 1, arrEnd - arrStart - 1);
-                    
-                    // 解析每个 state property
-                    size_t statePos = 0;
-                    while ((statePos = statesJson.find("{", statePos)) != std::string::npos) {
-                        size_t stateEnd = findMatchingBrace(statesJson, statePos);
-                        if (stateEnd == std::string::npos) break;
-                        
-                        std::string stateJson = statesJson.substr(statePos, stateEnd - statePos + 1);
-                        BlockInfo::StateProperty prop;
-                        prop.name = extractString(stateJson, "\"name\"");
-                        prop.type = extractString(stateJson, "\"type\"");
-                        
-                        // 解析 values 数组（如果有）
-                        size_t valuesPos = stateJson.find("\"values\"");
-                        if (valuesPos != std::string::npos) {
-                            size_t valArrStart = stateJson.find('[', valuesPos);
-                            if (valArrStart != std::string::npos) {
-                                size_t valArrEnd = findMatchingBracket(stateJson, valArrStart);
-                                if (valArrEnd != std::string::npos) {
-                                    std::string valuesJson = stateJson.substr(valArrStart + 1, valArrEnd - valArrStart - 1);
-                                    // 提取每个值
-                                    size_t valPos = 0;
-                                    while ((valPos = valuesJson.find("\"", valPos)) != std::string::npos) {
-                                        size_t valEnd = valuesJson.find("\"", valPos + 1);
-                                        if (valEnd == std::string::npos) break;
-                                        prop.values.push_back(valuesJson.substr(valPos + 1, valEnd - valPos - 1));
-                                        valPos = valEnd + 1;
-                                    }
-                                }
-                            }
-                        } else if (prop.type == "bool") {
-                            // 布尔属性默认值顺序：true, false
-                            prop.values = {"true", "false"};
-                        } else if (prop.type == "int") {
-                            // int 属性：从 0 到 num_values-1
-                            int numValues = extractInt(stateJson, "\"num_values\"");
-                            if (numValues > 0) {
-                                for (int i = 0; i < numValues; i++) {
-                                    prop.values.push_back(std::to_string(i));
-                                }
+        // 解析 states 数组
+        if (item.contains("states")) {
+            const auto& states = item["states"];
+            if (states.is_array()) {
+                for (const auto& state : states) {
+                    BlockInfo::StateProperty prop;
+                    prop.name = state.value("name", "");
+                    prop.type = state.value("type", "");
+
+                    // 解析 values 数组
+                    if (state.contains("values") && state["values"].is_array()) {
+                        for (const auto& val : state["values"]) {
+                            if (val.is_string()) {
+                                prop.values.push_back(val.get<std::string>());
                             }
                         }
-                        
-                        if (!prop.name.empty()) {
-                            info.stateProperties.push_back(std::move(prop));
+                    } else if (prop.type == "bool") {
+                        prop.values = {"true", "false"};
+                    } else if (prop.type == "int") {
+                        int numValues = state.value("num_values", 0);
+                        if (numValues > 0) {
+                            for (int i = 0; i < numValues; i++) {
+                                prop.values.push_back(std::to_string(i));
+                            }
                         }
-                        
-                        statePos = stateEnd + 1;
+                    }
+
+                    if (!prop.name.empty()) {
+                        info.stateProperties.push_back(std::move(prop));
                     }
                 }
             }
@@ -148,26 +92,22 @@ bool BlockRegistry::loadFromJson(const std::string& json) {
 
         // 验证数据有效性
         if (info.name.empty() || info.minStateId < 0) {
-            pos = endPos + 1;
             continue;
         }
 
-        // 存储方块信息（先保存索引，避免 vector 重分配导致指针失效）
+        // 存储方块信息
         size_t blockIndex = blocks.size();
         blocks.push_back(info);
 
         // registry ID → 名称（物品栏用）
         idToName[info.id] = info.name;
-        
-        // 构建 blockState ID → BlockInfo 映射（使用索引而非指针）
+
+        // 构建 blockState ID → BlockInfo 映射
         for (int32_t stateId = info.minStateId; stateId <= info.maxStateId; ++stateId) {
             stateToBlock[stateId] = blockIndex;
         }
 
         blockCount++;
-        pos = endPos + 1;
-
-        // 每解析 100 个方块输出一次日志
         if (blockCount % 100 == 0) {
             LOGI("Parsed %d blocks...", blockCount);
         }
@@ -177,7 +117,6 @@ bool BlockRegistry::loadFromJson(const std::string& json) {
     LOGI("Successfully loaded %d blocks with %zu state mappings",
          blockCount, stateToBlock.size());
 
-    // 打印前 10 个方块名用于调试
     for (int i = 0; i < std::min(10, blockCount); i++) {
         LOGI("  Block[%d]: id=%d name='%s'", i, blocks[i].id, blocks[i].name.c_str());
     }
@@ -185,47 +124,42 @@ bool BlockRegistry::loadFromJson(const std::string& json) {
     return true;
 }
 
-bool BlockRegistry::loadItems(const std::string& json) {
-    if (json.empty()) {
+bool BlockRegistry::loadItems(const std::string& jsonStr) {
+    if (jsonStr.empty()) {
         LOGE("items.json content is empty");
         return false;
     }
 
-    LOGI("Loaded items.json (%zu bytes)", json.size());
+    json root;
+    try {
+        root = json::parse(jsonStr);
+    } catch (const json::parse_error& e) {
+        LOGE("JSON parse error in items.json: %s", e.what());
+        return false;
+    }
 
-    // 解析格式：{"minecraft:name": {"id": value}, ...}
-    size_t pos = 0;
+    if (!root.is_object()) {
+        LOGE("items.json root is not an object");
+        return false;
+    }
+
+    LOGI("Loaded items.json (%zu bytes)", jsonStr.size());
+
     int itemCount = 0;
-    size_t keyStart;
 
-    while ((keyStart = json.find("\"minecraft:", pos)) != std::string::npos) {
-        size_t keyEnd = json.find("\"", keyStart + 1);
-        if (keyEnd == std::string::npos) break;
+    for (auto it = root.begin(); it != root.end(); ++it) {
+        const std::string& fullName = it.key();
+        // key 格式: "minecraft:xxx"
+        size_t colonPos = fullName.find(':');
+        if (colonPos == std::string::npos) continue;
+        std::string shortName = fullName.substr(colonPos + 1);
+        if (shortName.empty()) continue;
 
-        std::string fullName = json.substr(keyStart + 1, keyEnd - keyStart - 1);
-        std::string shortName = fullName.substr(10); // 去掉 "minecraft:" 前缀
+        int32_t itemId = it->value("id", -1);
+        if (itemId < 0) continue;
 
-        // 查找 "id": value
-        size_t idPos = json.find("\"id\"", keyEnd);
-        if (idPos == std::string::npos || idPos > keyEnd + 60) break;
-
-        size_t colonPos = json.find(":", idPos);
-        if (colonPos == std::string::npos) break;
-
-        // 跳过空格，读取数字
-        size_t numStart = colonPos + 1;
-        while (numStart < json.size() && (json[numStart] == ' ' || json[numStart] == '\t')) numStart++;
-        if (numStart >= json.size()) break;
-
-        char* endPtr = nullptr;
-        int32_t itemId = (int32_t)strtol(json.c_str() + numStart, &endPtr, 10);
-        if (endPtr == json.c_str() + numStart) break; // 没读到数字
-
-        // items.json 的物品名称覆盖 blocks.json 的同 ID 条目（协议注册 ID 相同）
         idToName[itemId] = shortName;
         itemCount++;
-
-        pos = (size_t)(endPtr - json.c_str());
     }
 
     LOGI("Loaded %d item name mappings from items.json (total idToName: %zu)",
@@ -249,76 +183,7 @@ const BlockInfo* BlockRegistry::getBlockInfo(int32_t blockState) const {
     return nullptr;
 }
 
-// 辅助函数：提取字符串值
-std::string BlockRegistry::extractString(const std::string& json, const std::string& key) const {
-    std::string searchKey = key + ": \"";
-    size_t pos = json.find(searchKey);
-    if (pos == std::string::npos) return "";
-
-    pos += searchKey.length();
-    size_t endPos = json.find("\"", pos);
-    if (endPos == std::string::npos) return "";
-
-    return json.substr(pos, endPos - pos);
-}
-
-// 辅助函数：提取整数值
-int32_t BlockRegistry::extractInt(const std::string& json, const std::string& key) const {
-    std::string searchKey = key + ": ";
-    size_t pos = json.find(searchKey);
-    if (pos == std::string::npos) return -1;
-
-    pos += searchKey.length();
-    
-    // 跳过空格
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) {
-        pos++;
-    }
-
-    // 提取数字
-    std::string numStr;
-    while (pos < json.size() && (isdigit(json[pos]) || json[pos] == '-')) {
-        numStr += json[pos];
-        pos++;
-    }
-
-    if (numStr.empty()) return -1;
-
-    try {
-        return std::stoi(numStr);
-    } catch (...) {
-        return -1;
-    }
-}
-
-// 辅助函数：提取浮点数值
-float BlockRegistry::extractFloat(const std::string& json, const std::string& key) const {
-    std::string searchKey = key + ": ";
-    size_t pos = json.find(searchKey);
-    if (pos == std::string::npos) return 0.0f;
-
-    pos += searchKey.length();
-
-    // 跳过空格
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) {
-        pos++;
-    }
-
-    // 提取数字（包含小数点和负号）
-    std::string numStr;
-    while (pos < json.size() && (isdigit(json[pos]) || json[pos] == '-' || json[pos] == '.')) {
-        numStr += json[pos];
-        pos++;
-    }
-
-    if (numStr.empty()) return 0.0f;
-
-    try {
-        return std::stof(numStr);
-    } catch (...) {
-        return 0.0f;
-    }
-}
+// ===== 以下为其余未修改的方法 =====
 
 void BlockRegistry::precomputeAll() {
     LOGI("Precomputing metadata for %zu block states...", stateToBlock.size());
@@ -350,7 +215,6 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
     meta.requiresCorrectTool = info->hasHarvestTools;
     meta.material = info->material;
 
-    // ---- 方块类型判断 ----
     meta.isAir = (meta.name == "air" || meta.name == "cave_air" || meta.name == "void_air");
     meta.isGrassBlock = (meta.name == "grass_block");
     meta.isLeaves = (meta.name.find("leaves") != std::string::npos);
@@ -365,15 +229,12 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         || meta.name == "cornflower" || meta.name == "lily_of_the_valley"
         || meta.name == "wither_rose" || meta.name == "sunflower"
         || meta.name == "lilac" || meta.name == "rose_bush" || meta.name == "peony"
-	        || meta.name == "wheat" || meta.name == "carrots" || meta.name == "potatoes"
-	        || meta.name == "beetroots" || meta.name == "nether_wart");
+        || meta.name == "wheat" || meta.name == "carrots" || meta.name == "potatoes"
+        || meta.name == "beetroots" || meta.name == "nether_wart");
 
-    // ---- 水 ----
     meta.isWater = (meta.name == "water");
 
-    // ---- 无碰撞方块（火把、按钮、压力板等）----
     {
-        // 后缀匹配辅助 lambda
         auto hasSuffix = [&](const std::string& suffix) {
             if (suffix.size() > meta.name.size()) return false;
             return meta.name.compare(meta.name.size() - suffix.size(), suffix.size(), suffix) == 0;
@@ -396,7 +257,6 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         );
     }
 
-    // ---- 高度 ----
     if (meta.isSnow) {
         int stateCount = info->maxStateId - info->minStateId + 1;
         if (stateCount >= 8) {
@@ -408,13 +268,11 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
             meta.height = 0.5f;
         }
     } else if (meta.isWater) {
-        // 水：根据 level 计算高度（水源 0.875，流动水递减）
         int stateCount = info->maxStateId - info->minStateId + 1;
         if (stateCount >= 8) {
             int level = blockState - info->minStateId;
             if (level <= 0) level = 0;
             if (level >= 7) level = 7;
-            // level 0 = 14/16, level 7 = 4/16（标准 Minecraft 水流高度）
             meta.height = (14 - level * 2) / 16.0f;
         } else {
             meta.height = 0.875f;
@@ -423,14 +281,11 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         meta.height = 1.0f;
     }
 
-    // ---- 完整方块判定（基于模型几何，用于面剔除） ----
     meta.isFullBlock = false;
     if (blockState != 0 && !meta.isAir && !meta.isWater && !meta.isLeaves && !meta.isPlant) {
         auto& atlas = TextureAtlas::getInstance();
         if (atlas.isInitialized()) {
             const auto* model = atlas.getBlockModel(meta.name);
-            // 如果基础模型不存在（如活板门、农作物等使用 blockstate 变体模型名的方块），
-            // 尝试使用 blockstate 变体模型进行完整方块判定
             if ((!model || model->elements.empty()) && meta.minStateId >= 0) {
                 const auto* variant = atlas.getBlockStateVariant(
                     meta.name, blockState, meta.minStateId);
@@ -439,7 +294,6 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
                 }
             }
             if (model && !model->elements.empty()) {
-                // 检查是否有元素完整覆盖 16x16x16 且 6 个面都有 cullface
                 for (const auto& elem : model->elements) {
                     if (elem.from[0] <= 0.001f && elem.from[1] <= 0.001f && elem.from[2] <= 0.001f &&
                         elem.to[0] >= 15.999f && elem.to[1] >= 15.999f && elem.to[2] >= 15.999f) {
@@ -451,7 +305,6 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
                     }
                 }
             } else {
-                // 无模型数据 → 旧立方体回退 → 完整方块
                 meta.isFullBlock = true;
             }
         } else {
@@ -459,7 +312,6 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         }
     }
 
-    // ---- 不透明判定（用于面剔除：透明方块的相邻面不应被剔除）----
     if (meta.name.find("glass") != std::string::npos ||
         meta.name == "ice" ||
         meta.name.find("leaves") != std::string::npos ||
@@ -468,7 +320,6 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         meta.isOpaque = false;
     }
 
-    // ---- 纹理配置（从 TextureAtlas 动态解析） ----
     auto& atlas = TextureAtlas::getInstance();
     if (atlas.isInitialized()) {
         auto tex = atlas.getBlockTexture(meta.name);
@@ -476,7 +327,6 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         meta.texSide = tex.side;
         meta.texBottom = tex.bottom;
     } else {
-        // TextureAtlas 还没初始化，使用默认值
         meta.texTop = meta.texSide = meta.texBottom = 0;
     }
 

@@ -107,9 +107,4 @@ private:
 
     // 计算单个 blockState 的元数据
     BlockMetadata computeMetadata(int32_t blockState) const;
-
-    // 解析 JSON 的辅助函数
-    std::string extractString(const std::string& json, const std::string& key) const;
-    int32_t extractInt(const std::string& json, const std::string& key) const;
-    float extractFloat(const std::string& json, const std::string& key) const;
 };
