@@ -120,7 +120,7 @@ void TitleScreen::render(int mouseX, int mouseY) {
         if (cb) cb();
     }
 
-    ImGui::SetCursorPos(ImVec2(10.0f, h - 40.0f));
+    ImGui::SetCursorPos(ImVec2(30.0f, h - 40.0f));
     std::string verLabel = "Minecraft " + VersionManager::getInstance().getVersionName();
     ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", verLabel.c_str());
 
