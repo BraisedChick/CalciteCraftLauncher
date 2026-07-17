@@ -13,7 +13,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-
+#include <unordered_set>
 #define LOG_TAG "MeshGenerator"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -688,45 +688,55 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                                       BlockRegistry::getInstance().getBlockMetadata(n[TOP]).isSnow);
 
                 if (!blockMeta.isWater) {
-                    // Blockstate 变体查找（获取朝向对应的模型和旋转）
+                    // Blockstate 变体查找
                     const BlockStateVariant* variant = atlas.getBlockStateVariant(
-                        blockMeta.name, blockState, blockMeta.minStateId);
+                            blockMeta.name, blockState, blockMeta.minStateId);
 
                     if (variant && !variant->models.empty()) {
                         bool renderedAny = false;
+                        // 用模型指针去重，而非模型名字符串
+                        std::unordered_set<const ResolvedBlockModel*> renderedModels;
                         for (const auto& modelEntry : variant->models) {
                             const auto* blockModel = getModel(modelEntry.modelName);
                             if (blockModel && !blockModel->elements.empty()) {
-                                    generateFromModel(
-                                    baseVertices, baseIndices,
-                                    overlayVertices, overlayIndices,
-                                    *blockModel,
-                                    posX, posY, posZ,
-                                    n,
-                                    blockMeta.isGrassBlock, isSnowCovered2,
-                                    grassSideLayer, grassOverlayLayer,
-                                    tintR, tintG, tintB,
-                                    biomeId,
-                                    modelEntry.rotX, modelEntry.rotY);
+                                // 如果这个模型对象已经渲染过，跳过
+                                if (renderedModels.find(blockModel) != renderedModels.end()) {
+                                    continue;
+                                }
+                                renderedModels.insert(blockModel);
+
+                                generateFromModel(
+                                        baseVertices, baseIndices,
+                                        overlayVertices, overlayIndices,
+                                        *blockModel,
+                                        posX, posY, posZ,
+                                        n,
+                                        blockMeta.isGrassBlock, isSnowCovered2,
+                                        grassSideLayer, grassOverlayLayer,
+                                        tintR, tintG, tintB,
+                                        biomeId,
+                                        modelEntry.rotX, modelEntry.rotY);
                                 countModel++;
                                 renderedAny = true;
                             }
                         }
                         if (renderedAny) continue;
                     }
+
+                    // 如果没有变体或变体没有有效模型，回退到默认模型
                     const auto* blockModel = getModel(blockMeta.name);
                     if (blockModel && !blockModel->elements.empty()) {
                         generateFromModel(
-                            baseVertices, baseIndices,
-                            overlayVertices, overlayIndices,
-                            *blockModel,
-                            posX, posY, posZ,
-                            n,
-                            blockMeta.isGrassBlock, isSnowCovered2,
-                            grassSideLayer, grassOverlayLayer,
-                            tintR, tintG, tintB,
-                            biomeId,
-                            0, 0);
+                                baseVertices, baseIndices,
+                                overlayVertices, overlayIndices,
+                                *blockModel,
+                                posX, posY, posZ,
+                                n,
+                                blockMeta.isGrassBlock, isSnowCovered2,
+                                grassSideLayer, grassOverlayLayer,
+                                tintR, tintG, tintB,
+                                biomeId,
+                                0, 0);
                         countModel++;
                         continue;
                     }
