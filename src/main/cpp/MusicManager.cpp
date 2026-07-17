@@ -191,48 +191,18 @@ void MusicManager::setVolume(float volume) {
 
 std::string MusicManager::extractOggToTemp(const std::string& resourcePath) {
     // resourcePath 如 "music/menu/menu1"（无 .ogg 扩展名）
-    std::string filename = resourcePath.substr(resourcePath.rfind('/') + 1);
-    std::string tempPath = tempDir + "/mc_music_" + filename + ".ogg";
-
-    // 检查临时文件是否已存在
-    FILE* testFile = fopen(tempPath.c_str(), "rb");
-    if (testFile) {
-        fclose(testFile);
-        return tempPath;
-    }
-
-    // 从 Java 层下载的 sounds 目录读取
-    // Java 下载到 /storage/emulated/0/Android/data/com.calcite/files/sounds/
-    // 文件路径格式：music/menu/menu1.ogg
+    // 直接使用下载目录的 OGG 文件，无需复制到临时目录
     std::string soundsDir = "/storage/emulated/0/Android/data/com.calcite/files/sounds";
-    std::string srcPath = soundsDir + "/" + resourcePath + ".ogg";
+    std::string path = soundsDir + "/" + resourcePath + ".ogg";
 
-    FILE* srcFile = fopen(srcPath.c_str(), "rb");
-    if (!srcFile) {
-        LOGE("extractOggToTemp: sound not found at %s (API download may not have completed)", srcPath.c_str());
-        return "";
+    FILE* test = fopen(path.c_str(), "rb");
+    if (test) {
+        fclose(test);
+        return path;
     }
 
-    LOGI("Copying sound from local: %s", srcPath.c_str());
-
-    // 复制到临时文件（minivorbis 需要文件路径）
-    FILE* outFile = fopen(tempPath.c_str(), "wb");
-    if (!outFile) {
-        LOGE("extractOggToTemp: fopen failed for %s", tempPath.c_str());
-        fclose(srcFile);
-        return "";
-    }
-
-    char buf[8192];
-    size_t n;
-    while ((n = fread(buf, 1, sizeof(buf), srcFile)) > 0) {
-        fwrite(buf, 1, n, outFile);
-    }
-    fclose(srcFile);
-    fclose(outFile);
-
-    LOGI("Music temp file ready: %s", tempPath.c_str());
-    return tempPath;
+    LOGE("extractOggToTemp: sound not found at %s (API download may not have completed)", path.c_str());
+    return "";
 }
 
 void MusicManager::startPlaying(const std::string& resourcePath) {

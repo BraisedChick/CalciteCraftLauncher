@@ -89,7 +89,4 @@ private:
     float musicVolume = 1.0f;
 
     mutable std::mt19937 rng;
-
-    // 临时文件路径缓存（避免重复提取）
-    std::string tempDir;
 };
