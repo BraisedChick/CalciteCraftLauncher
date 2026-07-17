@@ -1,5 +1,4 @@
 #include "MusicManager.h"
-#include "TextureLoader.h"
 #include <android/log.h>
 #include <sys/stat.h>
 #include <cstring>
@@ -12,8 +11,6 @@
 
 // minivorbis OGG 解码 API（实现在 minivorbis.c 中）
 #include "3rdparty/minivorbis/minivorbis.h"
-
-#include "3rdparty/miniz/miniz.h"
 
 #define LOG_TAG "MusicManager"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -185,9 +182,9 @@ void MusicManager::setVolume(float volume) {
 }
 
 std::string MusicManager::extractOggToTemp(const std::string& resourcePath) {
-    // resourcePath 如 "music/menu/menu1"
-    // ZIP 中路径可能是: "sounds/music/menu/menu1.ogg" 或 "music/menu/menu1.ogg"
-    std::string tempPath = tempDir + "/mc_music_" + resourcePath.substr(resourcePath.rfind('/') + 1) + ".ogg";
+    // resourcePath 如 "music/menu/menu1"（无 .ogg 扩展名）
+    std::string filename = resourcePath.substr(resourcePath.rfind('/') + 1);
+    std::string tempPath = tempDir + "/mc_music_" + filename + ".ogg";
 
     // 检查临时文件是否已存在
     FILE* testFile = fopen(tempPath.c_str(), "rb");
@@ -196,68 +193,37 @@ std::string MusicManager::extractOggToTemp(const std::string& resourcePath) {
         return tempPath;
     }
 
-    // 从 ZIP 读取 OGG 数据
-    mz_zip_archive* zip = static_cast<mz_zip_archive*>(TextureLoader::getZipHandle());
-    if (!zip) {
-        LOGE("extractOggToTemp: ZIP handle is NULL");
+    // 从 Java 层下载的 sounds 目录读取
+    // Java 下载 GET /sounds/download 并解压到 /data/data/com.calcite/files/sounds/
+    // 文件路径格式：music/menu/menu1.ogg
+    std::string soundsDir = "/data/data/com.calcite/files/sounds";
+    std::string srcPath = soundsDir + "/" + resourcePath + ".ogg";
+
+    FILE* srcFile = fopen(srcPath.c_str(), "rb");
+    if (!srcFile) {
+        LOGE("extractOggToTemp: sound not found at %s (API download may not have completed)", srcPath.c_str());
         return "";
     }
 
-    // 尝试多种 ZIP 路径
-    int fileIndex = -1;
-    std::string zipPath;
-    const char* prefixes[] = {"sounds/", "", nullptr};
-    for (int i = 0; prefixes[i]; i++) {
-        zipPath = std::string(prefixes[i]) + resourcePath + ".ogg";
-        fileIndex = mz_zip_reader_locate_file(zip, zipPath.c_str(), nullptr, 0);
-        if (fileIndex >= 0) {
-            LOGI("Found music in ZIP at: %s (index=%d)", zipPath.c_str(), fileIndex);
-            break;
-        }
-    }
+    LOGI("Copying sound from local: %s", srcPath.c_str());
 
-    if (fileIndex < 0) {
-        LOGE("extractOggToTemp: file not found in ZIP. Tried: sounds/%s.ogg, %s.ogg",
-             resourcePath.c_str(), resourcePath.c_str());
-        // 列出 ZIP 中包含 music 的文件帮助调试
-        int numFiles = mz_zip_reader_get_num_files(zip);
-        for (int i = 0; i < numFiles; i++) {
-            char name[256];
-            mz_zip_reader_get_filename(zip, i, name, sizeof(name));
-            if (strstr(name, "menu") || strstr(name, "music")) {
-                LOGE("  ZIP contains: %s", name);
-            }
-        }
-        return "";
-    }
-
-    size_t uncompSize = 0;
-    unsigned char* data = static_cast<unsigned char*>(
-        mz_zip_reader_extract_to_heap(zip, fileIndex, &uncompSize, 0));
-    if (!data || uncompSize == 0) {
-        LOGE("extractOggToTemp: extract failed for %s (data=%p, size=%zu)", zipPath.c_str(), data, uncompSize);
-        return "";
-    }
-
-    LOGI("Extracted OGG from ZIP: %s (%zu bytes)", zipPath.c_str(), uncompSize);
-
-    // 写入临时文件
+    // 复制到临时文件（minivorbis 需要文件路径）
     FILE* outFile = fopen(tempPath.c_str(), "wb");
     if (!outFile) {
         LOGE("extractOggToTemp: fopen failed for %s", tempPath.c_str());
-        mz_free(data);
+        fclose(srcFile);
         return "";
     }
-    size_t written = fwrite(data, 1, uncompSize, outFile);
+
+    char buf[8192];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), srcFile)) > 0) {
+        fwrite(buf, 1, n, outFile);
+    }
+    fclose(srcFile);
     fclose(outFile);
-    mz_free(data);
 
-    if (written != uncompSize) {
-        LOGE("extractOggToTemp: write incomplete %zu/%zu", written, uncompSize);
-        return "";
-    }
-
-    LOGI("Music temp file written: %s (%zu bytes)", tempPath.c_str(), written);
+    LOGI("Music temp file ready: %s", tempPath.c_str());
     return tempPath;
 }
 
@@ -385,7 +351,7 @@ void MusicManager::stopPlaying() {
 void MusicManager::loadClickSound() {
     if (clickSoundLoaded) return;
 
-    // 从 ZIP 提取 click_stereo.ogg 并解码
+    // 从本地 sounds 目录读取 click_stereo.ogg 并解码
     std::string filePath = extractOggToTemp("random/click_stereo");
     if (filePath.empty()) {
         // 回退到单声道 click.ogg

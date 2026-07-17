@@ -41,7 +41,7 @@ private:
     MusicManager() = default;
     ~MusicManager() = default;
 
-    // 从 ZIP 资源包中提取 OGG 到临时文件，返回临时文件路径
+    // 从本地 sounds 目录读取 OGG 到临时文件（由 Java 层从 API 下载），返回临时文件路径
     std::string extractOggToTemp(const std::string& resourcePath);
 
     // 开始播放一首音乐

@@ -15,6 +15,10 @@ import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import android.view.inputmethod.InputMethodManager;
 
 public class MainActivity extends Activity {
@@ -394,6 +398,49 @@ public class MainActivity extends Activity {
             cleanupRenderer();
         } catch (Exception e) {
             android.util.Log.e("MainActivity", "Exception in cleanupRenderer", e);
+        }
+    }
+
+    /**
+     * C++ 层调用：从指定 URL 下载文件到本地路径（静态工具方法）
+     * @param urlString 下载 URL
+     * @param destPath 目标文件路径
+     * @return 下载成功返回 true
+     */
+    public static boolean downloadFile(String urlString, String destPath) {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(urlString).openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(30000);
+            conn.setInstanceFollowRedirects(true);
+
+            int code = conn.getResponseCode();
+            if (code != 200) {
+                android.util.Log.e("MainActivity", "downloadFile failed: HTTP " + code + " for " + urlString);
+                return false;
+            }
+
+            try (InputStream is = conn.getInputStream();
+                 FileOutputStream fos = new FileOutputStream(destPath)) {
+                byte[] buffer = new byte[8192];
+                int bytesRead;
+                long totalBytes = 0;
+                while ((bytesRead = is.read(buffer)) != -1) {
+                    fos.write(buffer, 0, bytesRead);
+                    totalBytes += bytesRead;
+                }
+                android.util.Log.i("MainActivity", "Downloaded " + totalBytes + " bytes to " + destPath);
+                return true;
+            }
+        } catch (Exception e) {
+            android.util.Log.e("MainActivity", "downloadFile error: " + e.getMessage(), e);
+            return false;
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
         }
     }
 }

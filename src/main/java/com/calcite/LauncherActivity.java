@@ -23,6 +23,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import androidx.core.content.FileProvider;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.RadioButton;
@@ -46,6 +47,8 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -999,6 +1002,135 @@ public class LauncherActivity extends Activity {
             return;
         }
 
+        // 先校验音效文件完整性，通过后再走启动流程
+        checkSoundsAndLaunch(selected, versionName, protocolVersion);
+    }
+
+    /**
+     * 校验音效文件是否已下载完整，不完整则先下载再启动
+     */
+    private void checkSoundsAndLaunch(Account selected, String versionName, int protocolVersion) {
+        String soundsDir = getFilesDir().getAbsolutePath() + "/sounds";
+
+        // 快速检查关键文件是否存在
+        if (new File(soundsDir + "/music/menu/menu1.ogg").exists()) {
+            doLaunch(selected, versionName, protocolVersion);
+            return;
+        }
+
+        // 缺失音效：让用户选择下载或直接进入
+        new AlertDialog.Builder(this)
+            .setTitle("音效资源未下载")
+            .setMessage("未检测到音效文件，是否下载？\n（约需下载 100+ 个文件，建议连接 Wi-Fi）")
+            .setPositiveButton("下载音效", (d, w) ->
+                downloadSoundsBlocking(selected, versionName, protocolVersion, soundsDir))
+            .setNegativeButton("直接进入", (d, w) ->
+                doLaunch(selected, versionName, protocolVersion))
+            .setCancelable(false)
+            .show();
+    }
+
+    /**
+     * 阻塞式下载音效：弹进度条，逐一下载缺失文件，全部完成后才启动游戏
+     */
+    private void downloadSoundsBlocking(Account selected, String versionName,
+                                         int protocolVersion, String soundsDir) {
+        // 构建进度条对话框
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(60, 30, 60, 40);
+
+        TextView tvMsg = new TextView(this);
+        tvMsg.setText("正在下载音效资源，请稍候...");
+        tvMsg.setTextSize(15);
+        tvMsg.setTextColor(0xFF333333);
+        layout.addView(tvMsg);
+
+        ProgressBar progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progressBar.setMax(100);
+        progressBar.setProgress(0);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 40);
+        lp.setMargins(0, 24, 0, 0);
+        progressBar.setLayoutParams(lp);
+        layout.addView(progressBar);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("下载音效资源")
+            .setView(layout)
+            .setCancelable(false)
+            .show();
+
+        new Thread(() -> {
+            try {
+                new File(soundsDir).mkdirs();
+
+                // 1. 获取音效文件列表
+                HttpURLConnection conn = (HttpURLConnection)
+                    new URL("https://api.calcite.eu.cc:25000/sounds").openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+
+                if (conn.getResponseCode() != 200) {
+                    runOnUiThread(() -> {
+                        dialog.dismiss();
+                        Toast.makeText(this, "获取音效列表失败", Toast.LENGTH_LONG).show();
+                    });
+                    return;
+                }
+
+                String json;
+                try (InputStream is = conn.getInputStream()) {
+                    java.util.Scanner s = new java.util.Scanner(is, "UTF-8").useDelimiter("\\A");
+                    json = s.hasNext() ? s.next() : "[]";
+                }
+                conn.disconnect();
+
+                // 2. 逐个下载缺失文件，更新进度条
+                JSONArray files = new JSONArray(json);
+                int total = files.length();
+                int completed = 0;
+
+                for (int i = 0; i < total; i++) {
+                    String path = files.getString(i);
+                    File localFile = new File(soundsDir + "/" + path);
+
+                    if (localFile.exists()) {
+                        completed++;
+                        continue;
+                    }
+
+                    File parent = localFile.getParentFile();
+                    if (parent != null && !parent.exists()) parent.mkdirs();
+
+                    String fileUrl = "https://api.calcite.eu.cc:25000/sounds/file?path=" + path;
+                    boolean ok = MainActivity.downloadFile(fileUrl, localFile.getAbsolutePath());
+
+                    if (ok) completed++;
+
+                    final int percent = completed * 100 / total;
+                    runOnUiThread(() -> progressBar.setProgress(percent));
+                }
+
+                // 3. 全部下载完成，启动游戏
+                runOnUiThread(() -> {
+                    dialog.dismiss();
+                    doLaunch(selected, versionName, protocolVersion);
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    dialog.dismiss();
+                    Toast.makeText(this, "下载音效资源失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            }
+        }).start();
+    }
+
+    /**
+     * 音效校验通过后的实际启动流程（保留正版令牌刷新逻辑）
+     */
+    private void doLaunch(Account selected, String versionName, int protocolVersion) {
         // 正版账号：检查令牌是否需要刷新
         if (selected.isPremium()) {
             refreshPremiumAccount(selected, () -> startGameActivity(selected, versionName, protocolVersion),
@@ -1008,6 +1140,8 @@ public class LauncherActivity extends Activity {
 
         startGameActivity(selected, versionName, protocolVersion);
     }
+
+
 
     private void startGameActivity(Account selected, String versionName, int protocolVersion) {
         Toast.makeText(this,
