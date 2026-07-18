@@ -155,6 +155,38 @@ bool EntityRenderer::init() {
     buildBox(quadrupedVerts, -5, 0, 5, 4, 6, 4, 0, 16, QW, QH);   // right hind
     buildBox(quadrupedVerts, 1, 0, 5, 4, 6, 4, 0, 16, QW, QH);    // left hind
 
+    // ===== 构建牛模型（继承 QuadrupedModel，参数不同）=====
+    cowVerts.clear();
+    // Head: 8x8x6，原版 pivot(0, 4, -8) + addBox(-4, -4, -6, 8, 8, 6)
+    buildBox(cowVerts, -4, 16, -14, 8, 8, 6, 0, 0, QW, QH);
+    // Body: 原版 addBox(-6, -10, -7, 12, 18, 10) + rotation(PI/2,0,0) + offset(0,5,2)
+    // 旋转后几何: 12W × 10H × 18D, Y=12..22
+    {
+        float bx = -6.0f, by = 12.0f, bz = -8.0f;
+        float bw = 12.0f, bh = 10.0f, bd = 18.0f;
+        float uw = 12.0f, uh = 18.0f, ud = 10.0f;
+        float bu = 18.0f, bv = 4.0f;
+        glm::vec3 bp0(bx, by + bh, bz);
+        glm::vec3 bp1(bx + bw, by + bh, bz);
+        glm::vec3 bp2(bx + bw, by, bz);
+        glm::vec3 bp3(bx, by, bz);
+        glm::vec3 bp4(bx, by + bh, bz + bd);
+        glm::vec3 bp5(bx + bw, by + bh, bz + bd);
+        glm::vec3 bp6(bx + bw, by, bz + bd);
+        glm::vec3 bp7(bx, by, bz + bd);
+        addFace(cowVerts, bp0, bp1, bp2, bp3, bu + ud, bv, uw, ud, QW, QH);
+        addFace(cowVerts, bp5, bp4, bp7, bp6, bu + ud + uw, bv, uw, ud, QW, QH);
+        addFace(cowVerts, bp4, bp5, bp1, bp0, bu + ud + uw + ud, bv + ud, uw, uh, QW, QH);
+        addFace(cowVerts, bp3, bp2, bp6, bp7, bu + ud, bv + ud, uw, uh, QW, QH);
+        addFace(cowVerts, bp4, bp0, bp3, bp7, bu, bv + ud, ud, uh, QW, QH);
+        addFace(cowVerts, bp1, bp5, bp6, bp2, bu + ud + uw, bv + ud, ud, uh, QW, QH);
+    }
+    // 4 Legs: 4x12x4，原版 pivot Y=12, leg height=12
+    buildBox(cowVerts, -6, 0, -8, 4, 12, 4, 0, 16, QW, QH);  // right front
+    buildBox(cowVerts, 2, 0, -8, 4, 12, 4, 0, 16, QW, QH);   // left front
+    buildBox(cowVerts, -6, 0, 5, 4, 12, 4, 0, 16, QW, QH);   // right hind
+    buildBox(cowVerts, 2, 0, 5, 4, 12, 4, 0, 16, QW, QH);    // left hind
+
     // ===== 构建蜘蛛模型 =====
     spiderVerts.clear();
     // Body: 14x8x8
@@ -456,13 +488,15 @@ void EntityRenderer::renderAll(const std::vector<Entity>& entities,
                 renderHumanoid(iyaw, iheadYaw, entity.pitch);
                 break;
             case EntityType::PIG:
-            case EntityType::COW:
-            case EntityType::SHEEP:
             case EntityType::CHICKEN:
             case EntityType::HORSE:
             case EntityType::WOLF:
             case EntityType::CAT:
-                renderQuadruped(iyaw, iheadYaw, entity.pitch);
+                renderQuadruped(quadrupedVerts, iyaw, iheadYaw, entity.pitch);
+                break;
+            case EntityType::COW:
+            case EntityType::SHEEP:
+                renderQuadruped(cowVerts, iyaw, iheadYaw, entity.pitch);
                 break;
             case EntityType::SPIDER:
                 renderSpider(iyaw, iheadYaw);
@@ -507,10 +541,10 @@ void EntityRenderer::renderHumanoid(float bodyYaw, float headYaw, float headPitc
     glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(humanoidVerts.size() / 5));
 }
 
-void EntityRenderer::renderQuadruped(float bodyYaw, float headYaw, float headPitch) {
+void EntityRenderer::renderQuadruped(const std::vector<float>& verts, float bodyYaw, float headYaw, float headPitch) {
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, quadrupedVerts.size() * sizeof(float), quadrupedVerts.data());
-    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(quadrupedVerts.size() / 5));
+    glBufferSubData(GL_ARRAY_BUFFER, 0, verts.size() * sizeof(float), verts.data());
+    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(verts.size() / 5));
 }
 
 void EntityRenderer::renderSpider(float bodyYaw, float headYaw) {

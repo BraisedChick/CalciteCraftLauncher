@@ -43,7 +43,7 @@ private:
     void renderHumanoid(float bodyYaw, float headYaw, float headPitch);
 
     // 渲染四足动物（猪、牛、羊等）
-    void renderQuadruped(float bodyYaw, float headYaw, float headPitch);
+    void renderQuadruped(const std::vector<float>& verts, float bodyYaw, float headYaw, float headPitch);
 
     // 渲染蜘蛛（八足扁体）
     void renderSpider(float bodyYaw, float headYaw);
@@ -84,6 +84,7 @@ private:
     // 盒子顶点数据缓存（预构建）
     std::vector<float> humanoidVerts;
     std::vector<float> quadrupedVerts;
+    std::vector<float> cowVerts;
     std::vector<float> spiderVerts;
     std::vector<float> creeperVerts;
     std::vector<float> slimeVerts;
