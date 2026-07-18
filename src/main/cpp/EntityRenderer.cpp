@@ -116,32 +116,37 @@ bool EntityRenderer::init() {
     buildBox(quadrupedVerts, -4, 8, -14, 8, 8, 8, 0, 0, QW, QH);
     // Body: 原版 QuadrupedModel 有 PI/2 的 X 旋转，手动构建旋转后的盒子 + UV 修正
     // 原版 addBox(-5, -10, -7, 10, 16, 8) + rotation(PI/2,0,0) + offset(0,11,2)
-    // 旋转后有效尺寸: 10W × 8H × 16D，中心在 (0, 14, 0)
-    // UV 面重映射: Front←原Top, Back←原Bottom, Top←原Back, Bottom←原Front
+    // 旋转后有效几何尺寸: 10W × 8H × 16D, 几何中心 (0, 10, 0)
+    // 但 UV 布局基于原始盒子 (w=10, h=16, d=8) 排列
     {
-        float bx = -5.0f, by = 6.0f, bz = -8.0f, bw = 10.0f, bh = 8.0f, bd = 16.0f;
+        // 几何参数（旋转后的实际盒子）
+        float bx = -5.0f, by = 6.0f, bz = -8.0f;
+        float bw = 10.0f, bh = 8.0f, bd = 16.0f;
+        // UV 参数（原始盒子的尺寸，纹理按此布局）
+        float uw = 10.0f, uh = 16.0f, ud = 8.0f;
         float bu = 28.0f, bv = 8.0f;
-        // 8 个顶点
-        glm::vec3 bp0(bx, by + bh, bz);         // 前上左
-        glm::vec3 bp1(bx + bw, by + bh, bz);    // 前上右
-        glm::vec3 bp2(bx + bw, by, bz);          // 前下右
-        glm::vec3 bp3(bx, by, bz);                // 前下左
-        glm::vec3 bp4(bx, by + bh, bz + bd);     // 后上左
-        glm::vec3 bp5(bx + bw, by + bh, bz + bd);// 后上右
-        glm::vec3 bp6(bx + bw, by, bz + bd);     // 后下右
-        glm::vec3 bp7(bx, by, bz + bd);           // 后下左
-        // Front = 原 Top:   (bu+bd, bv)              size (bw, bd)
-        addFace(quadrupedVerts, bp0, bp1, bp2, bp3, bu + bd, bv, bw, bd, QW, QH);
-        // Back  = 原 Bottom: (bu+bd+bw, bv)          size (bw, bd)
-        addFace(quadrupedVerts, bp5, bp4, bp7, bp6, bu + bd + bw, bv, bw, bd, QW, QH);
-        // Top   = 原 Back:   (bu+bd+bw+bd, bv+bd)    size (bw, bh)
-        addFace(quadrupedVerts, bp4, bp5, bp1, bp0, bu + bd + bw + bd, bv + bd, bw, bh, QW, QH);
-        // Bottom= 原 Front:  (bu+bd, bv+bd)          size (bw, bh)
-        addFace(quadrupedVerts, bp3, bp2, bp6, bp7, bu + bd, bv + bd, bw, bh, QW, QH);
-        // Left  = 原 Left:   (bu, bv+bd)             size (bd, bh)
-        addFace(quadrupedVerts, bp4, bp0, bp3, bp7, bu, bv + bd, bd, bh, QW, QH);
-        // Right = 原 Right:  (bu+bd+bw, bv+bd)       size (bd, bh)
-        addFace(quadrupedVerts, bp1, bp5, bp6, bp2, bu + bd + bw, bv + bd, bd, bh, QW, QH);
+        // 8 个顶点 (几何用旋转后的尺寸)
+        glm::vec3 bp0(bx, by + bh, bz);
+        glm::vec3 bp1(bx + bw, by + bh, bz);
+        glm::vec3 bp2(bx + bw, by, bz);
+        glm::vec3 bp3(bx, by, bz);
+        glm::vec3 bp4(bx, by + bh, bz + bd);
+        glm::vec3 bp5(bx + bw, by + bh, bz + bd);
+        glm::vec3 bp6(bx + bw, by, bz + bd);
+        glm::vec3 bp7(bx, by, bz + bd);
+        // UV 面重映射 + 用原始盒子尺寸计算 UV 位置
+        // Front = 原 Top:   (bu+ud, bv)             size (uw, ud)
+        addFace(quadrupedVerts, bp0, bp1, bp2, bp3, bu + ud, bv, uw, ud, QW, QH);
+        // Back  = 原 Bottom: (bu+ud+uw, bv)         size (uw, ud)
+        addFace(quadrupedVerts, bp5, bp4, bp7, bp6, bu + ud + uw, bv, uw, ud, QW, QH);
+        // Top   = 原 Back:   (bu+ud+uw+ud, bv+ud)   size (uw, uh)
+        addFace(quadrupedVerts, bp4, bp5, bp1, bp0, bu + ud + uw + ud, bv + ud, uw, uh, QW, QH);
+        // Bottom= 原 Front:  (bu+ud, bv+ud)         size (uw, uh)
+        addFace(quadrupedVerts, bp3, bp2, bp6, bp7, bu + ud, bv + ud, uw, uh, QW, QH);
+        // Left  = 原 Left:   (bu, bv+ud)            size (ud, uh)
+        addFace(quadrupedVerts, bp4, bp0, bp3, bp7, bu, bv + ud, ud, uh, QW, QH);
+        // Right = 原 Right:  (bu+ud+uw, bv+ud)      size (ud, uh)
+        addFace(quadrupedVerts, bp1, bp5, bp6, bp2, bu + ud + uw, bv + ud, ud, uh, QW, QH);
     }
     // 4 Legs: 4x6x4（前腿在 Z- 方向，后腿在 Z+ 方向）
     // 原版 pivot Y=18, Y' = -(18-24) = 6, addBox Y 0..6 → Y 0..6
