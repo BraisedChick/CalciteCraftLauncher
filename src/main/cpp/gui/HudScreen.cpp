@@ -11,6 +11,7 @@
 #include "BlockRegistry.h"
 #include "PlayerInventory.h"
 #include "EntityRenderer.h"
+#include "VersionManager.h"
 
 #include <chrono>
 #include <cmath>
@@ -366,7 +367,7 @@ void HudScreen::render(int mouseX, int mouseY) {
             ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoInputs |
             ImGuiWindowFlags_NoBackground);
 
-        ImGui::TextColored(ImVec4(1, 1, 0, 1), "Minecraft 1.18.2");
+        ImGui::TextColored(ImVec4(1, 1, 0, 1), "Minecraft %s", VersionManager::getInstance().getVersionName().c_str());
         ImGui::Text("FPS: %.0f", displayFps);
         ImGui::Text("E: %d/%d", EntityRenderer::getInstance().getRenderedCount(),
                      EntityRenderer::getInstance().getTotalCount());
