@@ -109,18 +109,46 @@ bool EntityRenderer::init() {
     // Left Leg: 4x12x4, offset x=0, y=0
     buildBox(humanoidVerts, 0, 0, -2, 4, 12, 4, 16, 48, TW, TH);
 
-    // ===== 构建四足动物模型（猪/牛/羊 - 简化版 64x32 纹理）=====
+    // ===== 构建四足动物模型（猪/牛/羊 - 64x32 纹理）=====
     quadrupedVerts.clear();
     const float QW = 64.0f, QH = 32.0f;
-    // Head: 8x8x8, front of body
+    // Head: 8x8x8，原版 pivot(0, 12, -6) + addBox(-4, -4, -8, 8, 8, 8)
     buildBox(quadrupedVerts, -4, 8, -14, 8, 8, 8, 0, 0, QW, QH);
-    // Body: 12x8x8
-    buildBox(quadrupedVerts, -6, 4, -4, 12, 8, 8, 28, 0, QW, QH);
-    // 4 Legs: 4x6x4
-    buildBox(quadrupedVerts, -6, 0, -2, 4, 6, 4, 0, 16, QW, QH);
-    buildBox(quadrupedVerts, 2, 0, -2, 4, 6, 4, 0, 16, QW, QH);
-    buildBox(quadrupedVerts, -6, 0, 2, 4, 6, 4, 0, 16, QW, QH);
-    buildBox(quadrupedVerts, 2, 0, 2, 4, 6, 4, 0, 16, QW, QH);
+    // Body: 原版 QuadrupedModel 有 PI/2 的 X 旋转，手动构建旋转后的盒子 + UV 修正
+    // 原版 addBox(-5, -10, -7, 10, 16, 8) + rotation(PI/2,0,0) + offset(0,11,2)
+    // 旋转后有效尺寸: 10W × 8H × 16D，中心在 (0, 14, 0)
+    // UV 面重映射: Front←原Top, Back←原Bottom, Top←原Back, Bottom←原Front
+    {
+        float bx = -5.0f, by = 6.0f, bz = -8.0f, bw = 10.0f, bh = 8.0f, bd = 16.0f;
+        float bu = 28.0f, bv = 8.0f;
+        // 8 个顶点
+        glm::vec3 bp0(bx, by + bh, bz);         // 前上左
+        glm::vec3 bp1(bx + bw, by + bh, bz);    // 前上右
+        glm::vec3 bp2(bx + bw, by, bz);          // 前下右
+        glm::vec3 bp3(bx, by, bz);                // 前下左
+        glm::vec3 bp4(bx, by + bh, bz + bd);     // 后上左
+        glm::vec3 bp5(bx + bw, by + bh, bz + bd);// 后上右
+        glm::vec3 bp6(bx + bw, by, bz + bd);     // 后下右
+        glm::vec3 bp7(bx, by, bz + bd);           // 后下左
+        // Front = 原 Top:   (bu+bd, bv)              size (bw, bd)
+        addFace(quadrupedVerts, bp0, bp1, bp2, bp3, bu + bd, bv, bw, bd, QW, QH);
+        // Back  = 原 Bottom: (bu+bd+bw, bv)          size (bw, bd)
+        addFace(quadrupedVerts, bp5, bp4, bp7, bp6, bu + bd + bw, bv, bw, bd, QW, QH);
+        // Top   = 原 Back:   (bu+bd+bw+bd, bv+bd)    size (bw, bh)
+        addFace(quadrupedVerts, bp4, bp5, bp1, bp0, bu + bd + bw + bd, bv + bd, bw, bh, QW, QH);
+        // Bottom= 原 Front:  (bu+bd, bv+bd)          size (bw, bh)
+        addFace(quadrupedVerts, bp3, bp2, bp6, bp7, bu + bd, bv + bd, bw, bh, QW, QH);
+        // Left  = 原 Left:   (bu, bv+bd)             size (bd, bh)
+        addFace(quadrupedVerts, bp4, bp0, bp3, bp7, bu, bv + bd, bd, bh, QW, QH);
+        // Right = 原 Right:  (bu+bd+bw, bv+bd)       size (bd, bh)
+        addFace(quadrupedVerts, bp1, bp5, bp6, bp2, bu + bd + bw, bv + bd, bd, bh, QW, QH);
+    }
+    // 4 Legs: 4x6x4（前腿在 Z- 方向，后腿在 Z+ 方向）
+    // 原版 pivot Y=18, Y' = -(18-24) = 6, addBox Y 0..6 → Y 0..6
+    buildBox(quadrupedVerts, -5, 0, -7, 4, 6, 4, 0, 16, QW, QH);  // right front
+    buildBox(quadrupedVerts, 1, 0, -7, 4, 6, 4, 0, 16, QW, QH);   // left front
+    buildBox(quadrupedVerts, -5, 0, 5, 4, 6, 4, 0, 16, QW, QH);   // right hind
+    buildBox(quadrupedVerts, 1, 0, 5, 4, 6, 4, 0, 16, QW, QH);    // left hind
 
     // ===== 构建蜘蛛模型 =====
     spiderVerts.clear();
