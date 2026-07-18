@@ -62,6 +62,9 @@ public:
     void sendBlockBreakFinish(int blockX, int blockY, int blockZ, int face);
     void sendBlockBreakAbort(int blockX, int blockY, int blockZ, int face);
 
+    // 发送攻击实体包（ATTACK via ServerboundInteractPacket）
+    void sendEntityAttack(int entityId);
+
     // 发送重生请求
     void sendRespawn();
 
@@ -95,6 +98,9 @@ public:
     // 死亡消息（来自服务端 CombatKill 包）
     std::string getDeathMessage() const { return deathMessage; }
     void clearDeathMessage() { deathMessage.clear(); }
+
+    // 本地玩家实体 ID
+    int getPlayerId() const { return playerId; }
 
     // 世界时间（DayTime 0-24000，用于昼夜循环）
     long long getWorldDayTime() const;
@@ -190,6 +196,9 @@ private:
 
     // 死亡消息（服务端 CombatKill 包提供）
     std::string deathMessage;
+
+    // 本地玩家实体 ID（LoginPacket 中获取，用于自身攻击跳过等）
+    int playerId = -1;
 
     // 语言翻译表（从 zh_cn.json 加载）
     std::map<std::string, std::string> translations;

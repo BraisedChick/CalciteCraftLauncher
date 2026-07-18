@@ -35,6 +35,7 @@
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundSetCarriedItemPacket.hpp"
 #include "protocolCraft/Packets/Game/Serverbound/ServerboundUseItemOnPacket.hpp"
 #include "protocolCraft/Packets/Game/Serverbound/ServerboundPlayerActionPacket.hpp"
+#include "protocolCraft/Packets/Game/Serverbound/ServerboundInteractPacket.hpp"
 #include "protocolCraft/Packets/Game/Serverbound/ServerboundClientCommandPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundLoginPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundBlockUpdatePacket.hpp"
@@ -630,6 +631,25 @@ void ClientEngine::sendBlockBreakAbort(int blockX, int blockY, int blockZ, int f
     net->sendRawPacket(std::vector<uint8_t>(writeAbort.begin(), writeAbort.end()));
 }
 
+void ClientEngine::sendEntityAttack(int entityId) {
+    std::lock_guard<std::mutex> lock(netMutex);
+    if (!net || !net->isConnected()) return;
+
+    ProtocolCraft::ServerboundInteractPacket packet;
+    packet.SetEntityId(entityId);
+#if PROTOCOL_VERSION < 775
+    packet.SetAction(1);  // 1 = ATTACK
+#endif
+#if PROTOCOL_VERSION > 722
+    packet.SetUsingSecondaryAction(false);
+#endif
+
+    ProtocolCraft::WriteContainer writeData;
+    packet.Write(writeData);
+    net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+    LOGI("Sent Interact(ATTACK): entityId=%d", entityId);
+}
+
 void ClientEngine::sendRespawn() {
     std::lock_guard<std::mutex> lock(netMutex);
     if (!net || !net->isConnected()) return;
@@ -1132,6 +1152,7 @@ void ClientEngine::handlePlayPacket(int packetId,
                     gameMode = loginPacket.GetGameType();
                     Collision::getInstance().setGameMode(gameMode);
                     int playerId = loginPacket.GetPlayerId();
+                    this->playerId = playerId;
                     LOGI("Player ID: %d, GameType: %d",
                          playerId, gameMode);
 
