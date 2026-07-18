@@ -85,15 +85,16 @@ public class MainActivity extends Activity {
         // 否则 initRenderer 触发时资源还没准备好
         setAssetManager(getAssets());
 
-        // 搜索 resourcepack.zip 的优先级路径列表
+        // 根据协议版本选择对应的资源包
+        String zipName = "resourcepack" + protocolVersion + ".zip";
         String[] zipPaths = {
             // 1. 传统 external storage 路径
             android.os.Environment.getExternalStorageDirectory().getAbsolutePath()
-                + "/Android/data/com.calcite/resourcepack.zip",
+                + "/Android/data/com.calcite/" + zipName,
             // 2. getExternalFilesDir 路径（Android 11+ 推荐）
-            getExternalFilesDir(null).getAbsolutePath() + "/resourcepack.zip",
+            getExternalFilesDir(null).getAbsolutePath() + "/" + zipName,
             // 3. 内部存储 data 目录
-            getDataDir().getAbsolutePath() + "/resourcepack.zip"
+            getDataDir().getAbsolutePath() + "/" + zipName
         };
 
         boolean zipFound = false;
