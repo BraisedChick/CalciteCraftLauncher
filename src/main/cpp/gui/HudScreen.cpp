@@ -375,6 +375,16 @@ void HudScreen::render(int mouseX, int mouseY) {
         auto pos = CameraController::getInstance().getPosition();
         ImGui::Text("XYZ: %.1f / %.1f / %.1f", pos.x, pos.y, pos.z);
 
+        float yaw = CameraController::getInstance().getYaw();
+        float yawDeg = glm::degrees(yaw);
+        static const char* directions[] = {"South", "West", "North", "East"};
+        int dirIdx = ((int)(yawDeg + 45) / 90) % 4;
+        if (dirIdx < 0) dirIdx += 4;
+        ImGui::Text("Facing: %s (%.1f / %.1f)",
+            directions[dirIdx],
+            yawDeg,
+            glm::degrees(CameraController::getInstance().getPitch()));
+
         ImGui::End();
     }
 }
