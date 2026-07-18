@@ -176,10 +176,10 @@ int TextureAtlas::ensureTexture(const std::string& texturePath) {
 // 模型元素解析（ELEMENTS 解析）— 全部改用 json 对象参数
 // ============================================================
 
-// 从 json 数组中提取 float[3]
-static bool extractFloatArray(const json& j, float out[3]) {
-    if (!j.is_array() || j.size() < 3) return false;
-    for (int i = 0; i < 3; i++) {
+// 从 json 数组中提取 float 值
+static bool extractFloatArray(const json& j, float* out, size_t count) {
+    if (!j.is_array() || j.size() < count) return false;
+    for (size_t i = 0; i < count; i++) {
         out[i] = j[i].get<float>();
     }
     return true;
@@ -189,7 +189,7 @@ void TextureAtlas::parseElementRotation(ModelElementData& element, const json& r
     if (rot.is_null()) return;
 
     if (rot.contains("origin") && rot["origin"].is_array()) {
-        extractFloatArray(rot["origin"], element.rotation.origin);
+        extractFloatArray(rot["origin"], element.rotation.origin, 3);
     }
 
     std::string axisStr = rot.value("axis", "");
@@ -221,7 +221,7 @@ void TextureAtlas::parseElementFaces(ModelElementData& element,
 
         // UV
         if (fc.contains("uv") && fc["uv"].is_array()) {
-            extractFloatArray(fc["uv"], face.uv);
+            extractFloatArray(fc["uv"], face.uv, 4);
         }
 
         // texture
@@ -257,10 +257,10 @@ void TextureAtlas::parseSingleElement(ModelElementData& element,
                                       const std::unordered_map<std::string, int>& pathToLayer) {
     // from / to
     if (elem.contains("from") && elem["from"].is_array()) {
-        extractFloatArray(elem["from"], element.from);
+        extractFloatArray(elem["from"], element.from, 3);
     }
     if (elem.contains("to") && elem["to"].is_array()) {
-        extractFloatArray(elem["to"], element.to);
+        extractFloatArray(elem["to"], element.to, 3);
     }
 
     // shade
