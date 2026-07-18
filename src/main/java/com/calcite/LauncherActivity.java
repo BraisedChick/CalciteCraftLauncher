@@ -98,6 +98,9 @@ public class LauncherActivity extends Activity {
     private static final int REQUEST_PICK_FILE = 1002;
     private static final int REQUEST_LAUNCH_GAME = 1003;
 
+    // 记录最近一次启动的协议版本，用于检测版本切换冲突
+    private static int sLastLaunchedProtocol = 0;
+
     private Handler heartbeatHandler = new Handler();
     private Runnable heartbeatTask = null;
 
@@ -1009,6 +1012,26 @@ public class LauncherActivity extends Activity {
             return;
         }
 
+        // 检测版本切换冲突：已启动过不同版本，提示重启
+        if (sLastLaunchedProtocol != 0 && sLastLaunchedProtocol != protocolVersion) {
+            new AlertDialog.Builder(this)
+                .setTitle("版本冲突")
+                .setMessage("已启动过协议版本 " + sLastLaunchedProtocol + " 的游戏，"
+                    + "当前进程无法切换到协议版本 " + protocolVersion + "。\n\n"
+                    + "请完全退出启动器后重新打开，再启动当前版本。")
+                .setCancelable(false)
+                .setPositiveButton("立即重启", (d, w) -> {
+                    Intent intent = new Intent(this, LauncherActivity.class);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                    startActivity(intent);
+                    finish();
+                    Runtime.getRuntime().exit(0);
+                })
+                .setNegativeButton("知道了", null)
+                .show();
+            return;
+        }
+
         // 先校验音效文件完整性，通过后再走启动流程
         checkSoundsAndLaunch(selected, versionName, protocolVersion);
     }
@@ -1151,6 +1174,7 @@ public class LauncherActivity extends Activity {
 
 
     private void startGameActivity(Account selected, String versionName, int protocolVersion) {
+        sLastLaunchedProtocol = protocolVersion;
         Toast.makeText(this,
             String.format("启动游戏\n用户名: %s\n版本: %s (协议 %d)\n渲染器: %s",
                 selected.getName(), versionName, protocolVersion,
