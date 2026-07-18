@@ -1122,8 +1122,33 @@ const BlockStateVariant* TextureAtlas::getBlockStateVariant(
 }
 
 std::vector<CollisionBox> TextureAtlas::getBlockCollisionBoxes(
-    const std::string& blockName, int32_t blockState, int32_t minStateId) const {
+        const std::string& blockName, int32_t blockState, int32_t minStateId) const {
     std::vector<CollisionBox> boxes;
+
+    auto rotatePoint = [](float& x, float& y, float& z, int rotX, int rotY) {
+        float cx = x - 8.0f;
+        float cy = y - 8.0f;
+        float cz = z - 8.0f;
+        // 先 X 旋转（与 generateFromModel 一致：顺时针，角度取负）
+        if (rotX != 0) {
+            float rad = -rotX * (3.14159265f / 180.0f);
+            float cosA = cosf(rad), sinA = sinf(rad);
+            float ny = cy * cosA - cz * sinA;
+            float nz = cy * sinA + cz * cosA;
+            cy = ny; cz = nz;
+        }
+        // 再 Y 旋转
+        if (rotY != 0) {
+            float rad = -rotY * (3.14159265f / 180.0f);
+            float cosA = cosf(rad), sinA = sinf(rad);
+            float nx = cx * cosA + cz * sinA;
+            float nz = -cx * sinA + cz * cosA;
+            cx = nx; cz = nz;
+        }
+        x = cx + 8.0f;
+        y = cy + 8.0f;
+        z = cz + 8.0f;
+    };
 
     // 先查 blockstate 变体
     if (minStateId >= 0) {
@@ -1131,24 +1156,58 @@ std::vector<CollisionBox> TextureAtlas::getBlockCollisionBoxes(
         if (variant && !variant->models.empty()) {
             for (const auto& me : variant->models) {
                 const auto* model = getBlockModel(me.modelName);
-                if (model) {
-                    for (const auto& elem : model->elements) {
-                        CollisionBox box;
-                        box.minX = elem.from[0] / 16.0f;
-                        box.minY = elem.from[1] / 16.0f;
-                        box.minZ = elem.from[2] / 16.0f;
-                        box.maxX = elem.to[0] / 16.0f;
-                        box.maxY = elem.to[1] / 16.0f;
-                        box.maxZ = elem.to[2] / 16.0f;
-                        boxes.push_back(box);
+                if (!model) continue;
+                int rotX = me.rotX;
+                int rotY = me.rotY;
+                for (const auto& elem : model->elements) {
+                    // 8 个顶点
+                    float corners[8][3];
+                    int idx = 0;
+                    for (int i = 0; i < 2; ++i) {
+                        float x = (i == 0) ? elem.from[0] : elem.to[0];
+                        for (int j = 0; j < 2; ++j) {
+                            float y = (j == 0) ? elem.from[1] : elem.to[1];
+                            for (int k = 0; k < 2; ++k) {
+                                float z = (k == 0) ? elem.from[2] : elem.to[2];
+                                corners[idx][0] = x;
+                                corners[idx][1] = y;
+                                corners[idx][2] = z;
+                                idx++;
+                            }
+                        }
                     }
-                    if (!model->elements.empty()) return boxes;
+                    // 应用旋转
+                    for (int v = 0; v < 8; ++v) {
+                        rotatePoint(corners[v][0], corners[v][1], corners[v][2], rotX, rotY);
+                    }
+                    // 计算包围盒
+                    float minX = corners[0][0], maxX = corners[0][0];
+                    float minY = corners[0][1], maxY = corners[0][1];
+                    float minZ = corners[0][2], maxZ = corners[0][2];
+                    for (int v = 1; v < 8; ++v) {
+                        if (corners[v][0] < minX) minX = corners[v][0];
+                        if (corners[v][0] > maxX) maxX = corners[v][0];
+                        if (corners[v][1] < minY) minY = corners[v][1];
+                        if (corners[v][1] > maxY) maxY = corners[v][1];
+                        if (corners[v][2] < minZ) minZ = corners[v][2];
+                        if (corners[v][2] > maxZ) maxZ = corners[v][2];
+                    }
+                    CollisionBox box;
+                    box.minX = minX / 16.0f;
+                    box.minY = minY / 16.0f;
+                    box.minZ = minZ / 16.0f;
+                    box.maxX = maxX / 16.0f;
+                    box.maxY = maxY / 16.0f;
+                    box.maxZ = maxZ / 16.0f;
+                    boxes.push_back(box);
                 }
+                // 如果有模型元素，直接返回（通常楼梯只匹配一个模型）
+                if (!model->elements.empty()) return boxes;
             }
         }
     }
 
-    // fallback: 查默认模型
+    // fallback: 使用默认模型（不旋转）
     const auto* model = getBlockModel(blockName);
     if (model) {
         for (const auto& elem : model->elements) {
