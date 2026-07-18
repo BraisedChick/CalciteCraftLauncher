@@ -927,8 +927,6 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const json& j) 
         orderedVariants[i] = lastValid;
     }
 
-    LOGI("BlockState %s: %d variants, %d offsets, %d totalStates, autoAdded=%zu",
-         blockName.c_str(), (int)entries.size(), maxOffset + 1, totalStates, autoAddedProps.size());
     blockstateVariantCache[blockName] = std::move(orderedVariants);
 }
 
@@ -1102,9 +1100,6 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const json& j) {
         result[combo] = accumulated;
     }
 
-    LOGI("BlockState %s: multipart -> %d combos (from registry: %s)",
-         blockName.c_str(), totalCombos,
-         (blockInfo && !blockInfo->stateProperties.empty()) ? "yes" : "no");
     blockstateVariantCache[blockName] = std::move(result);
 }
 

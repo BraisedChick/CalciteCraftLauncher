@@ -1103,9 +1103,18 @@ void ClientEngine::handlePlayPacket(int packetId,
                     loginPacket.Read(iter, length);
                     gameMode = loginPacket.GetGameType();
                     Collision::getInstance().setGameMode(gameMode);
+                    int playerId = loginPacket.GetPlayerId();
                     LOGI("Player ID: %d, GameType: %d",
-                         loginPacket.GetPlayerId(),
-                         gameMode);
+                         playerId, gameMode);
+
+                    // 在 EntityManager 中注册本地玩家实体（用于接收击退速度等）
+                    {
+                        Entity playerEntity;
+                        playerEntity.entityId = playerId;
+                        playerEntity.type = EntityType::PLAYER;
+                        EntityManager::getInstance().addEntity(playerEntity);
+                    }
+                    Collision::getInstance().setPlayerEntityId(playerId);
 
                     // 从 RegistryHolder 解析服务器端 biome 注册表
                     try {

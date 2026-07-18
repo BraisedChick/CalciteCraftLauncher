@@ -1,4 +1,5 @@
 #include "Collision.h"
+#include "EntityManager.h"
 #include "ChunkManager.h"
 #include "BlockRegistry.h"
 #include "TextureAtlas.h"
@@ -101,6 +102,15 @@ void Collision::update(float deltaTime, float camPitch, float camYaw, glm::vec3*
 
 void Collision::tick() {
     if (!chunkManager) return;
+
+    // ==== 从 EntityManager 读取击退冲量（一次性消费）====
+    double kbVx = 0, kbVy = 0, kbVz = 0;
+    if (playerEntityId >= 0) {
+        EntityManager::getInstance().consumeEntityMotion(playerEntityId, kbVx, kbVy, kbVz);
+        velocity.x += (float)kbVx;
+        velocity.y += (float)kbVy;
+        velocity.z += (float)kbVz;
+    }
 
     // ---- 计算水平移动方向 ----
     float cosYaw = cosf(yaw);

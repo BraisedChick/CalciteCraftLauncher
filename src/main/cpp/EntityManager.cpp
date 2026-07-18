@@ -104,6 +104,15 @@ void EntityManager::setEntityMotion(int entityId, short vx, short vy, short vz) 
     e.vz = vz / 8000.0;
 }
 
+void EntityManager::consumeEntityMotion(int entityId, double& vx, double& vy, double& vz) {
+    std::lock_guard<std::mutex> lock(mutex);
+    auto it = entities.find(entityId);
+    if (it == entities.end()) return;
+    vx = it->second.vx; it->second.vx = 0;
+    vy = it->second.vy; it->second.vy = 0;
+    vz = it->second.vz; it->second.vz = 0;
+}
+
 std::vector<Entity> EntityManager::getAllEntities() const {
     std::lock_guard<std::mutex> lock(mutex);
     std::vector<Entity> result;

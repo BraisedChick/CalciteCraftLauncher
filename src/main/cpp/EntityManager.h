@@ -27,6 +27,9 @@ public:
     // 设置实体速度
     void setEntityMotion(int entityId, short vx, short vy, short vz);
 
+    // 读取并清零实体速度（用于 Collision 消费一次性的击退冲量）
+    void consumeEntityMotion(int entityId, double& vx, double& vy, double& vz);
+
     // 渲染线程：获取所有实体快照（线程安全拷贝）
     std::vector<Entity> getAllEntities() const;
 

@@ -49,6 +49,9 @@ public:
     // 重置移动输入（打开 UI 时调用，防止玩家继续移动）
     void resetMovement();
 
+    // 设置玩家实体 ID（用于读取击退速度）
+    void setPlayerEntityId(int id) { playerEntityId = id; }
+
 private:
     Collision();
 
@@ -75,6 +78,7 @@ private:
 
     int gameMode = 0;  // 0=survival, 1=creative, 2=adventure, 3=spectator
     bool noClip = false;
+    int playerEntityId = -1;
 
     static constexpr float TICK_DURATION = 1.0f / 20.0f;
     static constexpr float GRAVITY = 0.08f;
