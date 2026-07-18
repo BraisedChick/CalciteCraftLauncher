@@ -602,8 +602,6 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
     for (int i = 0; i < 10; i++) {
         destroyStageLayers[i] = findLayer("block/destroy_stage_" + std::to_string(i));
     }
-    LOGI("DIAG_FINDLAYER: side_overlay=%d grass_side=%d grass_top=%d",
-         grassSideOverlayLayer, grassSideLayer, grassBlockSnowLayer);
 
     if (grassSideOverlayLayer < 0) grassSideOverlayLayer = findLayer("block/stone");
     if (grassBlockSnowLayer < 0)   grassBlockSnowLayer = findLayer("block/stone");
@@ -908,7 +906,12 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const json& j) 
     }
 
     // 填充未出现的 offset 为前一个变体
-    std::vector<BlockStateVariant> orderedVariants(maxOffset + 1);
+    int totalStates = 1;
+    for (const auto& [prop, values] : propValueList) {
+        totalStates *= (int)values.size();
+    }
+    int cacheSize = (maxOffset + 1) > totalStates ? (maxOffset + 1) : totalStates;
+    std::vector<BlockStateVariant> orderedVariants(cacheSize);
     BlockStateVariant lastValid;
     for (int i = 0; i <= maxOffset; i++) {
         auto it = offsetMap.find(i);
@@ -919,9 +922,13 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const json& j) 
             orderedVariants[i] = lastValid;
         }
     }
+    // 如果实际状态数超过 maxOffset（如 auto-added waterlogged/powered 覆盖不全），用 lastValid 填充
+    for (int i = maxOffset + 1; i < totalStates; i++) {
+        orderedVariants[i] = lastValid;
+    }
 
-    LOGI("BlockState %s: %d variants, %d offsets, autoAdded=%zu",
-         blockName.c_str(), (int)entries.size(), maxOffset + 1, autoAddedProps.size());
+    LOGI("BlockState %s: %d variants, %d offsets, %d totalStates, autoAdded=%zu",
+         blockName.c_str(), (int)entries.size(), maxOffset + 1, totalStates, autoAddedProps.size());
     blockstateVariantCache[blockName] = std::move(orderedVariants);
 }
 
@@ -993,27 +1000,35 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const json& j) {
 
     if (entries.empty()) return;
     if (propValues.empty()) {
-        // 无条件 multipart，每个 apply 都应用
         std::vector<BlockStateVariant> single(1);
         single[0] = entries[0].bsv;
         blockstateVariantCache[blockName] = std::move(single);
         return;
     }
 
-    // 构建所有可能的状态组合
+    // 优先使用 BlockRegistry 的完整属性列表
     std::vector<std::string> propNames;
     std::vector<std::vector<std::string>> propValueList;
-    for (auto& [name, vals] : propValues) {
-        propNames.push_back(name);
-        std::vector<std::string> sorted(vals.begin(), vals.end());
-        std::sort(sorted.begin(), sorted.end());
-        // 检查布尔属性
-        if (sorted.size() == 2 && sorted[0] == "false" && sorted[1] == "true") {
-            // 保持 false, true 顺序
-        } else {
-            std::sort(sorted.begin(), sorted.end());
+
+    const auto* blockInfo = BlockRegistry::getInstance().getBlockInfoByName(blockName);
+    if (blockInfo && !blockInfo->stateProperties.empty()) {
+        for (const auto& sp : blockInfo->stateProperties) {
+            propNames.push_back(sp.name);
+            propValueList.push_back(sp.values);
         }
-        propValueList.push_back(std::move(sorted));
+    } else {
+        for (auto& [name, vals] : propValues) {
+            vals.insert("none");
+        }
+        for (auto& [name, vals] : propValues) {
+            propNames.push_back(name);
+            std::vector<std::string> sorted(vals.begin(), vals.end());
+            if (sorted.size() == 2 && sorted[0] == "false" && sorted[1] == "true") {
+            } else {
+                std::sort(sorted.begin(), sorted.end());
+            }
+            propValueList.push_back(std::move(sorted));
+        }
     }
 
     // 计算总组合数
@@ -1027,22 +1042,22 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const json& j) {
         // 构建当前组合的属性映射
         std::unordered_map<std::string, std::string> stateProps;
         int tmp = combo;
-        for (size_t i = 0; i < propNames.size(); i++) {
+        for (int i = (int)propNames.size() - 1; i >= 0; i--) {
             int idx = tmp % (int)propValueList[i].size();
             tmp /= (int)propValueList[i].size();
             stateProps[propNames[i]] = propValueList[i][idx];
         }
 
-        // 检查所有 apply 条目的 when 条件
-        // 默认为蓝色玻璃等无条件 multipart 保留最后一个 apply
+        // 检查所有 when 条件，累加所有匹配条目的模型
         BlockStateVariant accumulated;
         for (const auto& entry : entries) {
             if (entry.when.is_null()) {
-                accumulated = entry.bsv;
+                for (const auto& m : entry.bsv.models) {
+                    accumulated.models.push_back(m);
+                }
                 continue;
             }
 
-            // 检查 when 条件是否匹配
             std::function<bool(const json&)> matchWhen;
             matchWhen = [&](const json& node) -> bool {
                 if (node.is_object()) {
@@ -1053,11 +1068,9 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const json& j) {
                             }
                             return false;
                         }
-                        // 普通属性
                         if (it->is_string()) {
                             auto propIt = stateProps.find(it.key());
                             if (propIt == stateProps.end()) return false;
-                            // 支持逗号分隔的值列表
                             std::string valStr = it->get<std::string>();
                             size_t comma = valStr.find(',');
                             if (comma != std::string::npos) {
@@ -1081,13 +1094,17 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const json& j) {
             };
 
             if (entry.when.is_object() && matchWhen(entry.when)) {
-                accumulated = entry.bsv;
+                for (const auto& m : entry.bsv.models) {
+                    accumulated.models.push_back(m);
+                }
             }
         }
         result[combo] = accumulated;
     }
 
-    LOGI("BlockState %s: multipart -> %d combos", blockName.c_str(), totalCombos);
+    LOGI("BlockState %s: multipart -> %d combos (from registry: %s)",
+         blockName.c_str(), totalCombos,
+         (blockInfo && !blockInfo->stateProperties.empty()) ? "yes" : "no");
     blockstateVariantCache[blockName] = std::move(result);
 }
 
