@@ -757,6 +757,34 @@ void ClientEngine::sendContainerClose() {
     int containerId = GameUI::getInstance().getOpenContainerId();
     if (containerId <= 0) return; // 0=玩家背包，不需要关闭包
 
+    // 关闭容器前，将容器数据中的背包部分同步回 slots
+    // 工作台容器布局: slots 10-36=主背包, 37-45=快捷栏
+    // 玩家物品栏布局: slots 9-35=主背包, 36-44=快捷栏
+    auto& inv = PlayerInventory::getInstance();
+    const auto& containerSlots = inv.getContainerSlots();
+    if (containerSlots.size() >= 46) {
+        std::vector<InvSlot> updatedSlots(inv.getSlotCount());
+        // 已有 slots 数据中保留 crafting/armor/offhand（0-8,45）
+        for (int i = 0; i < inv.getSlotCount() && i < 46; i++) {
+            if (i >= 0 && i < 9) {
+                // slots 0-8: keep existing (2×2 craft + armor)
+                updatedSlots[i] = inv.getSlot(i);
+            } else if (i == 45) {
+                updatedSlots[i] = inv.getSlot(i); // offhand
+            }
+        }
+        // 主背包: containerSlots[10..36] → slots[9..35]
+        for (int i = 0; i < 27 && 10 + i < (int)containerSlots.size() && 9 + i < (int)updatedSlots.size(); i++) {
+            updatedSlots[9 + i] = containerSlots[10 + i];
+        }
+        // 快捷栏: containerSlots[37..45] → slots[36..44]
+        for (int i = 0; i < 9 && 37 + i < (int)containerSlots.size() && 36 + i < (int)updatedSlots.size(); i++) {
+            updatedSlots[36 + i] = containerSlots[37 + i];
+        }
+        inv.setContent(0, updatedSlots);
+        LOGI("ContainerClose: synced %zu container slots to player inventory", containerSlots.size());
+    }
+
     ProtocolCraft::ServerboundContainerClosePacket closePacket;
     closePacket.SetContainerId((unsigned char)containerId);
 
