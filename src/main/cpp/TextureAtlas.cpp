@@ -1070,15 +1070,18 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const json& j) {
                             auto propIt = stateProps.find(it.key());
                             if (propIt == stateProps.end()) return false;
                             std::string valStr = it->get<std::string>();
+                            // 支持逗号 , 和管道符 | 分隔的多值匹配（如 "side|up"）
                             size_t comma = valStr.find(',');
-                            if (comma != std::string::npos) {
+                            size_t pipe = valStr.find('|');
+                            if (comma != std::string::npos || pipe != std::string::npos) {
                                 size_t start = 0;
                                 bool matched = false;
                                 while (start < valStr.size()) {
-                                    size_t end = valStr.find(',', start);
+                                    size_t end = valStr.find_first_of(",|", start);
                                     std::string v = (end == std::string::npos) ? valStr.substr(start) : valStr.substr(start, end - start);
                                     if (propIt->second == v) { matched = true; break; }
-                                    start = (end == std::string::npos) ? valStr.size() : end + 1;
+                                    if (end == std::string::npos) break;
+                                    start = end + 1;
                                 }
                                 if (!matched) return false;
                             } else if (propIt->second != valStr) {
