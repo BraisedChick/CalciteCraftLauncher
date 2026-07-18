@@ -11,7 +11,7 @@
 #include "BlockRegistry.h"
 #include "PlayerInventory.h"
 #include "EntityRenderer.h"
-#include "VersionManager.h"
+#include "MinecraftVersion.h"
 
 #include <chrono>
 #include <cmath>
