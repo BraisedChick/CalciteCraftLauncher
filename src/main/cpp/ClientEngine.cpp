@@ -390,11 +390,6 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
         size_t pos = 0;
         ProtocolCraft::ReadIterator iter = resp.cbegin();
         size_t remaining = resp.size();
-        LOGI("[PLAY] receivePacket: resp.size=%zu, bytes=[%02x %02x %02x %02x %02x]",
-             resp.size(),
-             resp.size()>0?resp[0]:0, resp.size()>1?resp[1]:0,
-             resp.size()>2?resp[2]:0, resp.size()>3?resp[3]:0,
-             resp.size()>4?resp[4]:0);
         int pid = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(iter, remaining);
         pos = resp.size() - remaining;
 
