@@ -576,6 +576,10 @@ int GameUI::getTargetEntity(float reachDistance) const {
 
     for (const auto& entity : entities) {
         if (entity.removed || entity.entityId == localPlayerId) continue;
+        // 跳过不可攻击的实体（掉落物、经验球等）
+        if (entity.type == EntityType::ITEM ||
+            entity.type == EntityType::EXPERIENCE_ORB ||
+            entity.type == EntityType::AREA_EFFECT_CLOUD) continue;
 
         // 用插值位置
         float ex = (float)(entity.prevX + (entity.x - entity.prevX) * 0.0f);
