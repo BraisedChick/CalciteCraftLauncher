@@ -19,6 +19,7 @@
 #include "ChunkManager.h"
 #include "BlockRegistry.h"
 #include "TextureLoader.h"
+#include "MusicManager.h"
 
 // Screen 系统（同目录）
 #include "ScreenManager.h"
@@ -601,6 +602,81 @@ int GameUI::getTargetEntity(float reachDistance) const {
     return bestEntityId;
 }
 
+// 根据方块名称映射到音效类别（对应 sounds 目录下的 step/ dig/ 子目录）
+static std::string getBlockSoundCategory(uint32_t blockState) {
+    std::string name = BlockRegistry::getInstance().getBlockName(blockState);
+    if (name.empty()) return "stone";
+
+    // 按常见方块类型分组
+    if (name.find("stone") != std::string::npos ||
+        name.find("_ore") != std::string::npos ||
+        name.find("deepslate") != std::string::npos ||
+        name.find("andesite") != std::string::npos ||
+        name.find("diorite") != std::string::npos ||
+        name.find("granite") != std::string::npos ||
+        name.find("tuff") != std::string::npos ||
+        name.find("calcite") != std::string::npos ||
+        name.find("basalt") != std::string::npos ||
+        name.find("blackstone") != std::string::npos ||
+        name.find("netherrack") != std::string::npos ||
+        name.find("end_stone") != std::string::npos)
+        return "stone";
+
+    if (name.find("grass") != std::string::npos ||
+        name.find("dirt") != std::string::npos ||
+        name.find("podzol") != std::string::npos ||
+        name.find("mycelium") != std::string::npos ||
+        name.find("farmland") != std::string::npos ||
+        name.find("path") != std::string::npos)
+        return "grass";
+
+    if (name.find("_planks") != std::string::npos ||
+        name.find("_log") != std::string::npos ||
+        name.find("_wood") != std::string::npos ||
+        name.find("fence") != std::string::npos ||
+        name.find("door") != std::string::npos ||
+        name.find("trapdoor") != std::string::npos ||
+        name.find("ladder") != std::string::npos)
+        return "wood";
+
+    if (name.find("sand") != std::string::npos)
+        return "sand";
+    if (name.find("gravel") != std::string::npos)
+        return "gravel";
+    if (name.find("_wool") != std::string::npos ||
+        name.find("carpet") != std::string::npos)
+        return "cloth";
+    if (name.find("_glass") != std::string::npos)
+        return "glass";
+    if (name.find("snow") != std::string::npos)
+        return "snow";
+    if (name.find("_concrete") != std::string::npos)
+        return "stone";
+    if (name.find("terracotta") != std::string::npos ||
+        name.find("clay") != std::string::npos)
+        return "stone";
+    if (name.find("cobblestone") != std::string::npos ||
+        name.find("mossy_cobblestone") != std::string::npos)
+        return "stone";
+    if (name.find("gravel") != std::string::npos)
+        return "gravel";
+    if (name.find("nether_wart") != std::string::npos ||
+        name.find("wart_block") != std::string::npos)
+        return "stone";
+    if (name.find("shroomlight") != std::string::npos)
+        return "shroomlight";
+    if (name.find("root") != std::string::npos ||
+        name.find("vine") != std::string::npos)
+        return "grass";
+    if (name.find("nylium") != std::string::npos)
+        return "nylium";
+    if (name.find("crimson") != std::string::npos ||
+        name.find("warped") != std::string::npos)
+        return "stem";
+
+    return "stone";
+}
+
 // 首次按下攻击按钮时调用
 void GameUI::performBlockBreak() {
     auto* engine = ClientEngine::getInstance();
@@ -654,12 +730,31 @@ void GameUI::performBlockBreak() {
             }
             if (meta.hardness == 0.0f) {
                 // 瞬间破坏（火把、花等）
+                // 播放破坏音效
+                {
+                    std::string cat = getBlockSoundCategory(state);
+                    MusicManager::getInstance().playOneShot("dig/" + cat + "1");
+                }
                 engine->sendBlockBreakFinish(result.blockX, result.blockY, result.blockZ, result.hitFace);
                 destroyDelay = 5;
                 destroyAccumulator = 0.0f;
                 digging = false;
                 return;
             }
+        }
+    }
+
+    // 播放挖掘命中音效
+    {
+        uint32_t st = 0;
+        auto* cm2 = engine->getChunkManager();
+        if (cm2) {
+            auto ch = cm2->getChunk(result.blockX >> 4, result.blockZ >> 4);
+            if (ch) st = ch->getBlockState(result.blockX & 15, result.blockY, result.blockZ & 15);
+        }
+        if (st) {
+            std::string cat = getBlockSoundCategory(st);
+            MusicManager::getInstance().playOneShot("step/" + cat + "1");
         }
     }
 
@@ -797,6 +892,11 @@ void GameUI::continueDestroyBlock() {
 
     // 挖掘完成
     if (destroyProgress >= 1.0f) {
+        // 播放破坏音效
+        {
+            std::string cat = getBlockSoundCategory(state);
+            MusicManager::getInstance().playOneShot("dig/" + cat + "1");
+        }
         engine->sendBlockBreakFinish(digBlockX, digBlockY, digBlockZ, digFace);
         digging = false;
         destroyProgress = 0.0f;

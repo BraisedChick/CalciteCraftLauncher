@@ -1048,15 +1048,14 @@ public class LauncherActivity extends Activity {
             return;
         }
 
-        // 缺失资源包：让用户选择下载或直接进入（无纹理）
+        // 缺失资源包：让用户选择下载或取消启动
         new AlertDialog.Builder(this)
             .setTitle("资源包未下载")
             .setMessage("未检测到协议版本 " + protocolVersion + "（" + versionName + "）的资源包文件（" + zipName + "）。\n"
-                + "是否自动下载？（建议连接 Wi-Fi）")
-            .setPositiveButton("下载资源包", (d, w) ->
+                + "请先下载资源包")
+            .setPositiveButton("开始下载", (d, w) ->
                 downloadResourcepackBlocking(selected, versionName, protocolVersion, resourcepackFile))
-            .setNegativeButton("直接进入", (d, w) ->
-                checkSoundsAndLaunch(selected, versionName, protocolVersion))
+            .setNegativeButton("取消", null)
             .setCancelable(false)
             .show();
     }
@@ -1162,7 +1161,7 @@ public class LauncherActivity extends Activity {
         // 缺失音效：让用户选择下载或直接进入
         new AlertDialog.Builder(this)
             .setTitle("音效资源未下载")
-            .setMessage("未检测到音效文件，是否下载？\n（约需下载 100+ 个文件，建议连接 Wi-Fi）")
+            .setMessage("未检测到音效文件，是否下载？\n（约需下载 50 个文件，建议连接 Wi-Fi）")
             .setPositiveButton("下载音效", (d, w) ->
                 downloadSoundsBlocking(selected, versionName, protocolVersion, soundsDir))
             .setNegativeButton("直接进入", (d, w) ->

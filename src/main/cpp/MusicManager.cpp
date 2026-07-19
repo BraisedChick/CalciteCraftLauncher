@@ -429,6 +429,77 @@ void MusicManager::playClickSound() {
     activeOneShots.push_back({snd, buf});
 }
 
+void MusicManager::playOneShot(const std::string& resourcePath) {
+    if (!initialized || !engine) return;
+
+    std::string filePath = extractOggToTemp(resourcePath);
+    if (filePath.empty()) {
+        LOGW("One-shot sound not found: %s", resourcePath.c_str());
+        return;
+    }
+
+    // 用 minivorbis 解码 OGG -> PCM
+    OggVorbis_File vf;
+    int err = ov_fopen(filePath.c_str(), &vf);
+    if (err != 0) {
+        LOGE("playOneShot ov_fopen failed for %s (error %d)", filePath.c_str(), err);
+        return;
+    }
+
+    vorbis_info* vi = ov_info(&vf, -1);
+    if (!vi) {
+        ov_clear(&vf);
+        return;
+    }
+
+    int channels = vi->channels;
+    long sampleRate = vi->rate;
+
+    // 解码全部 PCM 数据
+    std::vector<short> pcm;
+    pcm.reserve(sampleRate * channels);
+    char readBuf[4096];
+    int bitstream = 0;
+    long bytesRead;
+    while ((bytesRead = ov_read(&vf, readBuf, sizeof(readBuf), 0, 2, 1, &bitstream)) > 0) {
+        short* samples = reinterpret_cast<short*>(readBuf);
+        int numSamples = bytesRead / 2;
+        pcm.insert(pcm.end(), samples, samples + numSamples);
+    }
+    ov_clear(&vf);
+
+    if (pcm.empty()) return;
+
+    // 创建 ma_audio_buffer
+    ma_audio_buffer_config bufConfig = ma_audio_buffer_config_init(
+        ma_format_s16, channels, (ma_uint64)pcm.size() / channels,
+        pcm.data(), nullptr);
+    bufConfig.sampleRate = (ma_uint32)sampleRate;
+
+    ma_audio_buffer* buf = new ma_audio_buffer();
+    if (ma_audio_buffer_init(&bufConfig, buf) != MA_SUCCESS) {
+        LOGE("playOneShot ma_audio_buffer_init failed");
+        delete buf;
+        return;
+    }
+
+    // 创建 ma_sound 从 audio buffer
+    ma_sound* snd = new ma_sound();
+    if (ma_sound_init_from_data_source(
+            static_cast<ma_engine*>(engine), buf, 0, nullptr, snd) != MA_SUCCESS) {
+        ma_audio_buffer_uninit(buf);
+        delete buf;
+        delete snd;
+        return;
+    }
+
+    ma_sound_set_volume(snd, 1.0f);
+    ma_sound_start(snd);
+
+    activeOneShots.push_back({snd, buf});
+    LOGI("Playing one-shot: %s", resourcePath.c_str());
+}
+
 std::vector<std::string> MusicManager::getMusicFiles() const {
     switch (currentScene) {
         case MusicScene::MENU:

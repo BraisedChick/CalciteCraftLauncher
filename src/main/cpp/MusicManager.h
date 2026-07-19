@@ -27,6 +27,9 @@ public:
     // 播放 UI 按钮点击音效（random/click_stereo.ogg）
     void playClickSound();
 
+    // 播放一次性音效（从 sounds 目录加载，用于方块声音等）
+    void playOneShot(const std::string& resourcePath);
+
     // 场景切换时调用
     void setScene(MusicScene scene);
     MusicScene getScene() const { return currentScene; }
