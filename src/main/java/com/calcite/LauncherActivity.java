@@ -1211,11 +1211,9 @@ public class LauncherActivity extends Activity {
                                     lastUpdate = now;
                                     if (totalBytes > 0) {
                                         final int percent = (int)(totalRead * 100 / totalBytes);
-                                        final long remaining = (totalBytes - totalRead) * 1000 / Math.max(speedBps, 1);
-                                        final String etaStr = formatTime(remaining / 1000);
                                         runOnUiThread(() -> {
                                             progressBar.setProgress(percent);
-                                            tvSpeed.setText(speedStr + "  ▏ " + etaStr);
+                                            tvSpeed.setText(speedStr);
                                         });
                                     } else {
                                         runOnUiThread(() -> tvSpeed.setText(speedStr));
@@ -1361,14 +1359,11 @@ public class LauncherActivity extends Activity {
                         long elapsed = now - startTime;
                         if (elapsed > 0 && totalBytes > 0) {
                             long speedBps = totalBytes * 1000 / elapsed;
-                            long remainingBytes = (long)((double)totalBytes / completed * (total - completed));
-                            long remaining = remainingBytes * 1000 / Math.max(speedBps, 1);
                             final String speedStr = formatSpeed(speedBps);
-                            final String etaStr = formatTime(remaining / 1000);
                             lastUpdate = now;
                             runOnUiThread(() -> {
                                 progressBar.setProgress(percent);
-                                tvSpeed.setText(speedStr + "  ▏ " + etaStr);
+                                tvSpeed.setText(speedStr);
                             });
                         } else {
                             runOnUiThread(() -> progressBar.setProgress(percent));
