@@ -1086,6 +1086,17 @@ public class LauncherActivity extends Activity {
         progressBar.setLayoutParams(lp);
         layout.addView(progressBar);
 
+        TextView tvSpeed = new TextView(this);
+        tvSpeed.setText("");
+        tvSpeed.setTextSize(13);
+        tvSpeed.setTextColor(0xFF888888);
+        tvSpeed.setGravity(android.view.Gravity.CENTER);
+        LinearLayout.LayoutParams speedLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        speedLp.setMargins(0, 8, 0, 0);
+        tvSpeed.setLayoutParams(speedLp);
+        layout.addView(tvSpeed);
+
         AlertDialog dialog = new AlertDialog.Builder(this)
             .setTitle("下载资源包")
             .setView(layout)
@@ -1111,6 +1122,9 @@ public class LauncherActivity extends Activity {
                     }
 
                     long totalBytes = response.body().contentLength();
+                    long startTime = System.currentTimeMillis();
+                    long lastUpdate = startTime;
+                    long lastBytes = 0;
                     try (InputStream is = response.body().byteStream();
                          FileOutputStream fos = new FileOutputStream(destFile)) {
                         byte[] buffer = new byte[8192];
@@ -1119,9 +1133,27 @@ public class LauncherActivity extends Activity {
                         while ((bytesRead = is.read(buffer)) != -1) {
                             fos.write(buffer, 0, bytesRead);
                             totalRead += bytesRead;
-                            if (totalBytes > 0) {
-                                final int percent = (int)(totalRead * 100 / totalBytes);
-                                runOnUiThread(() -> progressBar.setProgress(percent));
+                            long now = System.currentTimeMillis();
+                            if (now - lastUpdate > 500) {
+                                long elapsed = now - startTime;
+                                if (elapsed > 0) {
+                                    long bytesSinceLast = totalRead - lastBytes;
+                                    long speedBps = bytesSinceLast * 1000 / (now - lastUpdate);
+                                    final String speedStr = formatSpeed(speedBps);
+                                    lastBytes = totalRead;
+                                    lastUpdate = now;
+                                    if (totalBytes > 0) {
+                                        final int percent = (int)(totalRead * 100 / totalBytes);
+                                        final long remaining = (totalBytes - totalRead) * 1000 / Math.max(speedBps, 1);
+                                        final String etaStr = formatTime(remaining / 1000);
+                                        runOnUiThread(() -> {
+                                            progressBar.setProgress(percent);
+                                            tvSpeed.setText(speedStr + "  ▏ " + etaStr);
+                                        });
+                                    } else {
+                                        runOnUiThread(() -> tvSpeed.setText(speedStr));
+                                    }
+                                }
                             }
                         }
                     }
@@ -1298,6 +1330,21 @@ public class LauncherActivity extends Activity {
         if (calciteAccount != null && calciteAccount.getCalciteToken() != null) {
             startHeartbeat(calciteAccount.getCalciteToken());
         }
+    }
+
+    // ===== 格式化工具 =====
+
+    private static String formatSpeed(long bytesPerSec) {
+        if (bytesPerSec < 1024) return bytesPerSec + " B/s";
+        if (bytesPerSec < 1024 * 1024) return String.format("%.1f KB/s", bytesPerSec / 1024.0);
+        return String.format("%.1f MB/s", bytesPerSec / (1024.0 * 1024.0));
+    }
+
+    private static String formatTime(long seconds) {
+        if (seconds < 0) return "--";
+        if (seconds < 60) return seconds + "s";
+        if (seconds < 3600) return (seconds / 60) + "m " + (seconds % 60) + "s";
+        return (seconds / 3600) + "h " + ((seconds % 3600) / 60) + "m";
     }
 
     // ===== 心跳上报 =====
