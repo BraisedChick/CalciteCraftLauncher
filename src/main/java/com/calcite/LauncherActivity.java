@@ -1224,6 +1224,17 @@ public class LauncherActivity extends Activity {
         progressBar.setLayoutParams(lp);
         layout.addView(progressBar);
 
+        TextView tvSpeed = new TextView(this);
+        tvSpeed.setText("");
+        tvSpeed.setTextSize(13);
+        tvSpeed.setTextColor(0xFF888888);
+        tvSpeed.setGravity(android.view.Gravity.CENTER);
+        LinearLayout.LayoutParams speedLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        speedLp.setMargins(0, 8, 0, 0);
+        tvSpeed.setLayoutParams(speedLp);
+        layout.addView(tvSpeed);
+
         AlertDialog dialog = new AlertDialog.Builder(this)
             .setTitle("下载音效资源")
             .setView(layout)
@@ -1253,6 +1264,9 @@ public class LauncherActivity extends Activity {
                 JSONArray files = new JSONArray(json);
                 int total = files.length();
                 int completed = 0;
+                long totalBytes = 0;
+                long startTime = System.currentTimeMillis();
+                long lastUpdate = startTime;
 
                 for (int i = 0; i < total; i++) {
                     String path = files.getString(i);
@@ -1269,10 +1283,32 @@ public class LauncherActivity extends Activity {
                     String fileUrl = BASE_URL + "/sounds/file?path=" + path;
                     boolean ok = MainActivity.downloadFile(fileUrl, localFile.getAbsolutePath());
 
-                    if (ok) completed++;
+                    if (ok) {
+                        completed++;
+                        totalBytes += localFile.length();
+                    }
 
                     final int percent = completed * 100 / total;
-                    runOnUiThread(() -> progressBar.setProgress(percent));
+                    long now = System.currentTimeMillis();
+                    if (now - lastUpdate > 500) {
+                        long elapsed = now - startTime;
+                        if (elapsed > 0 && totalBytes > 0) {
+                            long speedBps = totalBytes * 1000 / elapsed;
+                            long remainingBytes = (long)((double)totalBytes / completed * (total - completed));
+                            long remaining = remainingBytes * 1000 / Math.max(speedBps, 1);
+                            final String speedStr = formatSpeed(speedBps);
+                            final String etaStr = formatTime(remaining / 1000);
+                            lastUpdate = now;
+                            runOnUiThread(() -> {
+                                progressBar.setProgress(percent);
+                                tvSpeed.setText(speedStr + "  ▏ " + etaStr);
+                            });
+                        } else {
+                            runOnUiThread(() -> progressBar.setProgress(percent));
+                        }
+                    } else {
+                        runOnUiThread(() -> progressBar.setProgress(percent));
+                    }
                 }
 
                 // 3. 全部下载完成，启动游戏
