@@ -1032,8 +1032,118 @@ public class LauncherActivity extends Activity {
             return;
         }
 
-        // 先校验音效文件完整性，通过后再走启动流程
-        checkSoundsAndLaunch(selected, versionName, protocolVersion);
+        // 先校验资源包和音效文件完整性，通过后再走启动流程
+        checkResourcepackAndLaunch(selected, versionName, protocolVersion);
+    }
+
+    /**
+     * 校验资源包文件是否存在，若缺失则下载后再继续
+     */
+    private void checkResourcepackAndLaunch(Account selected, String versionName, int protocolVersion) {
+        String zipName = "resourcepack" + protocolVersion + ".zip";
+        File resourcepackFile = new File(getExternalFilesDir(null), zipName);
+
+        if (resourcepackFile.exists()) {
+            checkSoundsAndLaunch(selected, versionName, protocolVersion);
+            return;
+        }
+
+        // 缺失资源包：让用户选择下载或直接进入（无纹理）
+        new AlertDialog.Builder(this)
+            .setTitle("资源包未下载")
+            .setMessage("未检测到协议版本 " + protocolVersion + "（" + versionName + "）的资源包文件（" + zipName + "）。\n"
+                + "是否自动下载？（建议连接 Wi-Fi）")
+            .setPositiveButton("下载资源包", (d, w) ->
+                downloadResourcepackBlocking(selected, versionName, protocolVersion, resourcepackFile))
+            .setNegativeButton("直接进入", (d, w) ->
+                checkSoundsAndLaunch(selected, versionName, protocolVersion))
+            .setCancelable(false)
+            .show();
+    }
+
+    /**
+     * 阻塞式下载资源包：弹进度条，下载完成后自动启动
+     */
+    private void downloadResourcepackBlocking(Account selected, String versionName,
+                                               int protocolVersion, File destFile) {
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(60, 30, 60, 40);
+
+        TextView tvMsg = new TextView(this);
+        tvMsg.setText("正在下载资源包 " + "resourcepack" + protocolVersion + ".zip  ...");
+        tvMsg.setTextSize(15);
+        tvMsg.setTextColor(0xFF333333);
+        layout.addView(tvMsg);
+
+        ProgressBar progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progressBar.setMax(100);
+        progressBar.setProgress(0);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 40);
+        lp.setMargins(0, 24, 0, 0);
+        progressBar.setLayoutParams(lp);
+        layout.addView(progressBar);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("下载资源包")
+            .setView(layout)
+            .setCancelable(false)
+            .show();
+
+        new Thread(() -> {
+            try {
+                File parent = destFile.getParentFile();
+                if (parent != null && !parent.exists()) parent.mkdirs();
+
+                String url = BASE_URL + "/resourcepack/" + protocolVersion;
+                HttpURLConnection conn = DohResolver.openConnection(url);
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(30000);
+                conn.setInstanceFollowRedirects(true);
+
+                int code = conn.getResponseCode();
+                if (code != 200) {
+                    runOnUiThread(() -> {
+                        dialog.dismiss();
+                        Toast.makeText(this, "下载资源包失败: HTTP " + code, Toast.LENGTH_LONG).show();
+                        checkSoundsAndLaunch(selected, versionName, protocolVersion);
+                    });
+                    conn.disconnect();
+                    return;
+                }
+
+                int totalBytes = conn.getContentLength();
+                try (InputStream is = conn.getInputStream();
+                     FileOutputStream fos = new FileOutputStream(destFile)) {
+                    byte[] buffer = new byte[8192];
+                    int bytesRead;
+                    long totalRead = 0;
+                    while ((bytesRead = is.read(buffer)) != -1) {
+                        fos.write(buffer, 0, bytesRead);
+                        totalRead += bytesRead;
+                        if (totalBytes > 0) {
+                            final int percent = (int)(totalRead * 100 / totalBytes);
+                            runOnUiThread(() -> progressBar.setProgress(percent));
+                        }
+                    }
+                }
+                conn.disconnect();
+
+                runOnUiThread(() -> {
+                    dialog.dismiss();
+                    Toast.makeText(this, "资源包下载完成", Toast.LENGTH_SHORT).show();
+                    checkSoundsAndLaunch(selected, versionName, protocolVersion);
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    dialog.dismiss();
+                    Toast.makeText(this, "下载资源包失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    checkSoundsAndLaunch(selected, versionName, protocolVersion);
+                });
+            }
+        }).start();
     }
 
     /**
