@@ -7,12 +7,15 @@ import android.util.Log;
 
 import com.calcite.util.DohResolver;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 public class CalciteApiService {
 
@@ -49,6 +52,19 @@ public class CalciteApiService {
             this.token = token;
             this.username = username;
             this.email = email;
+        }
+    }
+
+    /** 排行榜条目 */
+    public static class RankEntry {
+        public final int rank;
+        public final String username;
+        public final int totalPlaytimeSeconds;
+
+        public RankEntry(int rank, String username, int totalPlaytimeSeconds) {
+            this.rank = rank;
+            this.username = username;
+            this.totalPlaytimeSeconds = totalPlaytimeSeconds;
         }
     }
 
@@ -196,6 +212,41 @@ public class CalciteApiService {
                 }
             } catch (Exception e) {
                 Log.e(TAG, "fetchPlaytime failed", e);
+                callback.onError("网络错误: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    /**
+     * GET /ranking — 获取游戏时长排行榜（无需认证）
+     */
+    public void fetchLeaderboard(Callback<List<RankEntry>> callback) {
+        new Thread(() -> {
+            try {
+                HttpURLConnection conn = openDoh("/ranking");
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+
+                int code = conn.getResponseCode();
+                if (code == 200) {
+                    String resp = readResponse(conn);
+                    JSONObject json = new JSONObject(resp);
+                    JSONArray arr = json.getJSONArray("ranking");
+                    List<RankEntry> list = new ArrayList<>();
+                    for (int i = 0; i < arr.length(); i++) {
+                        JSONObject item = arr.getJSONObject(i);
+                        String name = item.getString("username");
+                        int secs = item.getInt("totalPlaytimeSeconds");
+                        list.add(new RankEntry(i + 1, name, secs));
+                    }
+                    callback.onSuccess(list);
+                } else {
+                    String err = readErrorResponse(conn);
+                    callback.onError(parseError(err));
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "fetchLeaderboard failed", e);
                 callback.onError("网络错误: " + e.getMessage());
             }
         }).start();

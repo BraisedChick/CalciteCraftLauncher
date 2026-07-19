@@ -255,6 +255,7 @@ public class LauncherActivity extends Activity {
         pageMy.findViewById(R.id.btnRegisterCalcite).setOnClickListener(v -> showRegisterDialog());
         pageMy.findViewById(R.id.btnLoginCalcite).setOnClickListener(v -> showLoginDialog());
         pageMy.findViewById(R.id.btnLogoutCalcite).setOnClickListener(v -> logoutCalcite());
+        pageMy.findViewById(R.id.btnLeaderboard).setOnClickListener(v -> showLeaderboardDialog());
         updateCalciteStatus();
     }
 
@@ -313,6 +314,72 @@ public class LauncherActivity extends Activity {
                 runOnUiThread(() -> {
                     tvPlaytime.setText("查询失败");
                     Toast.makeText(LauncherActivity.this, message, Toast.LENGTH_SHORT).show();
+                });
+            }
+        });
+    }
+
+    private void showLeaderboardDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(40, 20, 40, 20);
+        layout.setBackgroundColor(0x80000000);
+
+        TextView tvLoading = new TextView(this);
+        tvLoading.setText("加载中...");
+        tvLoading.setTextSize(14);
+        tvLoading.setTextColor(0xFFFFFFFF);
+        tvLoading.setGravity(android.view.Gravity.CENTER);
+        tvLoading.setPadding(0, 20, 0, 20);
+        layout.addView(tvLoading);
+
+        AlertDialog dialog = builder.setTitle("游戏时长排行榜")
+            .setView(layout)
+            .setNegativeButton("关闭", null)
+            .show();
+
+        if (calciteApi == null) calciteApi = new CalciteApiService();
+        calciteApi.fetchLeaderboard(new CalciteApiService.Callback<List<CalciteApiService.RankEntry>>() {
+            @Override
+            public void onSuccess(List<CalciteApiService.RankEntry> ranking) {
+                runOnUiThread(() -> {
+                    layout.removeView(tvLoading);
+                    for (CalciteApiService.RankEntry entry : ranking) {
+                        View row = getLayoutInflater().inflate(R.layout.item_rank, null);
+                        TextView tvRank = row.findViewById(R.id.tvRank);
+                        TextView tvName = row.findViewById(R.id.tvRankName);
+                        TextView tvTime = row.findViewById(R.id.tvRankTime);
+
+                        tvRank.setText("#" + entry.rank);
+                        if (entry.rank <= 3) {
+                            int[] colors = {0xFFFFD700, 0xFFC0C0C0, 0xFFCD7F32};
+                            tvRank.setTextColor(colors[entry.rank - 1]);
+                            tvRank.setTextSize(16);
+                        }
+                        tvName.setText(entry.username);
+                        int h = entry.totalPlaytimeSeconds / 3600;
+                        int m = (entry.totalPlaytimeSeconds % 3600) / 60;
+                        tvTime.setText(h + "h " + m + "m");
+
+                        layout.addView(row);
+                        // 分割线
+                        if (entry.rank < ranking.size()) {
+                            View divider = new View(LauncherActivity.this);
+                            divider.setLayoutParams(new LinearLayout.LayoutParams(
+                                LinearLayout.LayoutParams.MATCH_PARENT, 1));
+                            divider.setBackgroundColor(0xFF333355);
+                            layout.addView(divider);
+                        }
+                    }
+                });
+            }
+
+            @Override
+            public void onError(String message) {
+                runOnUiThread(() -> {
+                    tvLoading.setText("加载失败: " + message);
+                    tvLoading.setTextColor(0xFFFF5252);
                 });
             }
         });
