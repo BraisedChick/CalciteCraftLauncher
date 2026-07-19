@@ -266,9 +266,9 @@ void MusicManager::startPlaying(const std::string& resourcePath) {
     bufConfig.sampleRate = sampleRate;
 
     ma_audio_buffer* buf = new ma_audio_buffer();
-    ma_result result = ma_audio_buffer_init(&bufConfig, buf);
+    ma_result result = ma_audio_buffer_init_copy(&bufConfig, buf);
     if (result != MA_SUCCESS) {
-        LOGE("ma_audio_buffer_init failed (error %d)", result);
+        LOGE("ma_audio_buffer_init_copy failed (error %d)", result);
         delete buf;
         delete[] pcmData;
         pcmData = nullptr;
@@ -398,9 +398,9 @@ void MusicManager::playClickSound() {
     bufConfig.sampleRate = clickSampleRate;
 
     ma_audio_buffer* buf = new ma_audio_buffer();
-    ma_result result = ma_audio_buffer_init(&bufConfig, buf);
+    ma_result result = ma_audio_buffer_init_copy(&bufConfig, buf);
     if (result != MA_SUCCESS) {
-        LOGE("click ma_audio_buffer_init failed: %d", result);
+        LOGE("click ma_audio_buffer_init_copy failed: %d", result);
         delete buf;
         return;
     }
@@ -477,8 +477,8 @@ void MusicManager::playOneShot(const std::string& resourcePath) {
     bufConfig.sampleRate = (ma_uint32)sampleRate;
 
     ma_audio_buffer* buf = new ma_audio_buffer();
-    if (ma_audio_buffer_init(&bufConfig, buf) != MA_SUCCESS) {
-        LOGE("playOneShot ma_audio_buffer_init failed");
+    if (ma_audio_buffer_init_copy(&bufConfig, buf) != MA_SUCCESS) {
+        LOGE("playOneShot ma_audio_buffer_init_copy failed");
         delete buf;
         return;
     }
