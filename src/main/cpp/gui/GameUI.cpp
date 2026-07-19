@@ -744,20 +744,6 @@ void GameUI::performBlockBreak() {
         }
     }
 
-    // 播放挖掘命中音效
-    {
-        uint32_t st = 0;
-        auto* cm2 = engine->getChunkManager();
-        if (cm2) {
-            auto ch = cm2->getChunk(result.blockX >> 4, result.blockZ >> 4);
-            if (ch) st = ch->getBlockState(result.blockX & 15, result.blockY, result.blockZ & 15);
-        }
-        if (st) {
-            std::string cat = getBlockSoundCategory(st);
-            MusicManager::getInstance().playOneShot("step/" + cat + "1");
-        }
-    }
-
     digging = true;
 }
 
