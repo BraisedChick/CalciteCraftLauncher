@@ -13,17 +13,45 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
-import com.calcite.util.DohResolver;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import android.view.inputmethod.InputMethodManager;
 
+import java.io.IOException;
+import java.net.InetAddress;
+import java.util.Arrays;
+import java.util.concurrent.TimeUnit;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+
+import com.calcite.util.DohResolver;
+
 public class MainActivity extends Activity {
+    static final OkHttpClient httpClient = new OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .dns(hostname -> {
+                if ("api.calcite.eu.cc".equals(hostname)) {
+                    String ip = DohResolver.getServerIp();
+                    if (ip != null && !ip.equals(hostname)) {
+                        return Arrays.asList(InetAddress.getByAddress(hostname, parseIp(ip)));
+                    }
+                }
+                return Arrays.asList(InetAddress.getAllByName(hostname));
+            })
+            .build();
+
+    private static byte[] parseIp(String addr) {
+        byte[] bytes = new byte[4];
+        String[] parts = addr.split("\\.");
+        for (int i = 0; i < 4; i++) bytes[i] = (byte) Integer.parseInt(parts[i]);
+        return bytes;
+    }
+
     private RendererSurfaceView rendererSurfaceView;
     private boolean libraryLoaded = false;
 
@@ -411,43 +439,20 @@ public class MainActivity extends Activity {
      * @return 下载成功返回 true
      */
     public static boolean downloadFile(String urlString, String destPath) {
-        HttpURLConnection conn = null;
-        try {
-            if (urlString.contains("api.calcite.eu.cc")) {
-                conn = DohResolver.openConnection(urlString);
-            } else {
-                conn = (HttpURLConnection) new URL(urlString).openConnection();
-            }
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(15000);
-            conn.setReadTimeout(30000);
-            conn.setInstanceFollowRedirects(true);
-
-            int code = conn.getResponseCode();
-            if (code != 200) {
-                android.util.Log.e("MainActivity", "downloadFile failed: HTTP " + code + " for " + urlString);
-                return false;
-            }
-
-            try (InputStream is = conn.getInputStream();
+        Request request = new Request.Builder().url(urlString).build();
+        try (Response response = httpClient.newCall(request).execute()) {
+            if (!response.isSuccessful()) return false;
+            try (InputStream is = response.body().byteStream();
                  FileOutputStream fos = new FileOutputStream(destPath)) {
                 byte[] buffer = new byte[8192];
-                int bytesRead;
-                long totalBytes = 0;
-                while ((bytesRead = is.read(buffer)) != -1) {
-                    fos.write(buffer, 0, bytesRead);
-                    totalBytes += bytesRead;
+                int len;
+                while ((len = is.read(buffer)) != -1) {
+                    fos.write(buffer, 0, len);
                 }
-                android.util.Log.i("MainActivity", "Downloaded " + totalBytes + " bytes to " + destPath);
-                return true;
             }
-        } catch (Exception e) {
-            android.util.Log.e("MainActivity", "downloadFile error: " + e.getMessage(), e);
+            return true;
+        } catch (IOException e) {
             return false;
-        } finally {
-            if (conn != null) {
-                conn.disconnect();
-            }
         }
     }
 }

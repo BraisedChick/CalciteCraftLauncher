@@ -51,11 +51,13 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
 
 public class LauncherActivity extends Activity {
 
@@ -1096,39 +1098,34 @@ public class LauncherActivity extends Activity {
                 if (parent != null && !parent.exists()) parent.mkdirs();
 
                 String url = BASE_URL + "/resourcepack/" + protocolVersion;
-                HttpURLConnection conn = DohResolver.openConnection(url);
-                conn.setRequestMethod("GET");
-                conn.setConnectTimeout(15000);
-                conn.setReadTimeout(30000);
-                conn.setInstanceFollowRedirects(true);
+                OkHttpClient client = MainActivity.httpClient;
+                Request request = new Request.Builder().url(url).build();
+                try (Response response = client.newCall(request).execute()) {
+                    if (!response.isSuccessful()) {
+                        runOnUiThread(() -> {
+                            dialog.dismiss();
+                            Toast.makeText(this, "下载资源包失败: HTTP " + response.code(), Toast.LENGTH_LONG).show();
+                            checkSoundsAndLaunch(selected, versionName, protocolVersion);
+                        });
+                        return;
+                    }
 
-                int code = conn.getResponseCode();
-                if (code != 200) {
-                    runOnUiThread(() -> {
-                        dialog.dismiss();
-                        Toast.makeText(this, "下载资源包失败: HTTP " + code, Toast.LENGTH_LONG).show();
-                        checkSoundsAndLaunch(selected, versionName, protocolVersion);
-                    });
-                    conn.disconnect();
-                    return;
-                }
-
-                int totalBytes = conn.getContentLength();
-                try (InputStream is = conn.getInputStream();
-                     FileOutputStream fos = new FileOutputStream(destFile)) {
-                    byte[] buffer = new byte[8192];
-                    int bytesRead;
-                    long totalRead = 0;
-                    while ((bytesRead = is.read(buffer)) != -1) {
-                        fos.write(buffer, 0, bytesRead);
-                        totalRead += bytesRead;
-                        if (totalBytes > 0) {
-                            final int percent = (int)(totalRead * 100 / totalBytes);
-                            runOnUiThread(() -> progressBar.setProgress(percent));
+                    long totalBytes = response.body().contentLength();
+                    try (InputStream is = response.body().byteStream();
+                         FileOutputStream fos = new FileOutputStream(destFile)) {
+                        byte[] buffer = new byte[8192];
+                        int bytesRead;
+                        long totalRead = 0;
+                        while ((bytesRead = is.read(buffer)) != -1) {
+                            fos.write(buffer, 0, bytesRead);
+                            totalRead += bytesRead;
+                            if (totalBytes > 0) {
+                                final int percent = (int)(totalRead * 100 / totalBytes);
+                                runOnUiThread(() -> progressBar.setProgress(percent));
+                            }
                         }
                     }
                 }
-                conn.disconnect();
 
                 runOnUiThread(() -> {
                     dialog.dismiss();
@@ -1206,25 +1203,19 @@ public class LauncherActivity extends Activity {
                 new File(soundsDir).mkdirs();
 
                 // 1. 获取音效文件列表
-                HttpURLConnection conn = DohResolver.openConnection(BASE_URL+"/sounds");
-                conn.setRequestMethod("GET");
-                conn.setConnectTimeout(10000);
-                conn.setReadTimeout(10000);
-
-                if (conn.getResponseCode() != 200) {
-                    runOnUiThread(() -> {
-                        dialog.dismiss();
-                        Toast.makeText(this, "获取音效列表失败", Toast.LENGTH_LONG).show();
-                    });
-                    return;
-                }
-
+                OkHttpClient client = MainActivity.httpClient;
+                Request listRequest = new Request.Builder().url(BASE_URL + "/sounds").build();
                 String json;
-                try (InputStream is = conn.getInputStream()) {
-                    java.util.Scanner s = new java.util.Scanner(is, "UTF-8").useDelimiter("\\A");
-                    json = s.hasNext() ? s.next() : "[]";
+                try (Response listResponse = client.newCall(listRequest).execute()) {
+                    if (!listResponse.isSuccessful()) {
+                        runOnUiThread(() -> {
+                            dialog.dismiss();
+                            Toast.makeText(this, "获取音效列表失败", Toast.LENGTH_LONG).show();
+                        });
+                        return;
+                    }
+                    json = listResponse.body().string();
                 }
-                conn.disconnect();
 
                 // 2. 逐个下载缺失文件，更新进度条
                 JSONArray files = new JSONArray(json);
