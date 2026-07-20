@@ -1923,8 +1923,7 @@ void GLRenderer::initPanorama() {
     LOGI("Panorama cubemap: loaded %d/6 faces, texture ID=%d", loadedCount, panoramaCubemap);
 
     // 2. 编译着色器
-    const char* vsrc = R"(
-#version 300 es
+    const char* vsrc = R"(#version 300 es
 layout(location=0) in vec3 aPos;
 out vec3 vDir;
 uniform mat4 uMVP;
@@ -1934,8 +1933,7 @@ void main() {
 }
 )";
 
-    const char* fsrc = R"(
-#version 300 es
+    const char* fsrc = R"(#version 300 es
 precision mediump float;
 in vec3 vDir;
 out vec4 FragColor;
