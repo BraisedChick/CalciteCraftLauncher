@@ -110,6 +110,30 @@ void InventoryScreen::renderPlayerInventory(float w, float h) {
                        sy + INV_SLOT - textSize.y - 2),
                 IM_COL32(255, 255, 255, 255), countStr);
         }
+
+        // 耐久条
+        if (slot.maxDamage > 0) {
+            float pad = 5.0f;
+            float durBarY = sy + INV_SLOT - 4.0f;
+            float durBarH = 3.0f;
+            float durBarX = sx + pad;
+            float durBarW = INV_SLOT - pad * 2;
+            float ratio = 1.0f - (float)slot.damage / (float)slot.maxDamage;
+            ratio = std::max(0.0f, std::min(1.0f, ratio));
+
+            ImGui::GetForegroundDrawList()->AddRectFilled(
+                ImVec2(durBarX, durBarY), ImVec2(durBarX + durBarW, durBarY + durBarH),
+                IM_COL32(0, 0, 0, 150), 1.0f);
+
+            ImU32 durColor;
+            if (ratio > 0.5f) durColor = IM_COL32(64, 255, 64, 255);
+            else if (ratio > 0.25f) durColor = IM_COL32(255, 255, 64, 255);
+            else durColor = IM_COL32(255, 64, 64, 255);
+
+            ImGui::GetForegroundDrawList()->AddRectFilled(
+                ImVec2(durBarX, durBarY), ImVec2(durBarX + durBarW * ratio, durBarY + durBarH),
+                durColor, 1.0f);
+        }
     };
 
     auto getSlotAtMouse = [&]() -> int {
@@ -480,6 +504,30 @@ void InventoryScreen::renderCraftingTable(float w, float h) {
                 ImVec2(sx + INV_SLOT - textSize.x - 3,
                        sy + INV_SLOT - textSize.y - 2 + ITEM_Y_OFFSET),
                 IM_COL32(255, 255, 255, 255), countStr);
+        }
+
+        // 耐久条
+        if (slot.maxDamage > 0) {
+            float pad = 5.0f;
+            float durBarY = sy + INV_SLOT - 4.0f + ITEM_Y_OFFSET;
+            float durBarH = 3.0f;
+            float durBarX = sx + pad;
+            float durBarW = INV_SLOT - pad * 2;
+            float ratio = 1.0f - (float)slot.damage / (float)slot.maxDamage;
+            ratio = std::max(0.0f, std::min(1.0f, ratio));
+
+            ImGui::GetForegroundDrawList()->AddRectFilled(
+                ImVec2(durBarX, durBarY), ImVec2(durBarX + durBarW, durBarY + durBarH),
+                IM_COL32(0, 0, 0, 150), 1.0f);
+
+            ImU32 durColor;
+            if (ratio > 0.5f) durColor = IM_COL32(64, 255, 64, 255);
+            else if (ratio > 0.25f) durColor = IM_COL32(255, 255, 64, 255);
+            else durColor = IM_COL32(255, 64, 64, 255);
+
+            ImGui::GetForegroundDrawList()->AddRectFilled(
+                ImVec2(durBarX, durBarY), ImVec2(durBarX + durBarW * ratio, durBarY + durBarH),
+                durColor, 1.0f);
         }
     };
 
