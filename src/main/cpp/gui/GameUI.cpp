@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <unordered_set>
+#include <algorithm>
 
 #define IMGUI_IMPL_OPENGL_ES3
 #define IMGUI_IMPL_OPENGL_LOADER_CUSTOM
@@ -48,14 +49,14 @@
 
 #define OPTIONS_FILE_PATH "/data/data/com.calcite/options.txt"
 
-#define JOYSTICK_CENTER_X  220.0f
-#define JOYSTICK_CENTER_Y_OFFSET 210.0f
-#define JOYSTICK_RADIUS    110.0f
-#define JOYSTICK_KNOB_RADIUS 38.0f
-#define JOYSTICK_MAX_DIST  65.0f
-#define BTN_RADIUS         38.0f
-#define BTN_RIGHT_MARGIN   90.0f
-#define BTN_VERTICAL_SPACING 85.0f
+#define JOYSTICK_CENTER_X      (ImGui::GetIO().DisplaySize.x * 0.1375f)
+#define JOYSTICK_CENTER_Y_OFFSET (ImGui::GetIO().DisplaySize.y * 0.292f)
+#define JOYSTICK_RADIUS        (std::min(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y) * 0.153f)
+#define JOYSTICK_KNOB_RADIUS   (std::min(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y) * 0.053f)
+#define JOYSTICK_MAX_DIST      (std::min(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y) * 0.09f)
+#define BTN_RADIUS             (std::min(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y) * 0.053f)
+#define BTN_RIGHT_MARGIN       (ImGui::GetIO().DisplaySize.x * 0.056f)
+#define BTN_VERTICAL_SPACING   (ImGui::GetIO().DisplaySize.y * 0.118f)
 
 GameUI& GameUI::getInstance() {
     static GameUI instance;
@@ -1006,8 +1007,8 @@ bool GameUI::isInSprintButtonArea(float x, float y) const {
 }
 
 bool GameUI::isInAttackButtonArea(float x, float y) const {
-    float bx = ImGui::GetIO().DisplaySize.x - BTN_RIGHT_MARGIN - 200.0f;
-    float by = ImGui::GetIO().DisplaySize.y * 0.5f - BTN_VERTICAL_SPACING * 2 + 150.0f;
+    float bx = ImGui::GetIO().DisplaySize.x - BTN_RIGHT_MARGIN - ImGui::GetIO().DisplaySize.x * 0.125f;
+    float by = ImGui::GetIO().DisplaySize.y * 0.5f - BTN_VERTICAL_SPACING * 2 + ImGui::GetIO().DisplaySize.y * 0.21f;
     return ((x-bx)*(x-bx) + (y-by)*(y-by)) <= (BTN_RADIUS * BTN_RADIUS * 1.5f);
 }
 
@@ -1018,15 +1019,16 @@ bool GameUI::isInPlaceButtonArea(float x, float y) const {
 }
 
 bool GameUI::isInF3ButtonArea(float x, float y) const {
-    const float F3_W = 52.0f, F3_H = 28.0f;
-    const float F3_X = ImGui::GetIO().DisplaySize.x * 0.25f - F3_W * 0.5f;
-    const float F3_Y = 10.0f;
+    float w = ImGui::GetIO().DisplaySize.x, h = ImGui::GetIO().DisplaySize.y;
+    const float F3_W = w * 0.0325f, F3_H = h * 0.039f;
+    const float F3_X = w * 0.25f - F3_W * 0.5f;
+    const float F3_Y = h * 0.014f;
     return x >= F3_X && x <= F3_X + F3_W && y >= F3_Y && y <= F3_Y + F3_H;
 }
 
 bool GameUI::isInEButtonArea(float x, float y) const {
     float w = ImGui::GetIO().DisplaySize.x, h = ImGui::GetIO().DisplaySize.y;
-    const float SLOT_SIZE = 55.0f, SLOT_GAP = 5.0f, HOTBAR_Y = h - 61.0f;
+    const float SLOT_SIZE = w * 0.034f, SLOT_GAP = w * 0.003f, HOTBAR_Y = h * 0.915f;
     float totalW = 9.0f * SLOT_SIZE + 8.0f * SLOT_GAP;
     float hotbarX = w * 0.5f - totalW * 0.5f;
     float btnX = hotbarX + totalW + 10.0f;
@@ -1035,7 +1037,7 @@ bool GameUI::isInEButtonArea(float x, float y) const {
 
 int GameUI::hotbarSlotAt(float x, float y) const {
     float h = ImGui::GetIO().DisplaySize.y, w = ImGui::GetIO().DisplaySize.x;
-    const float SLOT_SIZE = 55.0f, SLOT_GAP = 5.0f, HOTBAR_Y = h - 61.0f;
+    const float SLOT_SIZE = w * 0.034f, SLOT_GAP = w * 0.003f, HOTBAR_Y = h * 0.915f;
     float totalW = 9.0f * SLOT_SIZE + 8.0f * SLOT_GAP;
     float hotbarX = w * 0.5f - totalW * 0.5f;
     if (y < HOTBAR_Y || y > HOTBAR_Y + SLOT_SIZE) return -1;

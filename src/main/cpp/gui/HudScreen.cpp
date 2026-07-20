@@ -15,16 +15,17 @@
 
 #include <chrono>
 #include <cmath>
+#include <algorithm>
 
 // 游戏内 UI 布局常量
-#define JOYSTICK_CENTER_X  220.0f
-#define JOYSTICK_CENTER_Y_OFFSET 210.0f
-#define JOYSTICK_RADIUS    110.0f
-#define JOYSTICK_KNOB_RADIUS 38.0f
-#define JOYSTICK_MAX_DIST  65.0f
-#define BTN_RADIUS         38.0f
-#define BTN_RIGHT_MARGIN   90.0f
-#define BTN_VERTICAL_SPACING 85.0f
+#define JOYSTICK_CENTER_X      (ImGui::GetIO().DisplaySize.x * 0.1375f)
+#define JOYSTICK_CENTER_Y_OFFSET (ImGui::GetIO().DisplaySize.y * 0.292f)
+#define JOYSTICK_RADIUS        (std::min(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y) * 0.153f)
+#define JOYSTICK_KNOB_RADIUS   (std::min(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y) * 0.053f)
+#define JOYSTICK_MAX_DIST      (std::min(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y) * 0.09f)
+#define BTN_RADIUS             (std::min(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y) * 0.053f)
+#define BTN_RIGHT_MARGIN       (ImGui::GetIO().DisplaySize.x * 0.056f)
+#define BTN_VERTICAL_SPACING   (ImGui::GetIO().DisplaySize.y * 0.118f)
 
 void HudScreen::render(int mouseX, int mouseY) {
     ImGuiIO& io = ImGui::GetIO();
@@ -94,8 +95,8 @@ void HudScreen::render(int mouseX, int mouseY) {
     draw->AddLine(ImVec2(btnX - 8, btnSprintY + 6), ImVec2(btnX + 8, btnSprintY + 10), sprintIcon, 3.0f);
 
     // ===== 攻击按钮 =====
-    float btnAttackY = h * 0.5f - BTN_VERTICAL_SPACING * 2 + 150.0f;
-    float btnAttackX = btnX - 200.0f;
+    float btnAttackY = h * 0.5f - BTN_VERTICAL_SPACING * 2 + h * 0.21f;
+    float btnAttackX = btnX - w * 0.125f;
     {
         bool atkPressed = gui.isButtonAttack();
         ImU32 atkBg = atkPressed ? IM_COL32(255, 255, 255, 140) : IM_COL32(255, 255, 255, 60);
@@ -122,10 +123,10 @@ void HudScreen::render(int mouseX, int mouseY) {
 
     // ===== F3 按钮 =====
     {
-        const float F3_W = 52.0f;
-        const float F3_H = 28.0f;
+        const float F3_W = w * 0.0325f;
+        const float F3_H = h * 0.039f;
         const float F3_X = w * 0.25f - F3_W * 0.5f;
-        const float F3_Y = 10.0f;
+        const float F3_Y = h * 0.014f;
         bool showDebug = gui.isDebugInfoVisible();
         ImU32 f3Col = showDebug ? IM_COL32(255, 255, 0, 200) : IM_COL32(255, 255, 255, 80);
         ImU32 f3Bg = showDebug ? IM_COL32(255, 255, 0, 40) : IM_COL32(255, 255, 255, 25);
@@ -141,9 +142,9 @@ void HudScreen::render(int mouseX, int mouseY) {
     // ===== 准星 =====
     float cx = w * 0.5f;
     float cy = h * 0.5f;
-    const float CROSS_SIZE = 16.0f;
+    const float CROSS_SIZE = std::min(w, h) * 0.022f;
     const float CROSS_GAP = 0.0f;
-    const float CROSS_THICK = 3.0f;
+    const float CROSS_THICK = 2.5f;
     ImU32 crossCol = IM_COL32(255, 255, 255, 200);
     draw->AddLine(ImVec2(cx - CROSS_SIZE, cy), ImVec2(cx - CROSS_GAP, cy), crossCol, CROSS_THICK);
     draw->AddLine(ImVec2(cx + CROSS_GAP, cy), ImVec2(cx + CROSS_SIZE, cy), crossCol, CROSS_THICK);
@@ -159,9 +160,9 @@ void HudScreen::render(int mouseX, int mouseY) {
         ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoInputs |
         ImGuiWindowFlags_NoBackground);
 
-    const float SLOT_SIZE = 55.0f;
-    const float SLOT_GAP = 5.0f;
-    const float HOTBAR_Y = h - 61.0f;
+    const float SLOT_SIZE = w * 0.034f;
+    const float SLOT_GAP = w * 0.003f;
+    const float HOTBAR_Y = h * 0.915f;
     float totalW = 9.0f * SLOT_SIZE + 8.0f * SLOT_GAP;
     float hotbarX = w * 0.5f - totalW * 0.5f;
 
@@ -221,9 +222,9 @@ void HudScreen::render(int mouseX, int mouseY) {
         if (engine && engine->getGameMode() != 1) {
             float healthVal = engine->getHealth();
             int foodVal = engine->getFood();
-            const float ICON_SIZE = 20.0f;
+            const float ICON_SIZE = w * 0.0125f;
             const float GAP = 1.0f;
-            const float HUD_Y = h - 61.0f - ICON_SIZE - 18.0f;
+            const float HUD_Y = HOTBAR_Y - ICON_SIZE - h * 0.025f;
 
             if (!hudTexturesLoaded) {
                 auto& rm = ResourcepackManager::getInstance();
