@@ -34,6 +34,7 @@
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundSetExperiencePacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundSetCarriedItemPacket.hpp"
 #include "protocolCraft/Packets/Game/Serverbound/ServerboundUseItemOnPacket.hpp"
+#include "protocolCraft/Packets/Game/Serverbound/ServerboundUseItemPacket.hpp"
 #include "protocolCraft/Packets/Game/Serverbound/ServerboundPlayerActionPacket.hpp"
 #include "protocolCraft/Packets/Game/Serverbound/ServerboundInteractPacket.hpp"
 #include "protocolCraft/Packets/Game/Serverbound/ServerboundClientCommandPacket.hpp"
@@ -569,6 +570,19 @@ void ClientEngine::sendBlockPlacement(int blockX, int blockY, int blockZ, int fa
     ProtocolCraft::WriteContainer writeData;
     placePacket.Write(writeData);
     net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+}
+
+void ClientEngine::sendUseItem(int hand) {
+    std::lock_guard<std::mutex> lock(netMutex);
+    if (!net || !net->isConnected()) return;
+
+    ProtocolCraft::ServerboundUseItemPacket usePacket;
+    usePacket.SetHand(hand);
+
+    ProtocolCraft::WriteContainer writeData;
+    usePacket.Write(writeData);
+    net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+    LOGI("Sent UseItem: hand=%d", hand);
 }
 
 void ClientEngine::sendBlockBreakStart(int blockX, int blockY, int blockZ, int face) {

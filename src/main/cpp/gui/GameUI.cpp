@@ -4,6 +4,7 @@
 #include <sstream>
 #include <cstdio>
 #include <cmath>
+#include <unordered_set>
 
 #define IMGUI_IMPL_OPENGL_ES3
 #define IMGUI_IMPL_OPENGL_LOADER_CUSTOM
@@ -489,6 +490,32 @@ void GameUI::performBlockPlacement() {
     auto& inv = PlayerInventory::getInstance();
     const InvSlot& held = inv.getHotbarSlot(inv.getSelectedSlot());
     bool hasItem = held.present && held.itemId > 0;
+
+    // 手持食物且饥饿值未满 → 吃东西（发送 UseItem 包）
+    if (hasItem) {
+        std::string itemName = BlockRegistry::getInstance().getItemName(held.itemId);
+        static const std::unordered_set<std::string> foodItems = {
+            "apple", "bread", "cooked_beef", "cooked_porkchop", "cooked_chicken",
+            "cooked_cod", "cooked_salmon", "beef", "porkchop", "chicken",
+            "cod", "salmon", "potato", "baked_potato", "carrot",
+            "golden_carrot", "golden_apple", "enchanted_golden_apple",
+            "melon_slice", "sweet_berries", "glow_berries",
+            "pumpkin_pie", "cookie", "mushroom_stew",
+            "beetroot_soup", "rabbit_stew", "suspicious_stew",
+            "dried_kelp", "beetroot", "poisonous_potato",
+            "spider_eye", "rotten_flesh", "chorus_fruit",
+            "cooked_mutton", "mutton", "cooked_rabbit", "rabbit",
+            "honey_bottle"
+        };
+        if (foodItems.find(itemName) != foodItems.end()) {
+            auto* engine = ClientEngine::getInstance();
+            if (engine) {
+                engine->sendUseItem(0);
+                LOGI("Ate food: %s", itemName.c_str());
+            }
+            return;
+        }
+    }
 
     auto& cam = CameraController::getInstance();
     glm::vec3 playerPos = cam.getPosition();

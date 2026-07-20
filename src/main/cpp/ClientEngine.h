@@ -56,6 +56,9 @@ public:
     // blockX/Y/Z 是被点击的目标方块坐标，face 是击中面（0-5，对应 FaceDir）
     void sendBlockPlacement(int blockX, int blockY, int blockZ, int face, int hand = 0);
 
+    // 发送使用手持物品（UseItem 包，如吃东西）
+    void sendUseItem(int hand = 0);
+
     // 发送方块破坏（PlayerAction 包）
     // blockX/Y/Z 是目标方块坐标，face 是破坏面（0-5）
     void sendBlockBreakStart(int blockX, int blockY, int blockZ, int face);
