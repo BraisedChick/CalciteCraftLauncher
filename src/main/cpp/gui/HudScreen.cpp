@@ -213,6 +213,32 @@ void HudScreen::render(int mouseX, int mouseY) {
                     HOTBAR_Y + SLOT_SIZE - textSize.y - 2));
                 ImGui::TextColored(ImVec4(1, 1, 1, 1), "%s", countStr);
             }
+
+            // 耐久条
+            if (hotbar[i].maxDamage > 0) {
+                float pad = 5.0f;
+                float durBarY = HOTBAR_Y + SLOT_SIZE - 4.0f;
+                float durBarH = 3.0f;
+                float durBarX = sx + pad;
+                float durBarW = SLOT_SIZE - pad * 2;
+                float ratio = 1.0f - (float)hotbar[i].damage / (float)hotbar[i].maxDamage;
+                ratio = std::max(0.0f, std::min(1.0f, ratio));
+
+                ImU32 bgCol = IM_COL32(0, 0, 0, 150);
+                ImGui::GetWindowDrawList()->AddRectFilled(
+                    ImVec2(durBarX, durBarY), ImVec2(durBarX + durBarW, durBarY + durBarH), bgCol, 1.0f);
+
+                ImU32 durColor;
+                if (ratio > 0.5f)
+                    durColor = IM_COL32(64, 255, 64, 255);
+                else if (ratio > 0.25f)
+                    durColor = IM_COL32(255, 255, 64, 255);
+                else
+                    durColor = IM_COL32(255, 64, 64, 255);
+
+                ImGui::GetWindowDrawList()->AddRectFilled(
+                    ImVec2(durBarX, durBarY), ImVec2(durBarX + durBarW * ratio, durBarY + durBarH), durColor, 1.0f);
+            }
         }
     }
 

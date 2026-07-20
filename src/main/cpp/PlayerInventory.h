@@ -8,6 +8,8 @@ struct InvSlot {
     bool present = false;
     int32_t itemId = 0;
     int8_t count = 0;
+    int damage = 0;          // 当前损耗值（耐久 = maxDamage - damage）
+    int maxDamage = 0;       // 最大损耗值（0=不可损耗物品）
 };
 
 class PlayerInventory {
