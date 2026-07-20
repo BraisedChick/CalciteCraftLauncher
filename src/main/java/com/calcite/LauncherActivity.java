@@ -796,12 +796,6 @@ public class LauncherActivity extends Activity {
                 e.printStackTrace();
             }
         }
-        if (accounts.isEmpty()) {
-            String savedName = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(KEY_USERNAME, "Player");
-            String uuid = UUID.nameUUIDFromBytes(("OfflinePlayer:" + savedName).getBytes()).toString();
-            accounts.add(new Account(savedName, "offline", uuid));
-            saveAccounts();
-        }
         // 恢复之前选中的账号
         selectedAccountUuid = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(KEY_SELECTED_ACCOUNT, null);
         // 恢复 Calcite 启动器账号
