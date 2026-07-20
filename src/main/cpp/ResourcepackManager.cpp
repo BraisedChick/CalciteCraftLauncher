@@ -277,6 +277,7 @@ std::string ResourcepackManager::convertGLtoGLES(const std::string& source, bool
     std::string result = "#version 300 es\n";
     if (!isVertex) {
         result += "precision mediump float;\n";
+        result += "precision highp sampler2DArray;\n";
     }
 
     // ===== 3. 所有 ivec2 → vec2 转换（GLSL ES 3.0 不支持 ivec2/float 混合运算）=====
