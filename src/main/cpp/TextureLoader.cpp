@@ -168,7 +168,6 @@ std::string TextureLoader::readTextFromZip(const std::string& filename) {
 
     std::string result(reinterpret_cast<char*>(data), uncompSize);
     mz_free(data);
-    LOGI("Read text from ZIP: %s (%zu bytes)", filename.c_str(), result.size());
     return result;
 }
 
@@ -233,15 +232,12 @@ TextureData TextureLoader::loadPNG(const std::string& filename) {
 }
 
 TextureData TextureLoader::loadImage(const std::string& filename) {
-    LOGI("loadImage called with: %s", filename.c_str());
 
     // 根据文件扩展名选择加载方式
     if (filename.size() >= 4) {
         std::string ext = filename.substr(filename.size() - 4);
-        LOGI("File extension: %s", ext.c_str());
 
         if (ext == ".png") {
-            LOGI("Detected PNG format, calling loadPNG");
             return loadPNG(filename);
         }
     }
