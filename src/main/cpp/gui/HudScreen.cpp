@@ -217,7 +217,7 @@ void HudScreen::render(int mouseX, int mouseY) {
             // 耐久条
             if (hotbar[i].maxDamage > 0) {
                 float pad = 5.0f;
-                float durBarY = HOTBAR_Y + SLOT_SIZE - 4.0f;
+                float durBarY = HOTBAR_Y + SLOT_SIZE - 7.0f;
                 float durBarH = 3.0f;
                 float durBarX = sx + pad;
                 float durBarW = SLOT_SIZE - pad * 2;

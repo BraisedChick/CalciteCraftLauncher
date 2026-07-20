@@ -114,7 +114,7 @@ void InventoryScreen::renderPlayerInventory(float w, float h) {
         // 耐久条
         if (slot.maxDamage > 0) {
             float pad = 5.0f;
-            float durBarY = sy + INV_SLOT - 4.0f;
+            float durBarY = sy + INV_SLOT - 7.0f;
             float durBarH = 3.0f;
             float durBarX = sx + pad;
             float durBarW = INV_SLOT - pad * 2;
@@ -509,7 +509,7 @@ void InventoryScreen::renderCraftingTable(float w, float h) {
         // 耐久条
         if (slot.maxDamage > 0) {
             float pad = 5.0f;
-            float durBarY = sy + INV_SLOT - 4.0f + ITEM_Y_OFFSET;
+            float durBarY = sy + INV_SLOT - 7.0f + ITEM_Y_OFFSET;
             float durBarH = 3.0f;
             float durBarX = sx + pad;
             float durBarW = INV_SLOT - pad * 2;
