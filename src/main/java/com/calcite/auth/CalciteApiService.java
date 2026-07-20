@@ -10,6 +10,7 @@ import com.calcite.util.DohResolver;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -253,8 +254,77 @@ public class CalciteApiService {
     }
 
     /**
+     * POST /logs — 上传客户端日志文件（multipart/form-data）
+     */
+    public void uploadLogs(String filePath, Callback<Void> callback) {
+        Log.i(TAG, "uploadLogs start: path=" + filePath);
+        new Thread(() -> {
+            try {
+                java.io.File file = new java.io.File(filePath);
+                if (!file.exists()) {
+                    Log.w(TAG, "uploadLogs: file not found: " + filePath);
+                    callback.onError("日志文件不存在");
+                    return;
+                }
+                Log.i(TAG, "uploadLogs: file size=" + file.length() + " bytes");
+    
+                String boundary = "----CalciteLog" + System.currentTimeMillis();
+                String url = BASE_URL + "/logs";
+                Log.i(TAG, "uploadLogs: POST " + url);
+                HttpURLConnection conn = openDoh("/logs");
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type",
+                    "multipart/form-data; boundary=" + boundary);
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(30000);
+                conn.setDoOutput(true);
+    
+                try (OutputStream os = conn.getOutputStream();
+                     java.io.FileInputStream fis = new java.io.FileInputStream(file)) {
+    
+                    // 写入文件头
+                    String header = "--" + boundary + "\r\n"
+                        + "Content-Disposition: form-data; name=\"file\"; filename=\"client.log\"\r\n"
+                        + "Content-Type: text/plain\r\n\r\n";
+                    os.write(header.getBytes(StandardCharsets.UTF_8));
+    
+                    // 写入文件内容
+                    byte[] buf = new byte[8192];
+                    int len;
+                    long written = 0;
+                    while ((len = fis.read(buf)) != -1) {
+                        os.write(buf, 0, len);
+                        written += len;
+                    }
+    
+                    // 写入结束边界
+                    String footer = "\r\n--" + boundary + "--\r\n";
+                    os.write(footer.getBytes(StandardCharsets.UTF_8));
+                    os.flush();
+                    Log.i(TAG, "uploadLogs: wrote " + written + " bytes to request body");
+                }
+    
+                int code = conn.getResponseCode();
+                Log.i(TAG, "uploadLogs: response code=" + code);
+                if (code == 200) {
+                    String resp = readResponse(conn);
+                    Log.i(TAG, "uploadLogs: success, response=" + resp);
+                    callback.onSuccess(null);
+                } else {
+                    String errBody = readErrorResponse(conn);
+                    String errMsg = parseError(errBody);
+                    Log.w(TAG, "uploadLogs: HTTP " + code + " body=" + errBody + " parsed=" + errMsg);
+                    callback.onError(errMsg);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "uploadLogs exception", e);
+                callback.onError("上传失败: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    /**
      * POST /users/time — 心跳上报
-     * 每分钟调用一次，需要 Bearer Token 认证
      */
     public void sendHeartbeat(String token, Callback<Void> callback) {
         new Thread(() -> {

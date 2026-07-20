@@ -54,6 +54,7 @@ public class MainActivity extends Activity {
 
     private RendererSurfaceView rendererSurfaceView;
     private boolean libraryLoaded = false;
+    private Process logcatProcess;
 
     // 按键码常量（与 C++ 中的定义对应）
     private static final int KEY_W = 0;
@@ -88,6 +89,9 @@ public class MainActivity extends Activity {
         String uuid = intent.getStringExtra("uuid");
         String tokenType = intent.getStringExtra("token_type");
         loadLibraryForProtocol(protocolVersion);
+
+        // 启动 logcat 重定向到本地文件（捕获所有 C++/Java 日志）
+        startLogcatCapture();
 
         android.util.Log.i("MainActivity", "========================================");
         android.util.Log.i("MainActivity", "onCreate started, protocol=" + protocolVersion);
@@ -211,6 +215,15 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (logcatProcess != null) {
+            logcatProcess.destroy();
+            logcatProcess = null;
+        }
+    }
+
+    @Override
     public void onBackPressed() {
         if (!onBackPressedNative()) {
             super.onBackPressed();
@@ -267,6 +280,18 @@ public class MainActivity extends Activity {
                 return true;
         }
         return super.onKeyUp(keyCode, event);
+    }
+
+    private void startLogcatCapture() {
+        try {
+            String logPath = getExternalFilesDir(null).getAbsolutePath() + "/logs/client.log";
+            new java.io.File(logPath).getParentFile().mkdirs();
+            Runtime.getRuntime().exec(new String[]{"logcat", "-c"});
+            logcatProcess = Runtime.getRuntime().exec(new String[]{"logcat", "-f", logPath, "*:V"});
+            android.util.Log.i("MainActivity", "Logcat capture started: " + logPath);
+        } catch (Exception e) {
+            android.util.Log.e("MainActivity", "Failed to start logcat capture", e);
+        }
     }
 
     private void enableImmersiveMode() {

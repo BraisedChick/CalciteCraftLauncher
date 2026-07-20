@@ -927,6 +927,50 @@ public class LauncherActivity extends Activity {
     private void fillSettingsPage() {
         pageSettings.findViewById(R.id.btnOpenResourcepacks).setOnClickListener(v -> openResourcepackDir());
         pageSettings.findViewById(R.id.btnAddResourcepack).setOnClickListener(v -> pickResourcepackFile());
+
+        pageSettings.findViewById(R.id.btnUploadLogs).setOnClickListener(v -> uploadLogs());
+    }
+
+    private void uploadLogs() {
+        String logPath = getExternalFilesDir(null).getAbsolutePath() + "/logs/client.log";
+        File logFile = new File(logPath);
+        if (!logFile.exists()) {
+            Toast.makeText(this, "未找到日志文件，请先启动游戏", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("上传日志")
+            .setMessage("正在上传日志文件...")
+            .setCancelable(false)
+            .show();
+
+        if (calciteApi == null) calciteApi = new CalciteApiService();
+        calciteApi.uploadLogs(logPath, new CalciteApiService.Callback<Void>() {
+            @Override
+            public void onSuccess(Void result) {
+                runOnUiThread(() -> {
+                    dialog.dismiss();
+                    new AlertDialog.Builder(LauncherActivity.this)
+                        .setTitle("上传成功")
+                        .setMessage("日志文件已上传")
+                        .setPositiveButton("确定", null)
+                        .show();
+                });
+            }
+
+            @Override
+            public void onError(String message) {
+                runOnUiThread(() -> {
+                    dialog.dismiss();
+                    new AlertDialog.Builder(LauncherActivity.this)
+                        .setTitle("上传失败")
+                        .setMessage(message)
+                        .setPositiveButton("确定", null)
+                        .show();
+                });
+            }
+        });
     }
 
     private File getResourcepacksDir() {
