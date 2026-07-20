@@ -1105,6 +1105,15 @@ public class LauncherActivity extends Activity {
     }
 
     private void launchGame() {
+        // 清空上一次的日志文件
+        try {
+            java.io.File logFile = new java.io.File(
+                getExternalFilesDir(null).getAbsolutePath() + "/logs/client.log");
+            if (logFile.exists()) {
+                logFile.delete();
+            }
+        } catch (Exception ignored) {}
+
         Account selected = accountAdapter != null ? accountAdapter.getSelectedAccount() : null;
         if (selected == null) {
             Toast.makeText(this, "请先创建账号", Toast.LENGTH_SHORT).show();
