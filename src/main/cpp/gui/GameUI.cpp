@@ -1,8 +1,10 @@
 #include "GameUI.h"
 #include <android/log.h>
+#include <android/asset_manager.h>
 #include <fstream>
 #include <sstream>
 #include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <unordered_set>
 
@@ -70,12 +72,40 @@ bool GameUI::init() {
     io.IniFilename = nullptr;
     io.LogFilename = nullptr;
 
+    ImFont* font = nullptr;
+
+    // 从 APK assets 加载内置字体（兼容所有设备）
+    {
+        AAssetManager* am = TextureLoader::getAssetManager();
+        if (am) {
+            AAsset* asset = AAssetManager_open(am, "fonts/Minecraft.ttf", AASSET_MODE_BUFFER);
+            if (asset) {
+                const void* fontData = AAsset_getBuffer(asset);
+                off_t fontLen = AAsset_getLength(asset);
+                if (fontData && fontLen > 0) {
+                    // 复制到持久内存（AAsset_close 后会释放原始 buffer）
+                    void* persistentData = malloc((size_t)fontLen);
+                    if (persistentData) {
+                        memcpy(persistentData, fontData, (size_t)fontLen);
+                        ImFont* f = io.Fonts->AddFontFromMemoryTTF(persistentData, (int)fontLen, 12.0f, nullptr,
+                            io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
+                        if (f) {
+                            font = f;
+                            LOGI("Loaded font from assets/fonts/Minecraft.ttf (%lld bytes)", (long long)fontLen);
+                        }
+                    }
+                }
+                AAsset_close(asset);
+            }
+        }
+    }
+
+    // 如果内置字体未加载，回退到系统字体
     static const char* fontPaths[] = {
         "/system/fonts/NotoSansSC-Regular.otf",
         "/system/fonts/NotoSansCJK-Regular.ttc",
         "/system/fonts/DroidSansFallback.ttf",
     };
-    ImFont* font = nullptr;
     for (const char* path : fontPaths) {
         FILE* f = fopen(path, "rb");
         if (f) {

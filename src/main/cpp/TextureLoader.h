@@ -60,6 +60,7 @@ struct TextureData {
 class TextureLoader {
 public:
     static void setAssetManager(AAssetManager* assetManager);
+    static AAssetManager* getAssetManager() { return g_assetManager; }
     static void setZipPath(const std::string& path);
     static TextureData loadPNG(const std::string& filename);
     static TextureData loadImage(const std::string& filename);
