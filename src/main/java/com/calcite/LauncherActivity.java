@@ -122,6 +122,8 @@ public class LauncherActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // 启动时轮转日志：保留最近两次
+        rotateLogs();
         // 允许内容延伸到凹槽区域（须在 setContentView 前调用）
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             getWindow().setDecorFitsSystemWindows(false);
@@ -1098,15 +1100,19 @@ public class LauncherActivity extends Activity {
         }
     }
 
-    private void launchGame() {
-        // 清空上一次的日志文件
+    /** 轮转日志：client.1.log → 删除, client.log → client.1.log */
+    private void rotateLogs() {
         try {
-            java.io.File logFile = new java.io.File(
-                getExternalFilesDir(null).getAbsolutePath() + "/logs/client.log");
-            if (logFile.exists()) {
-                logFile.delete();
-            }
+            java.io.File logsDir = new java.io.File(
+                getExternalFilesDir(null).getAbsolutePath() + "/logs/");
+            java.io.File logFile = new java.io.File(logsDir, "client.log");
+            java.io.File logBak = new java.io.File(logsDir, "client.1.log");
+            if (logBak.exists()) logBak.delete();
+            if (logFile.exists()) logFile.renameTo(logBak);
         } catch (Exception ignored) {}
+    }
+
+    private void launchGame() {
 
         Account selected = accountAdapter != null ? accountAdapter.getSelectedAccount() : null;
         if (selected == null) {
