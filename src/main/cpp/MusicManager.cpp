@@ -11,6 +11,7 @@
 
 // minivorbis OGG 解码 API（实现在 minivorbis.c 中）
 #include "3rdparty/minivorbis/minivorbis.h"
+#include "imgui.h"
 
 #define LOG_TAG "MusicManager"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -22,10 +23,27 @@ MusicManager& MusicManager::getInstance() {
     return instance;
 }
 
+MusicManager::SceneConfig MusicManager::getConfig(MusicScene scene) {
+    switch (scene) {
+        case MusicScene::MENU:
+            return {1.0f, 30.0f, true};
+        case MusicScene::GAME:
+        case MusicScene::CREATIVE:
+            return {600.0f, 1200.0f, false};
+        default:
+            return {0.0f, 0.0f, false}; // NONE，实际不会被用到
+    }
+}
+
+float MusicManager::randomDelay(float minSec, float maxSec) const {
+    if (minSec >= maxSec) return minSec;
+    std::uniform_real_distribution<float> dist(minSec, maxSec);
+    return dist(rng);
+}
+
 bool MusicManager::init() {
     if (initialized) return true;
 
-    // 初始化 miniaudio 引擎
     ma_engine* eng = new ma_engine();
     ma_engine_config config = ma_engine_config_init();
     config.channels = 2;
@@ -41,15 +59,13 @@ bool MusicManager::init() {
     engine = eng;
     rng.seed((unsigned)std::chrono::steady_clock::now().time_since_epoch().count());
 
-    // 初始延迟 5 秒后开始播放
-    nextPlayTime = 5.0f;
+    // 原版 STARTING_DELAY = 100 ticks = 5 秒
+    nextSongDelay = STARTING_DELAY;
 
     initialized = true;
-    LOGI("MusicManager initialized");
+    LOGI("MusicManager initialized, starting delay=%.1fs", nextSongDelay);
 
-    // 预加载按钮点击音效
     loadClickSound();
-
     return true;
 }
 
@@ -59,15 +75,12 @@ void MusicManager::shutdown() {
 
     LOGI("MusicManager shutdown...");
 
-    // 1. 先停引擎——这会停止音频线程，所有 ma_sound/ma_buffer 内部资源随之释放
     if (engine) {
         ma_engine_uninit(static_cast<ma_engine*>(engine));
         delete static_cast<ma_engine*>(engine);
         engine = nullptr;
     }
 
-    // 2. 音频线程已停，安全释放 C++ 层包装和 PCM 数据
-    //    （miniaudio 对象内部资源已在 engine uninit 时释放，只需 delete 包装）
     if (currentSound) {
         delete static_cast<ma_sound*>(currentSound);
         currentSound = nullptr;
@@ -83,53 +96,54 @@ void MusicManager::shutdown() {
     }
     activeOneShots.clear();
 
-    if (pcmData) {
-        delete[] pcmData;
-        pcmData = nullptr;
-    }
-    if (clickPcmData) {
-        delete[] clickPcmData;
-        clickPcmData = nullptr;
-    }
+    if (pcmData) { delete[] pcmData; pcmData = nullptr; }
+    if (clickPcmData) { delete[] clickPcmData; clickPcmData = nullptr; }
     clickSoundLoaded = false;
     currentMusicPath.clear();
 
     LOGI("MusicManager shutdown complete");
 }
 
-static float getCurrentTime() {
-    auto now = std::chrono::steady_clock::now();
-    return std::chrono::duration<float>(now.time_since_epoch()).count();
-}
-
 void MusicManager::tick() {
-    if (!initialized || !engine) return;
-    if (currentScene == MusicScene::NONE) return;
+    if (!initialized || !engine || currentScene == MusicScene::NONE) return;
 
-    float now = getCurrentTime();
+    SceneConfig cfg = getConfig(currentScene);
 
-    // 检查当前音乐是否播完
+    // ==== 原版 MusicManager.tick() 逻辑 ====
+    // 1. 当前正在播放时，检测播完+场景替换
     if (currentSound) {
         ma_sound* snd = static_cast<ma_sound*>(currentSound);
+
+        // 如果已播完 → 原版: nextSongDelay = min(nextSongDelay, random(minDelay, maxDelay))
         if (!ma_sound_is_playing(snd)) {
-            // 播放完毕，设置下次播放延迟
-            float delay = getNextDelay();
-            nextPlayTime = now + delay;
-            LOGI("Music finished, next play in %.1fs", delay);
-
-            stopPlaying();  // 释放所有资源
+            float interDelay = randomDelay(cfg.minDelaySec, cfg.maxDelaySec);
+            if (interDelay < nextSongDelay) {
+                nextSongDelay = interDelay;
+            }
+            LOGI("Music finished, next play in %.1fs", nextSongDelay);
+            stopPlaying();
         }
     }
 
-    // 到达播放时间且当前没有在播放
-    if (!currentSound && now >= nextPlayTime) {
-        std::string music = pickRandomMusic();
-        if (!music.empty()) {
-            startPlaying(music);
+    // 2. 限制最大延迟 → 原版: nextSongDelay = Math.min(nextSongDelay, music.getMaxDelay())
+    if (nextSongDelay > cfg.maxDelaySec) {
+        nextSongDelay = cfg.maxDelaySec;
+    }
+
+    // 3. 倒计时递减 + 触发播放 → 原版: if (currentMusic == null && nextSongDelay-- <= 0)
+    if (!currentSound) {
+        ImGuiIO& io = ImGui::GetIO();
+        nextSongDelay -= io.DeltaTime;
+
+        if (nextSongDelay <= 0.0f) {
+            std::string music = pickRandomMusic();
+            if (!music.empty()) {
+                startPlaying(music);
+            }
         }
     }
 
-    // 清理已完成的 one-shot 音效
+    // 清理 one-shot 音效
     for (auto it = activeOneShots.begin(); it != activeOneShots.end();) {
         ma_sound* snd = static_cast<ma_sound*>(it->sound);
         if (!ma_sound_is_playing(snd)) {
@@ -157,26 +171,29 @@ void MusicManager::setScene(MusicScene scene) {
         return;
     }
 
-    // 根据 replace 规则处理
-    bool shouldReplace = true; // MENU 的 replace=true
-    if (scene == MusicScene::GAME || scene == MusicScene::CREATIVE) {
-        shouldReplace = false; // GAME/CREATIVE 的 replace=false
+    SceneConfig cfg = getConfig(scene);
+
+    // 从菜单/无场景进入游戏时（如进服务器），强制停止当前曲并走新场景初始延迟
+    // 否则菜单音乐会继续在游戏里播放
+    if (prevScene == MusicScene::MENU || prevScene == MusicScene::NONE) {
+        stopPlaying();
+        nextSongDelay = STARTING_DELAY;
+        LOGI("Scene changed from %d to %d, stop music, next in %.1fs",
+             (int)prevScene, (int)scene, nextSongDelay);
+        return;
     }
 
-    // 从其他场景切换到 GAME/CREATIVE 时，停止当前音乐
-    // （菜单音乐不应该在游戏内继续播放）
-    if (prevScene != scene && (prevScene == MusicScene::MENU || prevScene == MusicScene::NONE)) {
+    // 原版: 如果新场景 replace=true 且正在播放，立即替换
+    if (cfg.replaceCurrentMusic && currentSound) {
         stopPlaying();
+        std::uniform_real_distribution<float> dist(0.0f, cfg.minDelaySec * 0.5f);
+        nextSongDelay = dist(rng);
+        LOGI("Scene changed to %d, replace music, next in %.1fs", (int)scene, nextSongDelay);
+    } else if (!currentSound) {
+        // 无播放，用初始延迟 5 秒
+        nextSongDelay = STARTING_DELAY;
+        LOGI("Scene changed to %d, next in %.1fs", (int)scene, nextSongDelay);
     }
-
-    if (shouldReplace || !currentSound) {
-        // 停止当前音乐，设短延迟后开始新场景音乐
-        stopPlaying();
-        float delay = getNextDelay();
-        nextPlayTime = getCurrentTime() + delay;
-        LOGI("Scene changed to %d, next play in %.1fs", (int)scene, delay);
-    }
-    // replace=false 时，等当前曲自然结束后切换
 }
 
 void MusicManager::setVolume(float volume) {
@@ -187,8 +204,6 @@ void MusicManager::setVolume(float volume) {
 }
 
 std::string MusicManager::extractOggToTemp(const std::string& resourcePath) {
-    // resourcePath 如 "music/menu/menu1"（无 .ogg 扩展名）
-    // 直接使用下载目录的 OGG 文件，无需复制到临时目录
     std::string soundsDir = "/storage/emulated/0/Android/data/com.calcite/files/sounds";
     std::string path = soundsDir + "/" + resourcePath + ".ogg";
 
@@ -198,7 +213,7 @@ std::string MusicManager::extractOggToTemp(const std::string& resourcePath) {
         return path;
     }
 
-    LOGE("extractOggToTemp: sound not found at %s (API download may not have completed)", path.c_str());
+    LOGE("extractOggToTemp: sound not found at %s", path.c_str());
     return "";
 }
 
@@ -211,7 +226,6 @@ void MusicManager::startPlaying(const std::string& resourcePath) {
         return;
     }
 
-    // 用 minivorbis 解码 OGG -> PCM
     OggVorbis_File vf;
     int err = ov_fopen(filePath.c_str(), &vf);
     if (err != 0) {
@@ -220,19 +234,14 @@ void MusicManager::startPlaying(const std::string& resourcePath) {
     }
 
     vorbis_info* vi = ov_info(&vf, -1);
-    if (!vi) {
-        LOGE("ov_info failed for %s", filePath.c_str());
-        ov_clear(&vf);
-        return;
-    }
+    if (!vi) { ov_clear(&vf); return; }
 
     int channels = vi->channels;
     long sampleRate = vi->rate;
     LOGI("Decoding OGG: %s (%d ch, %ld Hz)", filePath.c_str(), channels, sampleRate);
 
-    // 解码全部 PCM 数据
     std::vector<short> pcm;
-    pcm.reserve(sampleRate * channels * 30); // 预估30秒
+    pcm.reserve(sampleRate * channels * 30);
     char readBuf[4096];
     int bitstream = 0;
     long bytesRead;
@@ -248,49 +257,29 @@ void MusicManager::startPlaying(const std::string& resourcePath) {
         return;
     }
 
-    LOGI("Decoded PCM: %zu samples (%.1fs)", pcm.size(), (float)pcm.size() / (channels * sampleRate));
-
-    // 保存 PCM 数据（ma_audio_buffer 需要引用）
     delete[] pcmData;
     pcmData = new short[pcm.size()];
     memcpy(pcmData, pcm.data(), pcm.size() * sizeof(short));
 
-    // 创建 ma_audio_buffer
     ma_audio_buffer_config bufConfig = ma_audio_buffer_config_init(
-        ma_format_s16,
-        channels,
-        pcm.size() / channels,
-        pcmData,
-        nullptr
-    );
+        ma_format_s16, channels, pcm.size() / channels, pcmData, nullptr);
     bufConfig.sampleRate = sampleRate;
 
     ma_audio_buffer* buf = new ma_audio_buffer();
     ma_result result = ma_audio_buffer_init_copy(&bufConfig, buf);
     if (result != MA_SUCCESS) {
         LOGE("ma_audio_buffer_init_copy failed (error %d)", result);
-        delete buf;
-        delete[] pcmData;
-        pcmData = nullptr;
+        delete buf; delete[] pcmData; pcmData = nullptr;
         return;
     }
 
-    // 创建 ma_sound 从 audio buffer
     ma_sound* snd = new ma_sound();
     result = ma_sound_init_from_data_source(
-        static_cast<ma_engine*>(engine),
-        buf,
-        0,
-        nullptr,
-        snd);
-
+        static_cast<ma_engine*>(engine), buf, 0, nullptr, snd);
     if (result != MA_SUCCESS) {
         LOGE("ma_sound_init_from_data_source failed (error %d)", result);
-        ma_audio_buffer_uninit(buf);
-        delete buf;
-        delete snd;
-        delete[] pcmData;
-        pcmData = nullptr;
+        ma_audio_buffer_uninit(buf); delete buf; delete snd;
+        delete[] pcmData; pcmData = nullptr;
         return;
     }
 
@@ -300,6 +289,9 @@ void MusicManager::startPlaying(const std::string& resourcePath) {
     currentSound = snd;
     audioBuffer = buf;
     currentMusicPath = resourcePath;
+
+    // 原版: nextSongDelay = Integer.MAX_VALUE（播放中不触发倒计时）
+    nextSongDelay = 99999.0f;
     LOGI("Playing music: %s", resourcePath.c_str());
 }
 
@@ -321,15 +313,18 @@ void MusicManager::stopPlaying() {
         pcmData = nullptr;
     }
     currentMusicPath.clear();
+
+    // 原版: nextSongDelay += 100 ticks (5秒缓冲)
+    if (nextSongDelay < 99999.0f) {
+        nextSongDelay += STARTING_DELAY;
+    }
 }
 
 void MusicManager::loadClickSound() {
     if (clickSoundLoaded) return;
 
-    // 从本地 sounds 目录读取 click_stereo.ogg 并解码
     std::string filePath = extractOggToTemp("random/click_stereo");
     if (filePath.empty()) {
-        // 回退到单声道 click.ogg
         filePath = extractOggToTemp("random/click");
     }
     if (filePath.empty()) {
@@ -337,27 +332,18 @@ void MusicManager::loadClickSound() {
         return;
     }
 
-    // 用 minivorbis 解码 OGG -> PCM
     OggVorbis_File vf;
     int err = ov_fopen(filePath.c_str(), &vf);
-    if (err != 0) {
-        LOGE("ov_fopen failed for click sound: %d", err);
-        return;
-    }
+    if (err != 0) { LOGE("ov_fopen failed for click sound: %d", err); return; }
 
     vorbis_info* vi = ov_info(&vf, -1);
-    if (!vi) {
-        LOGE("ov_info failed for click sound");
-        ov_clear(&vf);
-        return;
-    }
+    if (!vi) { ov_clear(&vf); return; }
 
     clickChannels = vi->channels;
     clickSampleRate = (int)vi->rate;
 
-    // 解码全部 PCM 数据
     std::vector<short> pcm;
-    pcm.reserve(clickSampleRate * clickChannels); // 短音效
+    pcm.reserve(clickSampleRate * clickChannels);
     char readBuf[4096];
     int bitstream = 0;
     long bytesRead;
@@ -368,12 +354,8 @@ void MusicManager::loadClickSound() {
     }
     ov_clear(&vf);
 
-    if (pcm.empty()) {
-        LOGE("No PCM data decoded from click sound");
-        return;
-    }
+    if (pcm.empty()) return;
 
-    // 保存 PCM 数据
     clickPcmSize = pcm.size();
     clickPcmData = new short[clickPcmSize];
     memcpy(clickPcmData, pcm.data(), clickPcmSize * sizeof(short));
@@ -387,45 +369,24 @@ void MusicManager::loadClickSound() {
 void MusicManager::playClickSound() {
     if (!initialized || !engine || !clickSoundLoaded) return;
 
-    // 从缓存的 PCM 数据创建 one-shot ma_sound
     ma_audio_buffer_config bufConfig = ma_audio_buffer_config_init(
-        ma_format_s16,
-        clickChannels,
-        clickPcmSize / clickChannels,
-        clickPcmData,
-        nullptr
-    );
+        ma_format_s16, clickChannels, clickPcmSize / clickChannels,
+        clickPcmData, nullptr);
     bufConfig.sampleRate = clickSampleRate;
 
     ma_audio_buffer* buf = new ma_audio_buffer();
-    ma_result result = ma_audio_buffer_init_copy(&bufConfig, buf);
-    if (result != MA_SUCCESS) {
-        LOGE("click ma_audio_buffer_init_copy failed: %d", result);
-        delete buf;
-        return;
+    if (ma_audio_buffer_init_copy(&bufConfig, buf) != MA_SUCCESS) {
+        LOGE("click ma_audio_buffer_init_copy failed"); delete buf; return;
     }
 
     ma_sound* snd = new ma_sound();
-    result = ma_sound_init_from_data_source(
-        static_cast<ma_engine*>(engine),
-        buf,
-        0,   // 默认 flag：自动连接到引擎音频输出
-        nullptr,
-        snd);
-
-    if (result != MA_SUCCESS) {
-        LOGE("click ma_sound_init failed: %d", result);
-        ma_audio_buffer_uninit(buf);
-        delete buf;
-        delete snd;
-        return;
+    if (ma_sound_init_from_data_source(
+            static_cast<ma_engine*>(engine), buf, 0, nullptr, snd) != MA_SUCCESS) {
+        ma_audio_buffer_uninit(buf); delete buf; delete snd; return;
     }
 
-    // MC 按钮音量 = 0.25
     ma_sound_set_volume(snd, 0.25f);
     ma_sound_start(snd);
-
-    // 跟踪以便 tick 清理
     activeOneShots.push_back({snd, buf});
 }
 
@@ -438,24 +399,16 @@ void MusicManager::playOneShot(const std::string& resourcePath) {
         return;
     }
 
-    // 用 minivorbis 解码 OGG -> PCM
     OggVorbis_File vf;
     int err = ov_fopen(filePath.c_str(), &vf);
-    if (err != 0) {
-        LOGE("playOneShot ov_fopen failed for %s (error %d)", filePath.c_str(), err);
-        return;
-    }
+    if (err != 0) { LOGE("playOneShot ov_fopen failed for %s (error %d)", filePath.c_str(), err); return; }
 
     vorbis_info* vi = ov_info(&vf, -1);
-    if (!vi) {
-        ov_clear(&vf);
-        return;
-    }
+    if (!vi) { ov_clear(&vf); return; }
 
     int channels = vi->channels;
     long sampleRate = vi->rate;
 
-    // 解码全部 PCM 数据
     std::vector<short> pcm;
     pcm.reserve(sampleRate * channels);
     char readBuf[4096];
@@ -470,32 +423,23 @@ void MusicManager::playOneShot(const std::string& resourcePath) {
 
     if (pcm.empty()) return;
 
-    // 创建 ma_audio_buffer
     ma_audio_buffer_config bufConfig = ma_audio_buffer_config_init(
-        ma_format_s16, channels, (ma_uint64)pcm.size() / channels,
-        pcm.data(), nullptr);
+        ma_format_s16, channels, (ma_uint64)pcm.size() / channels, pcm.data(), nullptr);
     bufConfig.sampleRate = (ma_uint32)sampleRate;
 
     ma_audio_buffer* buf = new ma_audio_buffer();
     if (ma_audio_buffer_init_copy(&bufConfig, buf) != MA_SUCCESS) {
-        LOGE("playOneShot ma_audio_buffer_init_copy failed");
-        delete buf;
-        return;
+        LOGE("playOneShot ma_audio_buffer_init_copy failed"); delete buf; return;
     }
 
-    // 创建 ma_sound 从 audio buffer
     ma_sound* snd = new ma_sound();
     if (ma_sound_init_from_data_source(
             static_cast<ma_engine*>(engine), buf, 0, nullptr, snd) != MA_SUCCESS) {
-        ma_audio_buffer_uninit(buf);
-        delete buf;
-        delete snd;
-        return;
+        ma_audio_buffer_uninit(buf); delete buf; delete snd; return;
     }
 
     ma_sound_set_volume(snd, 1.0f);
     ma_sound_start(snd);
-
     activeOneShots.push_back({snd, buf});
     LOGI("Playing one-shot: %s", resourcePath.c_str());
 }
@@ -504,10 +448,8 @@ std::vector<std::string> MusicManager::getMusicFiles() const {
     switch (currentScene) {
         case MusicScene::MENU:
             return {
-                "music/menu/menu1",
-                "music/menu/menu2",
-                "music/menu/menu3",
-                "music/menu/menu4"
+                "music/menu/menu1", "music/menu/menu2",
+                "music/menu/menu3", "music/menu/menu4"
             };
         case MusicScene::GAME:
             return {
@@ -531,33 +473,13 @@ std::vector<std::string> MusicManager::getMusicFiles() const {
     }
 }
 
-float MusicManager::getNextDelay() const {
-    std::uniform_real_distribution<float> dist;
-    switch (currentScene) {
-        case MusicScene::MENU:
-            // 1-30 秒
-            dist = std::uniform_real_distribution<float>(1.0f, 30.0f);
-            break;
-        case MusicScene::GAME:
-        case MusicScene::CREATIVE:
-            // 10-20 分钟
-            dist = std::uniform_real_distribution<float>(600.0f, 1200.0f);
-            break;
-        default:
-            return 999.0f;
-    }
-    return dist(rng);
-}
-
 std::string MusicManager::pickRandomMusic() const {
     auto files = getMusicFiles();
     if (files.empty()) return "";
 
-    // 避免连续播放同一首
     std::uniform_int_distribution<int> dist(0, (int)files.size() - 1);
     int idx = dist(rng);
 
-    // 如果随机到同一首，换一个
     if (files.size() > 1 && files[idx] == currentMusicPath) {
         idx = (idx + 1) % (int)files.size();
     }
