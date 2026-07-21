@@ -2,6 +2,7 @@
 
 #include <string>
 #include <functional>
+#include <deque>
 #include <vector>
 #include <mutex>
 #include <GLES3/gl3.h>
@@ -151,6 +152,17 @@ public:
         return stage;
     }
 
+    // 聊天系统
+    struct ChatEntry {
+        std::string text;
+        unsigned int color = 0xFFFFFFFF;  // RGBA
+    };
+    void addChatMessage(const std::string& msg, unsigned int color = 0xFFFFFFFF);
+    void openChat();
+    void sendChatMessage();
+    bool isChatOpen() const { return chatOpen; }
+    const std::deque<ChatEntry>& getChatMessages() const { return chatMessages; }
+
     // 是否有任意游戏内界面打开（阻挡移动输入）
     bool isInGameUIActive() const {
         return gameMenuOpen || optionsOpen || deathScreenActive || inventoryOpen;
@@ -264,6 +276,13 @@ private:
 
     // 背包界面
     bool inventoryOpen = false;
+
+    // 聊天状态
+    bool chatOpen = false;
+    char chatInput[256] = {};
+    std::deque<ChatEntry> chatMessages;
+    void* chatFontPtr = nullptr;
+    double chatLastMsgTime = 0.0;
 
     // 容器状态（由 OpenScreen 包设置）
     int openContainerId = -1;   // -1 = 无容器, 0 = 玩家背包, >0 = 外部容器

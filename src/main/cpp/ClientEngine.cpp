@@ -49,7 +49,12 @@
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundGameEventPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundRespawnPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundSetTimePacket.hpp"
-// 实体相关包
+// 聊天包
+#include "protocolCraft/Packets/Game/Serverbound/ServerboundChatPacket.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundChatPacket.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundSystemChatPacket.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundPlayerChatPacket.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundDisguisedChatPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundAddEntityPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundAddMobPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundAddPlayerPacket.hpp"
@@ -745,6 +750,39 @@ void ClientEngine::sendRespawn() {
     LOGI("Sent respawn request (ClientCommand PERFORM_RESPAWN)");
 }
 
+void ClientEngine::sendChatMessage(const std::string& message) {
+    std::lock_guard<std::mutex> lock(netMutex);
+    if (!net || !net->isConnected()) return;
+
+    ProtocolCraft::ServerboundChatPacket chatPacket;
+    chatPacket.SetMessage(message);
+#if PROTOCOL_VERSION >= 759
+    chatPacket.SetTimestamp(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+#if PROTOCOL_VERSION < 760
+    chatPacket.SetSignedPreview(false);
+    // SaltSignature 用空签名
+    ProtocolCraft::SaltSignature saltSig;
+    saltSig.SetSalt(0);
+    std::array<unsigned char, 32> emptySig{};
+    saltSig.SetSignature(emptySig);
+    chatPacket.SetSaltSignature(saltSig);
+#else
+    chatPacket.SetSalt(0);
+    chatPacket.SetSignature(std::nullopt);
+    ProtocolCraft::LastSeenMessagesUpdate lastSeen;
+    lastSeen.SetOffset(0);
+    lastSeen.SetAcknowledged(std::bitset<20>());
+    chatPacket.SetLastSeenMessages(lastSeen);
+#endif
+#endif
+
+    ProtocolCraft::WriteContainer writeData;
+    chatPacket.Write(writeData);
+    net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+    LOGI("Sent chat message: %s", message.c_str());
+}
+
 void ClientEngine::sendContainerClick(int slotNum, int button, int containerId) {
     std::lock_guard<std::mutex> lock(netMutex);
     if (!net || !net->isConnected()) return;
@@ -1021,13 +1059,15 @@ std::string ClientEngine::parseChatComponent(const std::string& raw) const {
                     std::string subKey = elem["translate"].get<std::string>();
                     auto subIt = translations.find(subKey);
                     args.push_back(subIt != translations.end() ? subIt->second : subKey);
+                } else if (elem.is_string()) {
+                    args.push_back(elem.get<std::string>());
                 } else {
                     args.push_back("");
                 }
             }
         }
 
-        // 替换 %1$s, %2$s ...
+        // 替换 %1$s, %2$s ...（带位置编号）
         for (size_t i = 0; i < args.size(); i++) {
             std::string placeholder = "%" + std::to_string(i + 1) + "$s";
             size_t pos = 0;
@@ -1035,6 +1075,15 @@ std::string ClientEngine::parseChatComponent(const std::string& raw) const {
                 result.replace(pos, placeholder.length(), args[i]);
                 pos += args[i].length();
             }
+        }
+
+        // 替换 %s（Java 非位置格式，按顺序匹配）
+        size_t argIdx = 0;
+        size_t pos = 0;
+        while ((pos = result.find("%s", pos)) != std::string::npos && argIdx < args.size()) {
+            result.replace(pos, 2, args[argIdx]);
+            pos += args[argIdx].length();
+            argIdx++;
         }
 
         return result;
@@ -2188,6 +2237,128 @@ void ClientEngine::handlePlayPacket(int packetId,
                 LOGI("Container closed by server");
                 break;
             }
+
+            // ===== 聊天包 =====
+
+#if PROTOCOL_VERSION < 762
+            case 0x0F:
+#else
+            case 0x63:
+#endif
+            { // System Chat（服务器消息、/msg 等）
+                try {
+#if PROTOCOL_VERSION < 759
+                    ProtocolCraft::ClientboundChatPacket chatPacket;
+                    std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                    auto iter = pktData.cbegin();
+                    size_t len = pktData.size();
+                    chatPacket.Read(iter, len);
+                    std::string rawJson = chatPacket.GetMessage().GetRawText();
+                    LOGI(">>> Chat raw JSON: %s", rawJson.c_str());
+                    std::string text = rawJson.empty() ? chatPacket.GetMessage().GetText() : parseChatComponent(rawJson);
+                    LOGI("Chat: %s", text.c_str());
+                    unsigned int chatColor = (rawJson.find("multiplayer.player.") != std::string::npos) ? 0xFF55FFFF : 0xFFFFFFFF;
+                    GameUI::getInstance().addChatMessage(text, chatColor);
+#else
+                    ProtocolCraft::ClientboundSystemChatPacket sysChat;
+                    std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                    auto iter = pktData.cbegin();
+                    size_t len = pktData.size();
+                    sysChat.Read(iter, len);
+                    std::string rawJson = sysChat.GetContent().GetRawText();
+                    LOGI(">>> SystemChat raw JSON: %s", rawJson.c_str());
+                    std::string text = rawJson.empty() ? sysChat.GetContent().GetText() : parseChatComponent(rawJson);
+                    LOGI("SystemChat: %s", text.c_str());
+                    unsigned int chatColor = (rawJson.find("multiplayer.player.") != std::string::npos) ? 0xFF55FFFF : 0xFFFFFFFF;
+                    GameUI::getInstance().addChatMessage(text, chatColor);
+#endif
+                } catch (const std::exception& e) {
+                    LOGW("Failed to parse chat packet: %s", e.what());
+                }
+                break;
+            }
+
+#if PROTOCOL_VERSION >= 762
+            case 0x34:
+            { // Player Chat（玩家发送的消息，1.19+）
+                try {
+                    ProtocolCraft::ClientboundPlayerChatPacket playerChat;
+                    std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                    auto iter = pktData.cbegin();
+                    size_t len = pktData.size();
+                    playerChat.Read(iter, len);
+                    std::string text;
+#if PROTOCOL_VERSION < 760
+                    LOGI(">>> PlayerChat <760: hasUnsigned=%d", playerChat.GetUnsignedContent().has_value());
+                    text = playerChat.GetSignedContent().GetText();
+                    LOGI(">>> PlayerChat signedContent='%s'", text.c_str());
+                    if (text.empty() && playerChat.GetUnsignedContent().has_value()) {
+                        LOGI(">>> PlayerChat unsignedContent raw='%s'", playerChat.GetUnsignedContent()->GetRawText().c_str());
+                        text = playerChat.GetUnsignedContent()->GetText();
+                    }
+#else
+                    // 1.19.1+: fallback chain
+#if PROTOCOL_VERSION < 761
+                    text = text.empty() && playerChat.GetMessage().GetUnsignedContent().has_value()
+                        ? playerChat.GetMessage().GetUnsignedContent()->GetText()
+                        : text;
+#else
+                    if (playerChat.GetUnsignedContent().has_value()) {
+                        LOGI(">>> PlayerChat unsignedContent raw='%s'", playerChat.GetUnsignedContent()->GetRawText().c_str());
+                        std::string rawJson = playerChat.GetUnsignedContent()->GetRawText();
+                        text = rawJson.empty() ? playerChat.GetUnsignedContent()->GetText() : parseChatComponent(rawJson);
+                    }
+#if PROTOCOL_VERSION >= 761
+                    if (text.empty()) {
+                        text = playerChat.GetBody().GetContent();
+                        LOGI(">>> PlayerChat bodyContent='%s'", text.c_str());
+                    }
+#endif
+#endif
+#endif
+                    // 提取发送者名字
+#if PROTOCOL_VERSION < 760
+                    LOGI(">>> PlayerChat sender.GetName().GetText()='%s'", playerChat.GetSender().GetName().GetText().c_str());
+                    std::string senderName = text.empty() ? "" : playerChat.GetSender().GetName().GetText();
+#else
+                    LOGI(">>> PlayerChat chatType.Name.GetText()='%s'", playerChat.GetChatType().GetName().GetText().c_str());
+                    std::string senderName = text.empty() ? "" : playerChat.GetChatType().GetName().GetText();
+#endif
+                    if (!text.empty()) {
+                        if (!senderName.empty()) {
+                            text = "<" + senderName + "> " + text;
+                        }
+                        LOGI("PlayerChat: %s", text.c_str());
+                        GameUI::getInstance().addChatMessage(text);
+                    }
+                } catch (const std::exception& e) {
+                    LOGW("Failed to parse player chat: %s", e.what());
+                }
+                break;
+            }
+
+            case 0x1A:
+            { // Disguised Chat（1.19.3+，部分系统消息）
+                try {
+                    ProtocolCraft::ClientboundDisguisedChatPacket disgChat;
+                    std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                    auto iter = pktData.cbegin();
+                    size_t len = pktData.size();
+                    disgChat.Read(iter, len);
+                    std::string rawJson = disgChat.GetMessage().GetRawText();
+                    LOGI(">>> DisguisedChat raw JSON: %s", rawJson.c_str());
+                    std::string text = rawJson.empty() ? disgChat.GetMessage().GetText() : parseChatComponent(rawJson);
+                    if (!text.empty()) {
+                        LOGI("DisguisedChat: %s", text.c_str());
+                        unsigned int chatColor = (rawJson.find("multiplayer.player.") != std::string::npos) ? 0xFF55FFFF : 0xFFFFFFFF;
+                        GameUI::getInstance().addChatMessage(text, chatColor);
+                    }
+                } catch (const std::exception& e) {
+                    LOGW("Failed to parse disguised chat: %s", e.what());
+                }
+                break;
+            }
+#endif
 
             default: {
                 break;
