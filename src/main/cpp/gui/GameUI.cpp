@@ -247,7 +247,7 @@ void GameUI::render() {
             float chatW = io.DisplaySize.x * 0.4f;
             float chatH = io.DisplaySize.y * 0.35f;
             float chatX = 10.0f;
-            float chatY = io.DisplaySize.y - chatH - 10.0f;
+            float chatY = io.DisplaySize.y - chatH - io.DisplaySize.y * 0.15f;
 
             // 聊天消息背景
             int bgAlpha = (int)(120 * alpha);
