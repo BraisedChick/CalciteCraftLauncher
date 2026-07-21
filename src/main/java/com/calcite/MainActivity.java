@@ -283,6 +283,11 @@ public class MainActivity extends Activity {
     }
 
     private void startLogcatCapture() {
+        // LauncherActivity 已在 onCreate 时启动日志捕获，此处跳过
+        if (com.calcite.LauncherActivity.getLogcatProcess() != null) {
+            android.util.Log.i("MainActivity", "Logcat already running from LauncherActivity");
+            return;
+        }
         try {
             String logPath = getExternalFilesDir(null).getAbsolutePath() + "/logs/client.log";
             new java.io.File(logPath).getParentFile().mkdirs();
