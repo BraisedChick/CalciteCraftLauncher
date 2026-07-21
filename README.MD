@@ -27,3 +27,4 @@
 - [stb_image](https://github.com/nothings/stb)
 - [json](https://github.com/nlohmann/json)
 - [miniaudio](https://github.com/mackron/miniaudio)
+- [minivorbis](https://github.com/edubart/minivorbis)
