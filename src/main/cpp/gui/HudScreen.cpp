@@ -121,6 +121,24 @@ void HudScreen::render(int mouseX, int mouseY) {
                       plcIcon, 0, 0, 2.5f);
     }
 
+    // ===== T 按钮（打开聊天栏）=====
+    {
+        const float T_W = w * 0.0325f;
+        const float T_H = h * 0.039f;
+        const float T_X = w * 0.5f - T_W * 0.5f;
+        const float T_Y = h * 0.014f;
+        bool chatOpen = gui.isChatOpen();
+        ImU32 tCol = chatOpen ? IM_COL32(255, 255, 0, 200) : IM_COL32(255, 255, 255, 80);
+        ImU32 tBg = chatOpen ? IM_COL32(255, 255, 0, 40) : IM_COL32(255, 255, 255, 25);
+        draw->AddRectFilled(ImVec2(T_X, T_Y), ImVec2(T_X + T_W, T_Y + T_H), tBg, 6.0f);
+        draw->AddRect(ImVec2(T_X, T_Y), ImVec2(T_X + T_W, T_Y + T_H), tCol, 6.0f, 0, 1.5f);
+        const char* tText = "T";
+        ImVec2 textSize = ImGui::CalcTextSize(tText);
+        float textX = T_X + (T_W - textSize.x) * 0.5f;
+        float textY = T_Y + (T_H - textSize.y) * 0.5f;
+        draw->AddText(ImVec2(textX, textY), tCol, tText);
+    }
+
     // ===== F3 按钮 =====
     {
         const float F3_W = w * 0.0325f;

@@ -182,6 +182,9 @@ void GameUI::addInputCharacter(unsigned int c) {
     if (c == 127 || c == 8) {
         io.AddKeyEvent(ImGuiKey_Backspace, true);
         io.AddKeyEvent(ImGuiKey_Backspace, false);
+    } else if (c == 10 || c == 13) {  // \n 或 \r → 回车键
+        io.AddKeyEvent(ImGuiKey_Enter, true);
+        io.AddKeyEvent(ImGuiKey_Enter, false);
     } else {
         io.AddInputCharacter(c);
     }
@@ -285,12 +288,12 @@ void GameUI::render() {
     // 聊天输入框（T 键触发）
     if (chatOpen) {
         ImGuiIO& io = ImGui::GetIO();
-        float inputW = io.DisplaySize.x * 0.5f;
-        float inputX = 10.0f;
-        float inputY = io.DisplaySize.y - 40.0f;
+        float inputW = io.DisplaySize.x * 0.8f;
+        float inputX = (io.DisplaySize.x - inputW) * 0.5f;
+        float inputY = io.DisplaySize.y * 0.1f;
 
         ImGui::SetNextWindowPos(ImVec2(inputX, inputY));
-        ImGui::SetNextWindowSize(ImVec2(inputW, 36.0f));
+        ImGui::SetNextWindowSize(ImVec2(inputW, 60.0f));
         ImGui::Begin("##ChatInput", nullptr,
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
@@ -303,6 +306,7 @@ void GameUI::render() {
 
         // InputText with Enter handler
         ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue;
+
         if (ImGui::InputText("##ChatMsg", chatInput, 256, flags)) {
             sendChatMessage();
         }
@@ -311,18 +315,14 @@ void GameUI::render() {
         if (chatFontPtr) ImGui::PopFont();
         ImGui::PopItemWidth();
 
-        // 点击输入框外部关闭聊天
-        if (!ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow) &&
+        // 点击输入框外部关闭聊天（有活动项时不关闭，如正在编辑输入框）
+        if (!ImGui::IsAnyItemActive() &&
+            !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow) &&
             ImGui::IsMouseClicked(0)) {
             chatOpen = false;
         }
 
         ImGui::End();
-
-        // 设置焦点到输入框
-        if (!ImGui::IsAnyItemActive()) {
-            ImGui::SetKeyboardFocusHere(0);
-        }
     }
 
     ImGui::Render();
@@ -475,6 +475,11 @@ bool GameUI::isRoleTaken(TouchPoint::Role role) const {
 }
 
 void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
+    // 聊天打开时，所有触摸直接路由给 ImGui（点击输入框才能聚焦）
+    if (chatOpen) {
+        queueTouchEvent(x, y, action);
+        return;
+    }
     if (currentState == UIState::IN_GAME && (gameMenuOpen || optionsOpen || deathScreenActive)) {
         queueTouchEvent(x, y, action);
         return;
@@ -521,6 +526,9 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
             pt->role = TouchPoint::PLACE_BUTTON;
             buttons.placePressed = true;
             performBlockPlacement();
+        } else if (!isRoleTaken(TouchPoint::CHAT_BUTTON) && isInChatButtonArea(x, y)) {
+            pt->role = TouchPoint::CHAT_BUTTON;
+            openChat();
         } else if (!isRoleTaken(TouchPoint::F3_BUTTON) && isInF3ButtonArea(x, y)) {
             pt->role = TouchPoint::F3_BUTTON;
             toggleDebugInfo();
@@ -1122,6 +1130,14 @@ bool GameUI::isInF3ButtonArea(float x, float y) const {
     return x >= F3_X && x <= F3_X + F3_W && y >= F3_Y && y <= F3_Y + F3_H;
 }
 
+bool GameUI::isInChatButtonArea(float x, float y) const {
+    float w = ImGui::GetIO().DisplaySize.x, h = ImGui::GetIO().DisplaySize.y;
+    const float T_W = w * 0.0325f, T_H = h * 0.039f;
+    const float T_X = w * 0.5f - T_W * 0.5f;
+    const float T_Y = h * 0.014f;
+    return x >= T_X && x <= T_X + T_W && y >= T_Y && y <= T_Y + T_H;
+}
+
 bool GameUI::isInEButtonArea(float x, float y) const {
     float w = ImGui::GetIO().DisplaySize.x, h = ImGui::GetIO().DisplaySize.y;
     const float SLOT_SIZE = w * 0.034f, SLOT_GAP = w * 0.003f, HOTBAR_Y = h * 0.915f;
@@ -1157,8 +1173,12 @@ void GameUI::addChatMessage(const std::string& msg, unsigned int color) {
 }
 
 void GameUI::openChat() {
-    chatOpen = true;
-    memset(chatInput, 0, sizeof(chatInput));
+    if (chatOpen) {
+        chatOpen = false;
+    } else {
+        chatOpen = true;
+        memset(chatInput, 0, sizeof(chatInput));
+    }
 }
 
 void GameUI::sendChatMessage() {

@@ -454,6 +454,27 @@ Java_com_calcite_MainActivity_initRenderer(
             }
         });
 
+        // 设置键盘显示回调（直接 JNI 调用 Java 输入法）
+        GameUI::getInstance().setShowKeyboardCallback([](bool show) {
+            if (!g_jvm || !g_mainActivityObj) return;
+            JNIEnv* env;
+            bool attached = false;
+            int ger = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+            if (ger == JNI_EDETACHED) {
+                if (g_jvm->AttachCurrentThread(&env, nullptr) == JNI_OK) attached = true;
+                else return;
+            } else if (ger != JNI_OK) {
+                return;
+            }
+            jclass clazz = env->GetObjectClass(g_mainActivityObj);
+            jmethodID method = env->GetMethodID(clazz, "showKeyboardImGui", "(Z)V");
+            if (method) {
+                env->CallVoidMethod(g_mainActivityObj, method, show);
+            }
+            env->DeleteLocalRef(clazz);
+            if (attached) g_jvm->DetachCurrentThread();
+        });
+
         // 设置 FOV 更新回调
         GameUI::getInstance().setFovCallback([](float fov) {
             if (g_glRenderer) {

@@ -163,6 +163,10 @@ public:
     bool isChatOpen() const { return chatOpen; }
     const std::deque<ChatEntry>& getChatMessages() const { return chatMessages; }
 
+    // 键盘显示回调（由 native-lib 设置，直接 JNI 调用 Java）
+    using ShowKeyboardCallback = std::function<void(bool)>;
+    void setShowKeyboardCallback(ShowKeyboardCallback cb) { showKeyboardCallback = cb; }
+
     // 是否有任意游戏内界面打开（阻挡移动输入）
     bool isInGameUIActive() const {
         return gameMenuOpen || optionsOpen || deathScreenActive || inventoryOpen;
@@ -188,7 +192,7 @@ private:
     struct TouchPoint {
         int id = -1;
         bool active = false;
-        enum Role { NONE, JOYSTICK, CAMERA, UP_BUTTON, DOWN_BUTTON, SPRINT_BUTTON, ATTACK_BUTTON, PLACE_BUTTON, F3_BUTTON, E_BUTTON };
+        enum Role { NONE, JOYSTICK, CAMERA, UP_BUTTON, DOWN_BUTTON, SPRINT_BUTTON, ATTACK_BUTTON, PLACE_BUTTON, F3_BUTTON, E_BUTTON, CHAT_BUTTON };
         Role role = NONE;
         float cameraLastX = 0, cameraLastY = 0;
     };
@@ -215,6 +219,7 @@ private:
     bool isInAttackButtonArea(float x, float y) const;
     bool isInPlaceButtonArea(float x, float y) const;
     bool isInF3ButtonArea(float x, float y) const;
+    bool isInChatButtonArea(float x, float y) const;
     bool isInEButtonArea(float x, float y) const;
     int hotbarSlotAt(float x, float y) const;
 
@@ -283,6 +288,7 @@ private:
     std::deque<ChatEntry> chatMessages;
     void* chatFontPtr = nullptr;
     double chatLastMsgTime = 0.0;
+    ShowKeyboardCallback showKeyboardCallback;
 
     // 容器状态（由 OpenScreen 包设置）
     int openContainerId = -1;   // -1 = 无容器, 0 = 玩家背包, >0 = 外部容器
