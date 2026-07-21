@@ -942,12 +942,18 @@ public class LauncherActivity extends Activity {
     }
 
     private void uploadLogs() {
-        String logPath = getExternalFilesDir(null).getAbsolutePath() + "/logs/client.log";
-        File logFile = new File(logPath);
+        String logDir = getExternalFilesDir(null).getAbsolutePath() + "/logs/";
+        // 优先上传上一次的日志（client1.log），若不存在则上传当前日志
+        File logFile = new File(logDir, "client1.log");
         if (!logFile.exists()) {
-            Toast.makeText(this, "未找到日志文件，请先启动游戏", Toast.LENGTH_SHORT).show();
+            logFile = new File(logDir, "client.log");
+        }
+        if (!logFile.exists()) {
+            Toast.makeText(this, "未找到日志文件", Toast.LENGTH_SHORT).show();
             return;
         }
+
+        final String logPath = logFile.getAbsolutePath();
 
         AlertDialog dialog = new AlertDialog.Builder(this)
             .setTitle("上传日志")
@@ -1119,7 +1125,7 @@ public class LauncherActivity extends Activity {
             java.io.File logsDir = new java.io.File(
                 getExternalFilesDir(null).getAbsolutePath() + "/logs/");
             java.io.File logFile = new java.io.File(logsDir, "client.log");
-            java.io.File logBak = new java.io.File(logsDir, "client.1.log");
+            java.io.File logBak = new java.io.File(logsDir, "client1.log");
             if (logBak.exists()) logBak.delete();
             if (logFile.exists()) logFile.renameTo(logBak);
         } catch (Exception ignored) {}
