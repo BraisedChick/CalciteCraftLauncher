@@ -106,7 +106,14 @@ bool GLRenderer::initialize(ANativeWindow* window) {
     BiomeColorManager::getInstance().initialize();
 
     // GL 纹理数组创建和上传延迟到渲染线程（finishTextureInit），避免 ANR
+    const char* renderer = (const char*)glGetString(GL_RENDERER);
+    const char* version = (const char*)glGetString(GL_VERSION);
+    const char* vendor = (const char*)glGetString(GL_VENDOR);
 
+    LOGI("=== OpenGL Info ===");
+    LOGI("GL_RENDERER: %s", renderer ? renderer : "unknown");
+    LOGI("GL_VERSION: %s", version ? version : "unknown");
+    LOGI("GL_VENDOR: %s", vendor ? vendor : "unknown");
     eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     LOGI("=== GLRenderer::initialize SUCCESS ===");
     return true;

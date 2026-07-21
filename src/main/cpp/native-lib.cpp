@@ -99,6 +99,7 @@ Java_com_calcite_MainActivity_connectToServer(
             g_engine->setRenderer(g_glRenderer);
         }
         GameUI::getInstance().setState(UIState::IN_GAME);
+        GameUI::getInstance().clearChatMessages();
 
         g_engine->start(addr, port, name);
 
@@ -428,6 +429,7 @@ Java_com_calcite_MainActivity_initRenderer(
 
                 // start() 会阻塞直到断开连接，所以先切换到 IN_GAME
                 GameUI::getInstance().setState(UIState::IN_GAME);
+                GameUI::getInstance().clearChatMessages();
 
                 g_engine->start(ip, port, g_username);
 

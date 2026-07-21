@@ -158,6 +158,7 @@ public:
         unsigned int color = 0xFFFFFFFF;  // RGBA
     };
     void addChatMessage(const std::string& msg, unsigned int color = 0xFFFFFFFF);
+    void clearChatMessages() { chatMessages.clear(); }
     void openChat();
     void sendChatMessage();
     bool isChatOpen() const { return chatOpen; }
