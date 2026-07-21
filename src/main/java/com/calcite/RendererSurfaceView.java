@@ -35,41 +35,45 @@ public class RendererSurfaceView extends SurfaceView implements SurfaceHolder.Ca
         activity = (MainActivity) getContext();
         setFocusable(true);
         setFocusableInTouchMode(true);
-        
+
         // 监听输入法可见性变化，当用户主动关闭输入法时重置 ImGui 焦点
-        getViewTreeObserver().addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
-            private boolean wasKeyboardVisible = false;
-            
-            @Override
-            public void onGlobalLayout() {
-                android.view.WindowInsets insets = getRootWindowInsets();
-                if (insets != null) {
-                    boolean isKeyboardVisible = insets.isVisible(android.view.WindowInsets.Type.ime());
-                    
-                    if (wasKeyboardVisible && !isKeyboardVisible) {
-                        // 用户主动关闭输入法，发送模拟点击重置 ImGui 焦点
-                        // 使用屏幕左上角坐标 (10, 10)，避免点到任何 UI 元素
-                        postDelayed(new Runnable() {
-                            @Override
-                            public void run() {
-                                android.view.MotionEvent down = android.view.MotionEvent.obtain(
-                                    System.currentTimeMillis(), System.currentTimeMillis(),
-                                    android.view.MotionEvent.ACTION_DOWN, 10, 10, 0);
-                                android.view.MotionEvent up = android.view.MotionEvent.obtain(
-                                    System.currentTimeMillis(), System.currentTimeMillis(),
-                                    android.view.MotionEvent.ACTION_UP, 10, 10, 0);
-                                dispatchTouchEvent(down);
-                                dispatchTouchEvent(up);
-                                down.recycle();
-                                up.recycle();
-                            }
-                        }, 100);
+        // 注意：WindowInsets.Type.ime() 需要 Android 11 (API 30) 以上
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            getViewTreeObserver().addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+                private boolean wasKeyboardVisible = false;
+
+                @Override
+                public void onGlobalLayout() {
+                    android.view.WindowInsets insets = getRootWindowInsets();
+                    if (insets != null) {
+                        boolean isKeyboardVisible = insets.isVisible(android.view.WindowInsets.Type.ime());
+
+                        if (wasKeyboardVisible && !isKeyboardVisible) {
+                            // 用户主动关闭输入法，发送模拟点击重置 ImGui 焦点
+                            // 使用屏幕左上角坐标 (10, 10)，避免点到任何 UI 元素
+                            postDelayed(new Runnable() {
+                                @Override
+                                public void run() {
+                                    android.view.MotionEvent down = android.view.MotionEvent.obtain(
+                                            System.currentTimeMillis(), System.currentTimeMillis(),
+                                            android.view.MotionEvent.ACTION_DOWN, 10, 10, 0);
+                                    android.view.MotionEvent up = android.view.MotionEvent.obtain(
+                                            System.currentTimeMillis(), System.currentTimeMillis(),
+                                            android.view.MotionEvent.ACTION_UP, 10, 10, 0);
+                                    dispatchTouchEvent(down);
+                                    dispatchTouchEvent(up);
+                                    down.recycle();
+                                    up.recycle();
+                                }
+                            }, 100);
+                        }
+
+                        wasKeyboardVisible = isKeyboardVisible;
                     }
-                    
-                    wasKeyboardVisible = isKeyboardVisible;
                 }
-            }
-        });
+            });
+        }
+        // 低版本（Android 8.1 及以下）不注册该监听器，避免崩溃
     }
 
     @Override
