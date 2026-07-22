@@ -9,17 +9,17 @@
 #include "CameraController.h"
 #include "Collision.h"
 
-// ProtocolCraft 澶存枃浠?
+// ProtocolCraft 头文件
 #include "protocolCraft/BinaryReadWrite.hpp"
 #include "protocolCraft/Packets/Handshake/Serverbound/ServerboundClientIntentionPacket.hpp"
 
-// ProtocolCraft 澶存枃浠?- 鐧诲綍闃舵
+// ProtocolCraft 头文件 - 登录阶段
 #include "protocolCraft/Packets/Login/Serverbound/ServerboundHelloPacket.hpp"
 #include "protocolCraft/Packets/Login/Clientbound/ClientboundLoginCompressionPacket.hpp"
 #include "protocolCraft/Packets/Login/Clientbound/ClientboundGameProfilePacket.hpp"
 #include "protocolCraft/Packets/Login/Clientbound/ClientboundLoginDisconnectPacket.hpp"
 
-// ProtocolCraft 澶存枃浠?- 娓告垙闃舵
+// ProtocolCraft 头文件 - 游戏阶段
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundLevelChunkWithLightPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundKeepAlivePacket.hpp"
 #include "protocolCraft/Packets/Game/Serverbound/ServerboundKeepAlivePacket.hpp"
@@ -49,7 +49,7 @@
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundGameEventPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundRespawnPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundSetTimePacket.hpp"
-// 鑱婂ぉ鍖?
+// 聊天包
 #include "protocolCraft/Packets/Game/Serverbound/ServerboundChatPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundChatPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundSystemChatPacket.hpp"
@@ -89,8 +89,8 @@ using njson = nlohmann::json;
 
 ClientEngine* ClientEngine::instance = nullptr;
 
-// 鍓嶅悜澹版槑锛氬湪 native-lib.cpp 涓畾涔夛紝鐢ㄤ簬閫氳繃 JNI 璋冪敤 Java 灞傚鐞嗗畬鏁村姞瀵嗚姹?
-// Java 灞傝礋璐ｏ細鐢熸垚鍏变韩瀵嗛挜 + SHA1 鍝堝笇 + Session Join + RSA 鍔犲瘑
+// 前向声明：在 native-lib.cpp 中定义，用于通过 JNI 调用 Java 层处理完整加密请求
+// Java 层负责：生成共享密钥 + SHA1 哈希 + Session Join + RSA 加密
 extern bool callJavaHandleEncryptionRequest(
     const std::string& serverID,
     const std::vector<unsigned char>& publicKey,
@@ -118,7 +118,7 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
     LOGI("Server: %s:%d", host.c_str(), port);
     LOGI("Username: %s", username.c_str());
 
-    // 鍒濆鍖栧帇缂╃姸鎬?
+    // 初始化压缩状态
     Compression::setEnabled(false);
     Compression::setThreshold(-1);
     Compression::setReceiveEnabled(false);
@@ -132,11 +132,11 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
     }
     LOGI("Network connection established");
 
-    // ========== 鎻℃墜闃舵 ==========
+    // ========== 握手阶段 ==========
     {
         LOGI("Sending handshake packet via ProtocolCraft");
 
-        // 浠?VersionManager 鑾峰彇鍗忚鐗堟湰锛堢敱 Java 灞傜増鏈€夋嫨璁剧疆锛?
+        // 从 VersionManager 获取协议版本（由 Java 层版本选择设置）
         int protocolVersion = VersionManager::getInstance().getProtocolVersion();
         if (protocolVersion == 0) {
             LOGE("Protocol version not set! Please select a version in launcher");
@@ -165,15 +165,15 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
         }
     }
 
-    // ========== 鐧诲綍闃舵 - 鍙戦€?Login Start ==========
+    // ========== 登录阶段 - 发送 Login Start ==========
     {
         LOGI("Sending login start: %s", username.c_str());
 
         ProtocolCraft::ServerboundHelloPacket loginStart;
         #if PROTOCOL_VERSION < 759
-                loginStart.SetGameProfile(username);  // 1.18.2: 鐩存帴璁剧疆鐢ㄦ埛鍚?
+                loginStart.SetGameProfile(username);  // 1.18.2: 直接设置用户名
         #else
-                loginStart.SetName_(username);  // 1.19+: 璁剧疆 Name_ 瀛楁
+                loginStart.SetName_(username);  // 1.19+: 设置 Name_ 字段
         #endif
 
         ProtocolCraft::WriteContainer writeData;
@@ -187,7 +187,7 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
         }
     }
 
-    // ========== 鐧诲綍闃舵 - 鎺ユ敹鍝嶅簲 ==========
+    // ========== 登录阶段 - 接收响应 ==========
     while (true) {
         auto resp = net->receivePacket();
         if (resp.empty()) {
@@ -196,12 +196,12 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
             return false;
         }
 
-        // 浣跨敤 VarInt 璇诲彇 Packet ID
+        // 使用 VarInt 读取 Packet ID
         size_t pos = 0;
         ProtocolCraft::ReadIterator iter = resp.cbegin();
         size_t remaining = resp.size();
         int pid = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(iter, remaining);
-        pos = resp.size() - remaining;  // 鏇存柊宸茶鍙栫殑浣嶇疆
+        pos = resp.size() - remaining;  // 更新已读取的位置
 
         switch (pid) {
         case 0x02: {
@@ -224,11 +224,11 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
                 LOGE("Failed to parse login success: %s", e.what());
             }
 
-            goto loginDone; //鐧诲綍缁撴潫锛岀洿鎺ヨ烦鍑哄惊鐜?
+            goto loginDone; //登录结束，直接跳出循环
         }
 
         case 0x01: {
-            // Encryption Request (Hello) 鈥?鍦ㄧ嚎妯″紡鏈嶅姟鍣?
+            // Encryption Request (Hello) — 在线模式服务器
             LOGI("Received Encryption Request (online mode server)");
 
             if (!premium) {
@@ -316,7 +316,7 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
                 net->disconnect();
                 return false;
             }
-            continue;  // 缁х画绛夊緟 Login Success
+            continue;  // 继续等待 Login Success
         }
 
         case 0x03: {
@@ -361,8 +361,8 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
     }
 
 loginDone:
-    // 鍚敤鍙戦€佸帇缂╋紙鍙傜収 Botcraft锛氭敹鍒?Set Compression 鍚庣珛鍗冲惎鐢ㄦ敹鍙戝帇缂╋級
-    // Botcraft 鐢ㄥ崟涓€ compression 鍙橀噺鎺у埗锛屾垜浠湪鐧诲綍寰幆缁撴潫鍚庣粺涓€鍚敤
+    // 启用发送压缩（参照 Botcraft：收到 Set Compression 后立即启用收发压缩）
+    // Botcraft 用单一 compression 变量控制，我们在登录循环结束后统一启用
     if (Compression::isReceiveEnabled()) {
         Compression::setEnabled(true);
         LOGI("Compression fully enabled (threshold=%d)", Compression::getThreshold());
@@ -370,18 +370,18 @@ loginDone:
         LOGI("Compression not enabled by server (offline mode)");
     }
 
-    // 娉ㄦ剰锛氫笉鍦ㄨ繖閲屽彂閫?ClientInformation锛?
-    // 鏌愪簺鏈嶅姟鍣ㄥ湪 Login Success 涔嬪悗闇€瑕佹椂闂村垏鎹㈠埌 PLAY 鐘舵€?
-    // 蹇呴』绛夋敹鍒版湇鍔″櫒鐨勭涓€涓?PLAY 鐘舵€佸寘涔嬪悗鍐嶅彂閫?
+    // 注意：不在这里发送 ClientInformation！
+    // 某些服务器在 Login Success 之后需要时间切换到 PLAY 状态
+    // 必须等收到服务器的第一个 PLAY 状态包之后再发送
     bool clientInfoSent = false;
 
-    // 杩涘叆 PLAY 鐘舵€侊紙娉ㄦ剰锛氫笉鍦ㄨ繖閲屽惎鐢ㄧЩ鍔ㄥ彂閫侊紝蹇呴』绛夋敹鍒扮涓€涓?0x38 纭繚鍧愭爣姝ｇ‘锛?
-    // 绉诲姩鍖呯殑鍚敤鏀惧湪 handlePlayPacket 鐨?0x38 鍒嗘敮涓?
+    // 进入 PLAY 状态（注意：不在这里启用移动发送，必须等收到第一个 0x38 确保坐标正确）
+    // 移动包的启用放在 handlePlayPacket 的 0x38 分支中
 
-    // 濮旀墭 NetworkManager 澶勭悊 PLAY 鐘舵€佺綉缁滃惊鐜?
+    // 委托 NetworkManager 处理 PLAY 状态
     net->setEngine(this);
     net->registerHandlers();
-    net->startPlayLoop();  // 闃诲鐩村埌鏂紑杩炴帴
+    net->startPlayLoop();  // 阻塞直到连接关闭
 
     net->disconnect();
     return true;
@@ -403,7 +403,7 @@ void ClientEngine::sendPlayerMovement(double x, double y, double z, float yaw, f
     std::lock_guard<std::mutex> lock(netMutex);
     if (!net || !net->isConnected()) return;
 
-    // 闄愰€?20 娆?绉掞紙50ms 闂撮殧锛夛紝鍖归厤鍘熺増娓告垙鍒婚€熺巼
+    // 限速 20 次/秒（50ms 间隔），匹配原版游戏刻速率
     auto now = std::chrono::steady_clock::now();
     auto msSinceLastSend = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastMoveSendTime).count();
     if (msSinceLastSend < 50) return;
@@ -417,7 +417,7 @@ void ClientEngine::sendPlayerMovement(double x, double y, double z, float yaw, f
                       fabs(pitch - lastSent.pitch) > 0.001f;
 
     if (posChanged || rotChanged) {
-        // 浣嶇疆鎴栨棆杞彉鍖栨椂鍙戦€佸畬鏁寸Щ鍔ㄥ寘
+        // 位置或旋转变化时发送完整移动包
         ProtocolCraft::ServerboundMovePlayerPacketPosRot movePacket;
         movePacket.SetX(x);
         movePacket.SetY(y);
@@ -443,7 +443,7 @@ void ClientEngine::sendPlayerMovement(double x, double y, double z, float yaw, f
         return;
     }
 
-    // 浣嶇疆鏈彉锛屾瘡 500ms 鍙戦€佷竴娆?StatusOnly 鍚屾鍦伴潰鐘舵€?
+    // 位置未变，每 500ms 发送一次 StatusOnly 同步地面状态
     if (msSinceLastSend >= 500) {
         ProtocolCraft::ServerboundMovePlayerPacketStatusOnly statusPacket;
         statusPacket.SetOnGround(onGround);
@@ -515,7 +515,7 @@ void ClientEngine::sendBlockBreakStart(int blockX, int blockY, int blockZ, int f
     pos.SetY(blockY);
     pos.SetZ(blockZ);
 
-    // Action 0 = START_DIGGING (寮€濮嬫寲鎺?
+    // Action 0 = START_DIGGING (开始挖掘)
     ProtocolCraft::ServerboundPlayerActionPacket startDig;
     startDig.SetAction(0);
     startDig.SetPos(pos);
@@ -535,7 +535,7 @@ void ClientEngine::sendBlockBreakFinish(int blockX, int blockY, int blockZ, int 
     pos.SetY(blockY);
     pos.SetZ(blockZ);
 
-    // Action 2 = STOP_DESTROY_BLOCK (瀹屾垚鎸栨帢)
+    // Action 2 = STOP_DESTROY_BLOCK (完成挖掘)
     ProtocolCraft::ServerboundPlayerActionPacket finishDig;
     finishDig.SetAction(2);
     finishDig.SetPos(pos);
@@ -555,7 +555,7 @@ void ClientEngine::sendBlockBreakAbort(int blockX, int blockY, int blockZ, int f
     pos.SetY(blockY);
     pos.SetZ(blockZ);
 
-    // Action 1 = ABORT_DESTROY_BLOCK (涓柇鎸栨帢)
+    // Action 1 = ABORT_DESTROY_BLOCK (中断挖掘)
     ProtocolCraft::ServerboundPlayerActionPacket abortDig;
     abortDig.SetAction(1);
     abortDig.SetPos(pos);
@@ -610,7 +610,7 @@ void ClientEngine::sendChatMessage(const std::string& message) {
         std::chrono::system_clock::now().time_since_epoch()).count());
 #if PROTOCOL_VERSION < 760
     chatPacket.SetSignedPreview(false);
-    // SaltSignature 鐢ㄧ┖绛惧悕
+    // SaltSignature 用空签名
     ProtocolCraft::SaltSignature saltSig;
     saltSig.SetSalt(0);
     std::array<unsigned char, 32> emptySig{};
@@ -636,7 +636,7 @@ void ClientEngine::sendContainerClick(int slotNum, int button, int containerId) 
     std::lock_guard<std::mutex> lock(netMutex);
     if (!net || !net->isConnected()) return;
 
-    // 纭畾瀹為檯瀹瑰櫒 ID
+    // 确定实际容器 ID
     if (containerId < 0) {
         int openId = GameUI::getInstance().getOpenContainerId();
         containerId = (openId >= 0) ? openId : 0;
@@ -644,24 +644,24 @@ void ClientEngine::sendContainerClick(int slotNum, int button, int containerId) 
 
     auto& inv = PlayerInventory::getInstance();
     InvSlot cursor = inv.getCursorItem();
-    // 鏍规嵁瀹瑰櫒ID璇诲彇姝ｇ‘鐨勬Ы浣嶆暟缁?
+    // 根据容器ID读取正确的槽位数组
     InvSlot clicked = (containerId > 0) ? inv.getContainerSlot(slotNum) : inv.getSlot(slotNum);
 
-    // 鏋勫缓鐐瑰嚮鍚庣殑鍏夋爣鍜屾Ы浣嶇姸鎬侊紙瀹㈡埛绔娴嬶級
+    // 构建点击后的光标和槽位状态（客户端预测）
     InvSlot newCursor = cursor;
     InvSlot newClicked = clicked;
 
-    if (button == 0) {  // 宸﹂敭锛氭嬁鍙?鏀句笅/浜ゆ崲
+    if (button == 0) {  // 左键：拿取/放下/交换
         if (!cursor.present && clicked.present) {
-            // 鍏夋爣绌猴紝妲戒綅鏈夌墿鍝?鈫?鎷胯捣
+            // 光标空，槽位有物品 → 拿起
             newCursor = clicked;
             newClicked = InvSlot{};
         } else if (cursor.present && !clicked.present) {
-            // 鍏夋爣鏈夌墿鍝侊紝妲戒綅绌?鈫?鏀句笅
+            // 光标有物品，槽位空 → 放下
             newClicked = cursor;
             newCursor = InvSlot{};
         } else if (cursor.present && clicked.present && cursor.itemId == clicked.itemId) {
-            // 鍚岀被鐗╁搧鍚堝苟
+            // 同类物品合并
             int total = cursor.count + clicked.count;
             int maxStack = 64;
             if (total <= maxStack) {
@@ -672,11 +672,11 @@ void ClientEngine::sendContainerClick(int slotNum, int button, int containerId) 
                 newCursor.count = (int8_t)(total - maxStack);
             }
         } else if (cursor.present && clicked.present) {
-            // 涓嶅悓鐗╁搧 鈫?浜ゆ崲
+            // 不同物品 → 交换
             newCursor = clicked;
             newClicked = cursor;
         }
-    } else if (button == 1) {  // 鍙抽敭锛氭斁涓€涓?鎷夸竴鍗?
+    } else if (button == 1) {  // 右键：放一个/拿一半
         if (cursor.present && !clicked.present) {
             newClicked.present = true;
             newClicked.itemId = cursor.itemId;
@@ -700,7 +700,7 @@ void ClientEngine::sendContainerClick(int slotNum, int button, int containerId) 
         }
     }
 
-    // 鏇存柊鏈湴鐘舵€?
+    // 更新本地状态
     inv.setCursorItem(newCursor);
     if (containerId > 0) {
         inv.setContainerLocalSlot(slotNum, newClicked);
@@ -708,7 +708,7 @@ void ClientEngine::sendContainerClick(int slotNum, int button, int containerId) 
         inv.setLocalSlot(slotNum, newClicked);
     }
 
-    // 鏋勫缓 ProtocolCraft Slot 瀵硅薄
+    // 构建 ProtocolCraft Slot 对象
     auto toSlot = [](const InvSlot& is) -> ProtocolCraft::Slot {
         ProtocolCraft::Slot s;
         if (is.present && is.itemId > 0) {
@@ -726,7 +726,7 @@ void ClientEngine::sendContainerClick(int slotNum, int button, int containerId) 
     clickPacket.SetButtonNum((char)button);
     clickPacket.SetClickType(0);  // PICKUP
 
-    // ChangedSlots: 鍛婄煡鏈嶅姟鍣ㄧ偣鍑诲悗妲戒綅鐨勬柊鐘舵€?
+    // ChangedSlots: 告知服务器点击后槽位的新状态
     std::map<short, ProtocolCraft::Slot> changed;
     changed[(short)slotNum] = toSlot(newClicked);
     clickPacket.SetChangedSlots(changed);
@@ -743,29 +743,29 @@ void ClientEngine::sendContainerClose() {
     if (!net || !net->isConnected()) return;
 
     int containerId = GameUI::getInstance().getOpenContainerId();
-    if (containerId <= 0) return; // 0=鐜╁鑳屽寘锛屼笉闇€瑕佸叧闂寘
+    if (containerId <= 0) return; // 0=玩家背包，不需要关闭包
 
-    // 鍏抽棴瀹瑰櫒鍓嶏紝灏嗗鍣ㄦ暟鎹腑鐨勮儗鍖呴儴鍒嗗悓姝ュ洖 slots
-    // 宸ヤ綔鍙板鍣ㄥ竷灞€: slots 10-36=涓昏儗鍖? 37-45=蹇嵎鏍?
-    // 鐜╁鐗╁搧鏍忓竷灞€: slots 9-35=涓昏儗鍖? 36-44=蹇嵎鏍?
+    // 关闭容器前，将容器数据中的背包部分同步回 slots
+    // 工作台容器布局: slots 10-36=主背包, 37-45=快捷栏
+    // 玩家物品栏布局: slots 9-35=主背包, 36-44=快捷栏
     auto& inv = PlayerInventory::getInstance();
     const auto& containerSlots = inv.getContainerSlots();
     if (containerSlots.size() >= 46) {
         std::vector<InvSlot> updatedSlots(inv.getSlotCount());
-        // 宸叉湁 slots 鏁版嵁涓繚鐣?crafting/armor/offhand锛?-8,45锛?
+        // 已有 slots 数据中保留 crafting/armor/offhand（0-8,45）
         for (int i = 0; i < inv.getSlotCount() && i < 46; i++) {
             if (i >= 0 && i < 9) {
-                // slots 0-8: keep existing (2脳2 craft + armor)
+                // slots 0-8: keep existing (2×2 craft + armor)
                 updatedSlots[i] = inv.getSlot(i);
             } else if (i == 45) {
                 updatedSlots[i] = inv.getSlot(i); // offhand
             }
         }
-        // 涓昏儗鍖? containerSlots[10..36] 鈫?slots[9..35]
+        // 主背包: containerSlots[10..36] → slots[9..35]
         for (int i = 0; i < 27 && 10 + i < (int)containerSlots.size() && 9 + i < (int)updatedSlots.size(); i++) {
             updatedSlots[9 + i] = containerSlots[10 + i];
         }
-        // 蹇嵎鏍? containerSlots[37..45] 鈫?slots[36..44]
+        // 快捷栏: containerSlots[37..45] → slots[36..44]
         for (int i = 0; i < 9 && 37 + i < (int)containerSlots.size() && 36 + i < (int)updatedSlots.size(); i++) {
             updatedSlots[36 + i] = containerSlots[37 + i];
         }
@@ -783,43 +783,43 @@ void ClientEngine::sendContainerClose() {
 }
 
 void ClientEngine::sendContainerQuickCraft(int phase, int slotNum, int button) {
-    // 鍘熺増MC QUICK_CRAFT 鍗忚锛?
-    // phase 0 = 寮€濮嬫嫋鎷斤紙buttonNum = type<<2 | 0锛?
-    // phase 1 = 鎷栬繃妲戒綅锛坆uttonNum = type<<2 | 1锛?
-    // phase 2 = 缁撴潫鎷栨嫿锛坆uttonNum = type<<2 | 2锛?
-    // type: 0=鍧囧垎(CHARITABLE), 1=姣忔牸1涓?GREEDY), 2=澶嶅埗(CLONE,鍒涢€犳ā寮?
+    // 原版MC QUICK_CRAFT 协议：
+    // phase 0 = 开始拖拽（buttonNum = type<<2 | 0）
+    // phase 1 = 拖过槽位（buttonNum = type<<2 | 1）
+    // phase 2 = 结束拖拽（buttonNum = type<<2 | 2）
+    // type: 0=均分(CHARITABLE), 1=每格1个(GREEDY), 2=复制(CLONE,创造模式)
     std::lock_guard<std::mutex> lock(netMutex);
     if (!net || !net->isConnected()) return;
 
     auto& inv = PlayerInventory::getInstance();
 
-    // 璁＄畻 buttonNum: (type << 2) | phase
-    // type 0=宸﹂敭鍧囧垎, type 1=鍙抽敭姣忔牸1涓?
+    // 计算 buttonNum: (type << 2) | phase
+    // type 0=左键均分, type 1=右键每格1个
     int type = (button == 0) ? 0 : 1;
     int buttonNum = (type << 2) | phase;
 
     ProtocolCraft::ServerboundContainerClickPacket clickPacket;
-    // 浣跨敤褰撳墠鎵撳紑鐨勫鍣↖D锛?=鐜╁鑳屽寘锛?
+    // 使用当前打开的容器ID（0=玩家背包）
     int qcContainerId = GameUI::getInstance().getOpenContainerId();
     clickPacket.SetContainerId((qcContainerId >= 0) ? qcContainerId : 0);
     clickPacket.SetStateId(inv.getStateId());
 
     if (phase == 0 || phase == 2) {
-        // 寮€濮?缁撴潫锛歴lotNum 涓?-999锛堣〃绀虹偣鍑诲湪鑳屽寘澶栵級
+        // 开始/结束：slotNum 为 -999（表示点击在背包外）
         clickPacket.SetSlotNum(-999);
     } else {
-        // 鎷栬繃妲戒綅锛氫娇鐢ㄥ疄闄呮Ы浣嶅彿
+        // 拖过槽位：使用实际槽位号
         clickPacket.SetSlotNum((short)slotNum);
     }
 
     clickPacket.SetButtonNum((char)buttonNum);
     clickPacket.SetClickType(5);  // QUICK_CRAFT = 5
 
-    // ChangedSlots: 鎷栨嫿鎿嶄綔鐢辨湇鍔″櫒澶勭悊锛屽鎴风鍙彂閫佺姸鎬?
+    // ChangedSlots: 拖拽操作由服务器处理，客户端只发送状态
     std::map<short, ProtocolCraft::Slot> changed;
     clickPacket.SetChangedSlots(changed);
 
-    // 鍏夋爣鐗╁搧
+    // 光标物品
     InvSlot cursor = inv.getCursorItem();
     ProtocolCraft::Slot carriedSlot;
     if (cursor.present && cursor.itemId > 0) {
@@ -842,7 +842,7 @@ void ClientEngine::disconnect() {
     if (net) {
         net->disconnect();
     }
-    // 娓呯悊鎵€鏈夊疄浣?
+    // 清理所有实体
     EntityManager::getInstance().removeAllEntities();
     EntityRenderer::getInstance().clearTextureCache();
 }
@@ -880,25 +880,25 @@ std::string ClientEngine::parseChatComponent(const std::string& raw) const {
         auto j = njson::parse(raw, nullptr, false);
         if (j.is_discarded() || !j.is_object()) return raw;
 
-        // 绾枃鏈被鍨嬶細{"text": "..."}
+        // 纯文本类型：{"text": "..."}
         if (j.contains("text") && j["text"].is_string() && !j.contains("translate")) {
             return j["text"].get<std::string>();
         }
 
-        // 缈昏瘧绫诲瀷锛歿"translate": "key", "with": [...]}
+        // 翻译类型：{"translate": "key", "with": [...]}
         if (!j.contains("translate") || !j["translate"].is_string()) return raw;
 
         std::string translateKey = j["translate"].get<std::string>();
         auto it = translations.find(translateKey);
         if (it == translations.end()) {
-            // 鏃犵炕璇戯紝灏濊瘯 text 瀛楁浣滀负鍥為€€
+            // 无翻译，尝试 text 字段作为回退
             return j.contains("text") && j["text"].is_string()
                 ? j["text"].get<std::string>() : raw;
         }
 
         std::string result = it->second;
 
-        // 瑙ｆ瀽 with 鏁扮粍涓殑鍙傛暟
+        // 解析 with 数组中的参数
         std::vector<std::string> args;
         if (j.contains("with") && j["with"].is_array()) {
             for (const auto& elem : j["with"]) {
@@ -916,7 +916,7 @@ std::string ClientEngine::parseChatComponent(const std::string& raw) const {
             }
         }
 
-        // 鏇挎崲 %1$s, %2$s ...锛堝甫浣嶇疆缂栧彿锛?
+        // 替换 %1$s, %2$s ...（带位置编号）
         for (size_t i = 0; i < args.size(); i++) {
             std::string placeholder = "%" + std::to_string(i + 1) + "$s";
             size_t pos = 0;
@@ -926,7 +926,7 @@ std::string ClientEngine::parseChatComponent(const std::string& raw) const {
             }
         }
 
-        // 鏇挎崲 %s锛圝ava 闈炰綅缃牸寮忥紝鎸夐『搴忓尮閰嶏級
+        // 替换 %s（Java 非位置格式，按顺序匹配）
         size_t argIdx = 0;
         size_t pos = 0;
         while ((pos = result.find("%s", pos)) != std::string::npos && argIdx < args.size()) {
@@ -940,3 +940,4 @@ std::string ClientEngine::parseChatComponent(const std::string& raw) const {
         return raw;
     }
 }
+
