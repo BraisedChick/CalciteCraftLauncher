@@ -5,11 +5,6 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
-EntityManager& EntityManager::getInstance() {
-    static EntityManager instance;
-    return instance;
-}
-
 void EntityManager::addEntity(const Entity& entity) {
     std::lock_guard<std::mutex> lock(mutex);
     entities[entity.entityId] = entity;

@@ -1,4 +1,5 @@
 #include "NetworkManager/NetworkManager.h"
+#include "ClientEngine/ClientEngine.h"
 #include "utils.h"
 #include "PlayerInventory.h"
 #include "BlockRegistry.h"
@@ -96,8 +97,8 @@ void NetworkManager::handleInventory(int packetId, const std::vector<uint8_t>& d
                 invSlots.push_back(is);
             }
 
-            PlayerInventory::getInstance().setContent(containerId, invSlots);
-            PlayerInventory::getInstance().setStateId(containerPacket.GetStateId());
+            m_engine->getInventory()->setContent(containerId, invSlots);
+            m_engine->getInventory()->setStateId(containerPacket.GetStateId());
 
             const auto& carried = containerPacket.GetCarriedItem();
             InvSlot cursorIs;
@@ -106,7 +107,7 @@ void NetworkManager::handleInventory(int packetId, const std::vector<uint8_t>& d
                 cursorIs.itemId = carried.GetItemId();
                 cursorIs.count = carried.GetItemCount();
             }
-            PlayerInventory::getInstance().setCursorItem(cursorIs);
+            m_engine->getInventory()->setCursorItem(cursorIs);
 
             LOGI("Container Set Content: id=%d, state=%d, slots=%zu, nonEmpty=%d",
                  containerId, containerPacket.GetStateId(), items.size(), nonEmptyCount);
@@ -140,8 +141,8 @@ void NetworkManager::handleInventory(int packetId, const std::vector<uint8_t>& d
                 }
             }
 
-            PlayerInventory::getInstance().setSlot(containerId, slotIndex, is);
-            PlayerInventory::getInstance().setStateId(slotPacket.GetStateId());
+            m_engine->getInventory()->setSlot(containerId, slotIndex, is);
+            m_engine->getInventory()->setStateId(slotPacket.GetStateId());
             LOGI("Container Set Slot: id=%d, slot=%d, present=%d, itemId=%d, count=%d",
                  containerId, slotIndex, is.present, is.itemId, is.count);
             break;

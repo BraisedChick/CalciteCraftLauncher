@@ -190,8 +190,8 @@ void HudScreen::render(int mouseX, int mouseY) {
         IM_COL32(0, 0, 0, 100), 4.0f);
 
     InvSlot hotbar[9];
-    PlayerInventory::getInstance().getHotbarSlots(hotbar);
-    int selSlot = PlayerInventory::getInstance().getSelectedSlot();
+    ClientEngine::getInstance()->getInventory()->getHotbarSlots(hotbar);
+    int selSlot = ClientEngine::getInstance()->getInventory()->getSelectedSlot();
 
     for (int i = 0; i < 9; i++) {
         float sx = hotbarX + i * (SLOT_SIZE + SLOT_GAP);
@@ -414,8 +414,8 @@ void HudScreen::render(int mouseX, int mouseY) {
 
         ImGui::TextColored(ImVec4(1, 1, 0, 1), "Minecraft %s", VersionManager::getInstance().getVersionName().c_str());
         ImGui::Text("FPS: %.0f", displayFps);
-        ImGui::Text("E: %d/%d", EntityRenderer::getInstance().getRenderedCount(),
-                     EntityRenderer::getInstance().getTotalCount());
+        ImGui::Text("E: %d/%d", ClientEngine::getInstance()->getEntityRenderer()->getRenderedCount(),
+                     ClientEngine::getInstance()->getEntityRenderer()->getTotalCount());
         ImGui::Text("");
 
         auto pos = CameraController::getInstance().getPosition();

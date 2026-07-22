@@ -43,7 +43,7 @@ void NetworkManager::handleLogin(int packetId, const std::vector<uint8_t>& data,
                     Entity playerEntity;
                     playerEntity.entityId = playerId;
                     playerEntity.type = EntityType::PLAYER;
-                    EntityManager::getInstance().addEntity(playerEntity);
+                    m_engine->getEntityManager()->addEntity(playerEntity);
                 }
                 Collision::getInstance().setPlayerEntityId(playerId);
 
@@ -265,7 +265,7 @@ void NetworkManager::handleLogin(int packetId, const std::vector<uint8_t>& data,
             if (m_engine->glRenderer) {
                 m_engine->glRenderer->clearChunks();
             }
-            EntityManager::getInstance().removeAllEntities();
+            m_engine->getEntityManager()->removeAllEntities();
             break;
         }
 

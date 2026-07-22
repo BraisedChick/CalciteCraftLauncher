@@ -548,7 +548,7 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
         } else if (currentState == UIState::IN_GAME) {
             int hbSlot = hotbarSlotAt(x, y);
             if (hbSlot >= 0) {
-                PlayerInventory::getInstance().setSelectedSlot(hbSlot);
+                ClientEngine::getInstance()->getInventory()->setSelectedSlot(hbSlot);
                 ClientEngine::getInstance()->sendHeldItemChange(hbSlot);
             } else {
                 pt->role = TouchPoint::CAMERA;
@@ -622,7 +622,7 @@ void GameUI::handleJoystickTouch(int pointerId, float x, float y, int action) {
 }
 
 void GameUI::performBlockPlacement() {
-    auto& inv = PlayerInventory::getInstance();
+    auto& inv = *ClientEngine::getInstance()->getInventory();
     const InvSlot& held = inv.getHotbarSlot(inv.getSelectedSlot());
     bool hasItem = held.present && held.itemId > 0;
 
@@ -723,7 +723,7 @@ int GameUI::getTargetEntity(float reachDistance) const {
     dir.z = std::cos(yaw) * std::cos(pitch);
     glm::vec3 eyePos = playerPos + glm::vec3(0.0f, 1.62f, 0.0f);
 
-    auto entities = EntityManager::getInstance().getAllEntities();
+    auto entities = ClientEngine::getInstance()->getEntityManager()->getAllEntities();
     int bestEntityId = -1;
     float bestDist = reachDistance + 1.0f;
 
@@ -732,7 +732,7 @@ int GameUI::getTargetEntity(float reachDistance) const {
     auto* engine = ClientEngine::getInstance();
     if (engine) {
         Entity localPlayer;
-        if (EntityManager::getInstance().getEntity(engine->getPlayerId(), localPlayer))
+        if (ClientEngine::getInstance()->getEntityManager()->getEntity(engine->getPlayerId(), localPlayer))
             localPlayerId = localPlayer.entityId;
     }
 
@@ -918,7 +918,7 @@ void GameUI::performBlockBreak() {
 // 根据手持物品计算玩家挖掘速度（对标 ItemStack/DiggerItem.getDestroySpeed）
 // 工具速度加成仅对匹配的方块类型生效
 static float getPlayerDigSpeed(const std::string& material) {
-    auto& inv = PlayerInventory::getInstance();
+    auto& inv = *ClientEngine::getInstance()->getInventory();
     const InvSlot& held = inv.getHotbarSlot(inv.getSelectedSlot());
     if (!held.present || held.itemId <= 0) return 1.0f; // 空手
 
@@ -960,7 +960,7 @@ static float getPlayerDigSpeed(const std::string& material) {
 static bool hasCorrectToolFor(const std::string& material, bool requiresCorrectTool) {
     if (!requiresCorrectTool) return true; // 不需要工具 → 总是有"正确工具"
 
-    auto& inv = PlayerInventory::getInstance();
+    auto& inv = *ClientEngine::getInstance()->getInventory();
     const InvSlot& held = inv.getHotbarSlot(inv.getSelectedSlot());
     if (!held.present || held.itemId <= 0) return false; // 空手
 

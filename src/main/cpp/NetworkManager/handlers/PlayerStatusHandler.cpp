@@ -204,7 +204,7 @@ void NetworkManager::handlePlayerStatus(int packetId, const std::vector<uint8_t>
             carriedPacket.Read(iter, len);
             int slot = (int)carriedPacket.GetSlot();
             if (slot >= 0 && slot <= 8) {
-                PlayerInventory::getInstance().setSelectedSlot(slot);
+                m_engine->getInventory()->setSelectedSlot(slot);
             }
             break;
         }

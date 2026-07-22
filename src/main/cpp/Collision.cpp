@@ -1,4 +1,5 @@
 #include "Collision.h"
+#include "ClientEngine/ClientEngine.h"
 #include "EntityManager.h"
 #include "ChunkManager.h"
 #include "BlockRegistry.h"
@@ -106,7 +107,7 @@ void Collision::tick() {
     // ==== 从 EntityManager 读取击退冲量（一次性消费）====
     double kbVx = 0, kbVy = 0, kbVz = 0;
     if (playerEntityId >= 0) {
-        EntityManager::getInstance().consumeEntityMotion(playerEntityId, kbVx, kbVy, kbVz);
+        ClientEngine::getInstance()->getEntityManager()->consumeEntityMotion(playerEntityId, kbVx, kbVy, kbVz);
         velocity.x += (float)kbVx;
         velocity.y += (float)kbVy;
         velocity.z += (float)kbVz;

@@ -12,7 +12,7 @@
 // 第一版：简化为 6 面盒子拼装，支持人形/四足两种体型
 class EntityRenderer {
 public:
-    static EntityRenderer& getInstance();
+    EntityRenderer() = default;
 
     // 初始化着色器和 VAO/VBO（GL 线程调用一次）
     bool init();
@@ -34,8 +34,6 @@ public:
     int getTotalCount() const { return totalCount; }
 
 private:
-    EntityRenderer() = default;
-
     // 渲染单个实体
     void renderEntity(const Entity& entity, float partialTick);
 

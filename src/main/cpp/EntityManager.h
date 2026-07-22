@@ -9,7 +9,7 @@
 // 网络线程写入，渲染线程读取
 class EntityManager {
 public:
-    static EntityManager& getInstance();
+    EntityManager() = default;
 
     // 添加/更新实体（网络线程调用）
     void addEntity(const Entity& entity);
@@ -43,8 +43,6 @@ public:
     void tick(float partialTick);
 
 private:
-    EntityManager() = default;
-
     std::unordered_map<int, Entity> entities;
     mutable std::mutex mutex;
 };

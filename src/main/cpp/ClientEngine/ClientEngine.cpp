@@ -99,7 +99,11 @@ extern bool callJavaHandleEncryptionRequest(
     std::vector<unsigned char>& encryptedSecret,
     std::vector<unsigned char>& encryptedVerifyToken);
 
-ClientEngine::ClientEngine() : chunkManager(nullptr) {
+ClientEngine::ClientEngine()
+    : chunkManager(nullptr),
+      m_inventory(std::make_unique<PlayerInventory>()),
+      m_entityManager(std::make_unique<EntityManager>()),
+      m_entityRenderer(std::make_unique<EntityRenderer>()) {
     instance = this;
 }
 
@@ -651,7 +655,7 @@ void ClientEngine::sendContainerClick(int slotNum, int button, int containerId) 
         containerId = (openId >= 0) ? openId : 0;
     }
 
-    auto& inv = PlayerInventory::getInstance();
+    auto& inv = *m_inventory;
     InvSlot cursor = inv.getCursorItem();
     // 根据容器ID读取正确的槽位数组
     InvSlot clicked = (containerId > 0) ? inv.getContainerSlot(slotNum) : inv.getSlot(slotNum);
@@ -757,7 +761,7 @@ void ClientEngine::sendContainerClose() {
     // 关闭容器前，将容器数据中的背包部分同步回 slots
     // 工作台容器布局: slots 10-36=主背包, 37-45=快捷栏
     // 玩家物品栏布局: slots 9-35=主背包, 36-44=快捷栏
-    auto& inv = PlayerInventory::getInstance();
+    auto& inv = *m_inventory;
     const auto& containerSlots = inv.getContainerSlots();
     if (containerSlots.size() >= 46) {
         std::vector<InvSlot> updatedSlots(inv.getSlotCount());
@@ -800,7 +804,7 @@ void ClientEngine::sendContainerQuickCraft(int phase, int slotNum, int button) {
     std::lock_guard<std::mutex> lock(netMutex);
     if (!net || !net->isConnected()) return;
 
-    auto& inv = PlayerInventory::getInstance();
+    auto& inv = *m_inventory;
 
     // 计算 buttonNum: (type << 2) | phase
     // type 0=左键均分, type 1=右键每格1个
@@ -852,8 +856,8 @@ void ClientEngine::disconnect() {
         net->disconnect();
     }
     // 清理所有实体
-    EntityManager::getInstance().removeAllEntities();
-    EntityRenderer::getInstance().clearTextureCache();
+    m_entityManager->removeAllEntities();
+    m_entityRenderer->clearTextureCache();
 }
 
 float ClientEngine::getSkyDarken() const {

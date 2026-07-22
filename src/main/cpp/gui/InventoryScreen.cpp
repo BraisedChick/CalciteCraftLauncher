@@ -82,7 +82,7 @@ void InventoryScreen::renderPlayerInventory(float w, float h) {
                containerY + 8.0f * S),
         IM_COL32(55, 55, 55, 255), title);
 
-    auto& inv = PlayerInventory::getInstance();
+    auto& inv = *ClientEngine::getInstance()->getInventory();
     InvSlot hotbar[9];
     inv.getHotbarSlots(hotbar);
 
@@ -476,7 +476,7 @@ void InventoryScreen::renderCraftingTable(float w, float h) {
                containerY + 6.0f * S),
         IM_COL32(55, 55, 55, 255), title);
 
-    auto& inv = PlayerInventory::getInstance();
+    auto& inv = *ClientEngine::getInstance()->getInventory();
     const auto& containerSlots = inv.getContainerSlots();
     InvSlot hotbar[9];
     inv.getHotbarSlots(hotbar);

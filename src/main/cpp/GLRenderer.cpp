@@ -13,6 +13,7 @@
 #include "MinecraftVersion.h"
 #include "Light.h"
 #include "gui/GameUI.h"
+#include "ClientEngine/ClientEngine.h"
 #include "EntityRenderer.h"
 #include "EntityManager.h"
 #include "imgui.h"
@@ -1587,11 +1588,11 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
 
     // ===== Phase 3: 实体渲染 =====
     {
-        EntityRenderer& er = EntityRenderer::getInstance();
-        if (!er.isInitialized()) er.init();
-        auto entities = EntityManager::getInstance().getAllEntities();
+        EntityRenderer* er = ClientEngine::getInstance()->getEntityRenderer();
+        if (!er->isInitialized()) er->init();
+        auto entities = ClientEngine::getInstance()->getEntityManager()->getAllEntities();
         if (!entities.empty()) {
-            er.renderAll(entities, viewMatrix, projMatrix, 1.0f);
+            er->renderAll(entities, viewMatrix, projMatrix, 1.0f);
         }
     }
 

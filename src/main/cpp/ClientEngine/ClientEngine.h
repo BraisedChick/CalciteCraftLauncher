@@ -15,6 +15,9 @@ class ChunkManager;
 class NetworkManager;
 class GLRenderer;
 class AESEncrypter;
+class PlayerInventory;
+class EntityManager;
+class EntityRenderer;
 
 class ClientEngine {
     friend class NetworkManager;
@@ -35,6 +38,11 @@ public:
 
     // 获取 ChunkManager 引用
     ChunkManager* getChunkManager() { return chunkManager.get(); }
+
+    // 获取游戏会话服务
+    PlayerInventory* getInventory() { return m_inventory.get(); }
+    EntityManager* getEntityManager() { return m_entityManager.get(); }
+    EntityRenderer* getEntityRenderer() { return m_entityRenderer.get(); }
 
     // 设置渲染器引用
     void setRenderer(GLRenderer* renderer) { glRenderer = renderer; }
@@ -127,6 +135,9 @@ private:
 
     std::unique_ptr<ChunkManager> chunkManager;
     std::unique_ptr<NetworkManager> net;
+    std::unique_ptr<PlayerInventory> m_inventory;
+    std::unique_ptr<EntityManager> m_entityManager;
+    std::unique_ptr<EntityRenderer> m_entityRenderer;
     mutable std::mutex netMutex;
 
     GLRenderer* glRenderer = nullptr;

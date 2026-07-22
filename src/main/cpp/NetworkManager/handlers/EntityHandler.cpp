@@ -1,4 +1,5 @@
 #include "NetworkManager/NetworkManager.h"
+#include "ClientEngine/ClientEngine.h"
 #include "utils.h"
 #include "EntityManager.h"
 #include "Entity.h"
@@ -44,7 +45,7 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
             e.yaw = pkt.GetYRot() * 360.0f / 256.0f;
             e.pitch = pkt.GetXRot() * 360.0f / 256.0f;
             e.headYaw = e.yaw;
-            EntityManager::getInstance().addEntity(e);
+            m_engine->getEntityManager()->addEntity(e);
             break;
         }
 
@@ -65,7 +66,7 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
             e.yaw = pkt.GetYRot() * 360.0f / 256.0f;
             e.pitch = pkt.GetXRot() * 360.0f / 256.0f;
             e.headYaw = pkt.GetYHeadRot() * 360.0f / 256.0f;
-            EntityManager::getInstance().addEntity(e);
+            m_engine->getEntityManager()->addEntity(e);
             break;
         }
 #endif
@@ -91,7 +92,7 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
             e.yaw = pkt.GetYRot() * 360.0f / 256.0f;
             e.pitch = pkt.GetXRot() * 360.0f / 256.0f;
             e.headYaw = e.yaw;
-            EntityManager::getInstance().addEntity(e);
+            m_engine->getEntityManager()->addEntity(e);
             break;
         }
 #endif
@@ -109,7 +110,7 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
             pkt.Read(iter, len);
             float yaw = pkt.GetYRot() * 360.0f / 256.0f;
             float pitch = pkt.GetXRot() * 360.0f / 256.0f;
-            EntityManager::getInstance().moveEntityRot(
+            m_engine->getEntityManager()->moveEntityRot(
                 pkt.GetEntityId(), pkt.GetXA(), pkt.GetYA(), pkt.GetZA(), yaw, pitch);
             break;
         }
@@ -125,7 +126,7 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
             auto iter = pktData.cbegin();
             size_t len = pktData.size();
             pkt.Read(iter, len);
-            EntityManager::getInstance().moveEntity(pkt.GetEntityId(), pkt.GetXA(), pkt.GetYA(), pkt.GetZA());
+            m_engine->getEntityManager()->moveEntity(pkt.GetEntityId(), pkt.GetXA(), pkt.GetYA(), pkt.GetZA());
             break;
         }
 
@@ -142,7 +143,7 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
             pkt.Read(iter, len);
             float yaw = pkt.GetYRot() * 360.0f / 256.0f;
             float pitch = pkt.GetXRot() * 360.0f / 256.0f;
-            EntityManager::getInstance().rotateEntity(pkt.GetEntityId(), yaw, pitch);
+            m_engine->getEntityManager()->rotateEntity(pkt.GetEntityId(), yaw, pitch);
             break;
         }
 
@@ -159,7 +160,7 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
             pkt.Read(iter, len);
             float yaw = pkt.GetYRot() * 360.0f / 256.0f;
             float pitch = pkt.GetXRot() * 360.0f / 256.0f;
-            EntityManager::getInstance().teleportEntity(
+            m_engine->getEntityManager()->teleportEntity(
                 pkt.GetEntityId(), pkt.GetX(), pkt.GetY(), pkt.GetZ(), yaw, pitch);
             break;
         }
@@ -177,7 +178,7 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
             pkt.Read(iter, len);
             const auto& ids = pkt.GetEntityIds();
             for (auto id : ids) {
-                EntityManager::getInstance().removeEntity((int)id);
+                m_engine->getEntityManager()->removeEntity((int)id);
             }
             break;
         }
@@ -193,7 +194,7 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
             auto iter = pktData.cbegin();
             size_t len = pktData.size();
             pkt.Read(iter, len);
-            EntityManager::getInstance().setEntityMotion(
+            m_engine->getEntityManager()->setEntityMotion(
                 pkt.GetEntityId(), pkt.GetXA(), pkt.GetYA(), pkt.GetZA());
             break;
         }

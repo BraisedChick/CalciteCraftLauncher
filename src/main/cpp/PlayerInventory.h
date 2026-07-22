@@ -14,10 +14,7 @@ struct InvSlot {
 
 class PlayerInventory {
 public:
-    static PlayerInventory& getInstance() {
-        static PlayerInventory instance;
-        return instance;
-    }
+    PlayerInventory();
 
     // 容器 ID=0 为玩家物品栏
     void setContent(int containerId, const std::vector<InvSlot>& items);
@@ -63,8 +60,6 @@ public:
     const InvSlot& getCursorItem() const { return cursorItem; }
 
 private:
-    PlayerInventory();
-
     int getHotbarStart() const;
 
     std::vector<InvSlot> slots;       // 完整物品栏（容器 0 的全部格）
