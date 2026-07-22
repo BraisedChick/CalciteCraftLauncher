@@ -125,6 +125,15 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
 
     chunkManager = std::make_unique<ChunkManager>();
 
+    // chunkManager 刚创建，通知相关模块更新指针
+    // （native-lib.cpp 在 start() 之前调用 setChunkManager 时 chunkManager 还是 nullptr）
+    if (glRenderer) {
+        glRenderer->setChunkManager(chunkManager.get());
+    }
+    Collision::getInstance().setChunkManager(chunkManager.get());
+    Light::getInstance().setChunkManager(chunkManager.get());
+    LOGI("ChunkManager created and linked to renderer/collision/light");
+
     net = std::make_unique<NetworkManager>();
     if (!net->connect(host, port)) {
         LOGE("Failed to connect to %s:%d", host.c_str(), port);
