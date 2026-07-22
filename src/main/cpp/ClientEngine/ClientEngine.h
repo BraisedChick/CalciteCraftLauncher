@@ -27,7 +27,10 @@ public:
 
     // 设置正版认证信息
     void setAuthInfo(const std::string& accessToken, const std::string& uuid, const std::string& tokenType);
-    bool isPremium() const { return g_isPremium; }
+    bool isPremium() const { return premium; }
+    const std::string& getAccessToken() const { return accessToken; }
+    const std::string& getPlayerUuid() const { return playerUuid; }
+    const std::string& getTokenType() const { return tokenType; }
 
     // 获取 ChunkManager 引用
     ChunkManager* getChunkManager() { return chunkManager.get(); }
@@ -224,10 +227,10 @@ private:
     std::map<std::string, std::string> translations;
 
     // 正版认证信息
-    std::string g_accessToken;
-    std::string g_playerUuid;
-    std::string g_tokenType;
-    bool g_isPremium = false;
+    std::string accessToken;
+    std::string playerUuid;
+    std::string tokenType;
+    bool premium = false;
 
     // AES 加密器（在线模式服务器启用加密后使用）
     std::unique_ptr<AESEncrypter> aesEncrypter;

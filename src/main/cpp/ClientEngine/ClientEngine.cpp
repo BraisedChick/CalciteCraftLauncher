@@ -106,11 +106,11 @@ ClientEngine::ClientEngine() : chunkManager(nullptr) {
 ClientEngine::~ClientEngine() = default;
 
 void ClientEngine::setAuthInfo(const std::string& accessToken, const std::string& uuid, const std::string& tokenType) {
-    g_accessToken = accessToken;
-    g_playerUuid = uuid;
-    g_tokenType = tokenType;
-    g_isPremium = !accessToken.empty();
-    LOGI("Auth info set: premium=%d, uuid=%s", g_isPremium, g_playerUuid.c_str());
+    this->accessToken = accessToken;
+    playerUuid = uuid;
+    this->tokenType = tokenType;
+    premium = !accessToken.empty();
+    LOGI("Auth info set: premium=%d, uuid=%s", premium, playerUuid.c_str());
 }
 
 bool ClientEngine::start(const std::string& host, int port, const std::string& username) {
@@ -228,7 +228,7 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
             // ========== Encryption Request (Hello) — 在线模式服务器 ==========
             LOGI("Received Encryption Request (online mode server)");
 
-            if (!g_isPremium) {
+            if (!premium) {
                 LOGE("Server is in online mode, but no premium auth available");
                 net->disconnect();
                 return false;

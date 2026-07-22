@@ -39,10 +39,12 @@ static std::atomic<bool> g_rendering(false);
 static std::thread g_renderThread;
 static std::string g_username = "Player";
 
-// 正版认证信息
-static std::string g_accessToken;
-static std::string g_playerUuid;
-static std::string g_tokenType;
+// 正版认证信息（在 engine 创建前暂存，创建后通过 engine getter 访问）
+static struct {
+    std::string accessToken;
+    std::string playerUuid;
+    std::string tokenType;
+} s_authInfo;
 static bool g_isPremium = false;
 
 // Java 虚拟机和对象引用，用于回调
@@ -81,7 +83,7 @@ Java_com_calcite_MainActivity_connectToServer(
 
         // 传递正版认证信息给引擎
         if (g_isPremium) {
-            g_engine->setAuthInfo(g_accessToken, g_playerUuid, g_tokenType);
+            g_engine->setAuthInfo(s_authInfo.accessToken, s_authInfo.playerUuid, s_authInfo.tokenType);
         }
 
         // 加载语言文件
@@ -408,7 +410,7 @@ Java_com_calcite_MainActivity_initRenderer(
 
                 // 传递正版认证信息给引擎
                 if (g_isPremium) {
-                    g_engine->setAuthInfo(g_accessToken, g_playerUuid, g_tokenType);
+                    g_engine->setAuthInfo(s_authInfo.accessToken, s_authInfo.playerUuid, s_authInfo.tokenType);
                 }
 
                 // 加载语言文件
@@ -750,12 +752,17 @@ Java_com_calcite_MainActivity_setAuthInfo(
     const char* id = env->GetStringUTFChars(uuid, nullptr);
     const char* type = env->GetStringUTFChars(tokenType, nullptr);
 
-    g_accessToken = token;
-    g_playerUuid = id;
-    g_tokenType = type;
-    g_isPremium = !g_accessToken.empty();
+    s_authInfo.accessToken = token;
+    s_authInfo.playerUuid = id;
+    s_authInfo.tokenType = type;
+    g_isPremium = !s_authInfo.accessToken.empty();
 
-    JNI_LOGI("Auth info set: premium=%d, uuid=%s", g_isPremium, g_playerUuid.c_str());
+    JNI_LOGI("Auth info set: premium=%d, uuid=%s", g_isPremium, s_authInfo.playerUuid.c_str());
+
+    // 如果 engine 已存在，同步进去
+    if (g_engine) {
+        g_engine->setAuthInfo(s_authInfo.accessToken, s_authInfo.playerUuid, s_authInfo.tokenType);
+    }
 
     env->ReleaseStringUTFChars(accessToken, token);
     env->ReleaseStringUTFChars(uuid, id);
@@ -809,8 +816,8 @@ bool callJavaHandleEncryptionRequest(
     env->SetByteArrayRegion(jVerifyToken, 0, static_cast<jsize>(verifyToken.size()),
                             reinterpret_cast<const jbyte*>(verifyToken.data()));
 
-    jstring jAccessToken = env->NewStringUTF(g_accessToken.c_str());
-    jstring jPlayerUuid = env->NewStringUTF(g_playerUuid.c_str());
+    jstring jAccessToken = env->NewStringUTF(g_engine ? g_engine->getAccessToken().c_str() : "");
+    jstring jPlayerUuid = env->NewStringUTF(g_engine ? g_engine->getPlayerUuid().c_str() : "");
 
     // 调用 MainActivity.handleEncryptionRequest
     jclass clazz = env->GetObjectClass(g_mainActivityObj);
