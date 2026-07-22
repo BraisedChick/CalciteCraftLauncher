@@ -203,9 +203,10 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
         int pid = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(iter, remaining);
         pos = resp.size() - remaining;  // 更新已读取的位置
 
-        if (pid == 0x02) {
+        switch (pid) {
+        case 0x02: {
             // Login Success (Game Profile)
-                        LOGI("Login success!");
+            LOGI("Login success!");
 
             ProtocolCraft::ClientboundGameProfilePacket successPacket;
             std::vector<unsigned char> packetData(resp.begin() + pos, resp.end());
@@ -223,9 +224,11 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
                 LOGE("Failed to parse login success: %s", e.what());
             }
 
-            break;
-        } else if (pid == 0x01) {
-            // ========== Encryption Request (Hello) — 在线模式服务器 ==========
+            goto loginDone; //登录结束，直接跳出循环
+        }
+
+        case 0x01: {
+            // Encryption Request (Hello) — 在线模式服务器
             LOGI("Received Encryption Request (online mode server)");
 
             if (!premium) {
@@ -238,23 +241,19 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
             auto dataIter = packetData.cbegin();
             size_t dataLen = packetData.size();
 
-            // 解析 Hello 包：serverID (String), publicKey (ByteArray), verifyToken (ByteArray)
             try {
-                // 读取 server ID
                 int serverIdLen = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(dataIter, dataLen);
                 std::string serverID(serverIdLen, '\0');
                 for (int i = 0; i < serverIdLen; ++i) {
                     serverID[i] = ProtocolCraft::ReadData<char>(dataIter, dataLen);
                 }
 
-                // 读取 public key
                 int pubKeyLen = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(dataIter, dataLen);
                 std::vector<unsigned char> publicKey(pubKeyLen);
                 for (int i = 0; i < pubKeyLen; ++i) {
                     publicKey[i] = static_cast<unsigned char>(ProtocolCraft::ReadData<char>(dataIter, dataLen));
                 }
 
-                // 读取 verify token
                 int verifyTokenLen = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(dataIter, dataLen);
                 std::vector<unsigned char> verifyToken(verifyTokenLen);
                 for (int i = 0; i < verifyTokenLen; ++i) {
@@ -264,8 +263,6 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
                 LOGI("Encryption Request: serverID_len=%d, pubKey_len=%d, verifyToken_len=%d",
                      serverIdLen, pubKeyLen, verifyTokenLen);
 
-                // 调用 Java 层处理完整加密请求：
-                // Java 负责：生成共享密钥 + SHA1 哈希 + Session Join + RSA 加密
                 std::vector<unsigned char> rawSharedSecret;
                 std::vector<unsigned char> encryptedSharedSecret;
                 std::vector<unsigned char> encryptedVerifyToken;
@@ -282,7 +279,6 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
                 LOGI("Java encryption handling successful, sharedSecret_len=%zu, encSecret_len=%zu, encVerifyToken_len=%zu",
                      rawSharedSecret.size(), encryptedSharedSecret.size(), encryptedVerifyToken.size());
 
-                // 用共享密钥初始化 AES-128-CFB8 流加密
                 aesEncrypter = std::make_unique<AESEncrypter>();
                 aesEncrypter->Init(rawSharedSecret);
 
@@ -292,10 +288,8 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
                     return false;
                 }
 
-                // 发送 Key 包 (Encryption Key Response, packet ID 0x01)
-                // 格式：VarInt(0x01) + ByteArray(encrypted_shared_secret) + ByteArray(encrypted_verify_token)
                 ProtocolCraft::WriteContainer keyPacket;
-                ProtocolCraft::WriteData<int, ProtocolCraft::VarInt>(0x01, keyPacket);  // packet ID
+                ProtocolCraft::WriteData<int, ProtocolCraft::VarInt>(0x01, keyPacket);
                 ProtocolCraft::WriteData<int, ProtocolCraft::VarInt>(
                     static_cast<int>(encryptedSharedSecret.size()), keyPacket);
                 for (auto b : encryptedSharedSecret) {
@@ -314,18 +308,18 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
                 }
                 LOGI("Encryption key response sent");
 
-                // 启用 AES 流加密
                 net->setEncrypter(aesEncrypter.get());
                 LOGI("AES-128-CFB8 stream encryption enabled on NetworkManager");
-
-                continue;  // 继续等待 Login Success
 
             } catch (const std::exception& e) {
                 LOGE("Failed to parse encryption request: %s", e.what());
                 net->disconnect();
                 return false;
             }
-        } else if (pid == 0x03) {
+            continue;  // 继续等待 Login Success
+        }
+
+        case 0x03: {
             // Set Compression
             ProtocolCraft::ClientboundLoginCompressionPacket compressionPacket;
             std::vector<unsigned char> packetData(resp.begin() + pos, resp.end());
@@ -339,7 +333,9 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
             Compression::setReceiveEnabled(true);
             Compression::setThreshold(threshold);
             continue;
-        } else if (pid == 0x00) {
+        }
+
+        case 0x00: {
             // Disconnect
             ProtocolCraft::ClientboundLoginDisconnectPacket disconnectPacket;
             std::vector<unsigned char> packetData(resp.begin() + pos, resp.end());
@@ -348,20 +344,23 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
 
             try {
                 disconnectPacket.Read(iter, length);
-                // Reason 是 Chat 类型，需要转换为字符串
                 LOGE("Disconnected during login");
             } catch (...) {
                 LOGE("Disconnected during login (failed to parse reason)");
             }
             net->disconnect();
             return false;
-        } else {
+        }
+
+        default: {
             LOGE("Unexpected login packet: %d", pid);
             net->disconnect();
             return false;
         }
+        }
     }
 
+loginDone:
     // 启用发送压缩（参照 Botcraft：收到 Set Compression 后立即启用收发压缩）
     // Botcraft 用单一 compression 变量控制，我们在登录循环结束后统一启用
     if (Compression::isReceiveEnabled()) {
