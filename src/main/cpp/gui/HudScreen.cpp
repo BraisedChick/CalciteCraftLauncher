@@ -6,7 +6,7 @@
 #include "imgui.h"
 #include "GameUI.h"
 #include "CameraController.h"
-#include "ClientEngine.h"
+#include "ClientEngine/ClientEngine.h"
 #include "ResourcepackManager.h"
 #include "BlockRegistry.h"
 #include "PlayerInventory.h"

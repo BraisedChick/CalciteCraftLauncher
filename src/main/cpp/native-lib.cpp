@@ -6,7 +6,7 @@
 #include <android/log.h>
 #include <thread>
 #include <atomic>
-#include "ClientEngine.h"
+#include "ClientEngine/ClientEngine.h"
 #include "VulkanRenderer.h"
 #include "GLRenderer.h"
 #include "utils.h"

@@ -7,7 +7,7 @@
 #include "ResourcepackManager.h"
 #include "BlockRegistry.h"
 #include "PlayerInventory.h"
-#include "ClientEngine.h"
+#include "ClientEngine/ClientEngine.h"
 #include "GameUI.h"
 
 #include <android/log.h>

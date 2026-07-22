@@ -51,7 +51,13 @@ set(PROTOCOLCRAFT_SRC
 # 应用源文件
 # ============================================================
 set(APP_SOURCES
-    ClientEngine.cpp
+    ClientEngine/ClientEngine.cpp
+    ClientEngine/handlers/LoginHandler.cpp
+    ClientEngine/handlers/WorldHandler.cpp
+    ClientEngine/handlers/EntityHandler.cpp
+    ClientEngine/handlers/InventoryHandler.cpp
+    ClientEngine/handlers/ChatHandler.cpp
+    ClientEngine/handlers/PlayerStatusHandler.cpp
     Compression.cpp
     NetworkManager.cpp
     native-lib.cpp

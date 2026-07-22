@@ -9,6 +9,7 @@
 #include <thread>
 #include <condition_variable>
 #include <map>
+#include <unordered_map>
 
 class ChunkManager;
 class NetworkManager;
@@ -152,6 +153,19 @@ private:
     void parseChunkDataPacket(const std::vector<uint8_t>& data, size_t startPos);
     size_t calculateNBTSize(const std::vector<uint8_t>& data, size_t startPos);
     void chunkWorkerFunc();
+
+    // Handler 注册表
+    using PacketHandler = void (ClientEngine::*)(int packetId, const std::vector<uint8_t>& data, size_t startPos);
+    void registerHandlers();
+    std::unordered_map<int, PacketHandler> m_packetHandlers;
+
+    // 按业务域拆分的 handler 函数（各 handler 通过 registerHandlers 注册到 m_packetHandlers）
+    void handleLogin(int packetId, const std::vector<uint8_t>& data, size_t startPos);
+    void handleWorld(int packetId, const std::vector<uint8_t>& data, size_t startPos);
+    void handleEntity(int packetId, const std::vector<uint8_t>& data, size_t startPos);
+    void handleInventory(int packetId, const std::vector<uint8_t>& data, size_t startPos);
+    void handleChat(int packetId, const std::vector<uint8_t>& data, size_t startPos);
+    void handlePlayerStatus(int packetId, const std::vector<uint8_t>& data, size_t startPos);
 
     // Chat Component JSON 解析（translate/with/text 多层结构）
     std::string parseChatComponent(const std::string& rawJson) const;

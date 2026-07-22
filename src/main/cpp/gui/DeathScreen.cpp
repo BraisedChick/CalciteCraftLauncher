@@ -4,7 +4,7 @@
 #define IMGUI_IMPL_OPENGL_LOADER_CUSTOM
 #include <GLES3/gl3.h>
 #include "imgui.h"
-#include "ClientEngine.h"
+#include "ClientEngine/ClientEngine.h"
 #include "GameUI.h"
 #include "GuiUtils.h"
 

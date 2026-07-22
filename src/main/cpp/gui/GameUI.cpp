@@ -18,7 +18,7 @@
 #include "EntityManager.h"
 #include "Collision.h"
 #include "PlayerInventory.h"
-#include "ClientEngine.h"
+#include "ClientEngine/ClientEngine.h"
 #include "Raycast.h"
 #include "ChunkManager.h"
 #include "BlockRegistry.h"
