@@ -52,14 +52,14 @@ set(PROTOCOLCRAFT_SRC
 # ============================================================
 set(APP_SOURCES
     ClientEngine/ClientEngine.cpp
-    ClientEngine/handlers/LoginHandler.cpp
-    ClientEngine/handlers/WorldHandler.cpp
-    ClientEngine/handlers/EntityHandler.cpp
-    ClientEngine/handlers/InventoryHandler.cpp
-    ClientEngine/handlers/ChatHandler.cpp
-    ClientEngine/handlers/PlayerStatusHandler.cpp
+    NetworkManager/handlers/LoginHandler.cpp
+    NetworkManager/handlers/WorldHandler.cpp
+    NetworkManager/handlers/EntityHandler.cpp
+    NetworkManager/handlers/InventoryHandler.cpp
+    NetworkManager/handlers/ChatHandler.cpp
+    NetworkManager/handlers/PlayerStatusHandler.cpp
     Compression.cpp
-    NetworkManager.cpp
+    NetworkManager/NetworkManager.cpp
     native-lib.cpp
     AESEncrypter.cpp
     AESEncrypter_armv8.cpp

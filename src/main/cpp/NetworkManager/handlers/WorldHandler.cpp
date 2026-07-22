@@ -1,4 +1,5 @@
-#include "../ClientEngine.h"
+#include "NetworkManager/NetworkManager.h"
+#include "ClientEngine/ClientEngine.h"
 #include "utils.h"
 #include "ChunkManager.h"
 #include "Light.h"
@@ -9,7 +10,7 @@
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundLightUpdatePacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundSectionBlocksUpdatePacket.hpp"
 
-void ClientEngine::handleWorld(int packetId, const std::vector<uint8_t>& data, size_t startPos) {
+void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data, size_t startPos) {
     switch (packetId) {
 #if PROTOCOL_VERSION < 762
         case 0x22:
@@ -18,10 +19,9 @@ void ClientEngine::handleWorld(int packetId, const std::vector<uint8_t>& data, s
 #endif
         { // Chunk Data
             {
-                std::lock_guard<std::mutex> lock(chunkQueueMutex);
-                chunkQueue.push({std::vector<uint8_t>(data.begin() + startPos, data.end())});
+                std::lock_guard<std::mutex> lock(m_engine->netMutex);
+                enqueueChunkData(std::vector<uint8_t>(data.begin() + startPos, data.end()));
             }
-            chunkCV.notify_one();
             break;
         }
 
@@ -48,13 +48,13 @@ void ClientEngine::handleWorld(int packetId, const std::vector<uint8_t>& data, s
             int localX = blockX & 15;
             int localZ = blockZ & 15;
 
-            if (chunkManager) {
-                auto chunk = chunkManager->getChunk(chunkX, chunkZ);
+            if (m_engine->chunkManager) {
+                auto chunk = m_engine->chunkManager->getChunk(chunkX, chunkZ);
                 if (chunk) {
                     chunk->setBlockState(localX, blockY, localZ, blockState);
                     Light::getInstance().queueBlockLightRecalc(blockX, blockY, blockZ);
-                    if (glRenderer) {
-                        glRenderer->markChunkForUpdate(chunkX, chunkZ);
+                    if (m_engine->glRenderer) {
+                        m_engine->glRenderer->markChunkForUpdate(chunkX, chunkZ);
                     }
                 } else {
                     LOGW("BlockUpdate: chunk (%d, %d) not loaded", chunkX, chunkZ);
@@ -77,8 +77,8 @@ void ClientEngine::handleWorld(int packetId, const std::vector<uint8_t>& data, s
                 lightPacket.Read(subIter, subLen);
                 int lx = lightPacket.GetX();
                 int lz = lightPacket.GetZ();
-                if (chunkManager) {
-                    auto chunk = chunkManager->getChunk(lx, lz);
+                if (m_engine->chunkManager) {
+                    auto chunk = m_engine->chunkManager->getChunk(lx, lz);
                     if (chunk) {
                         const auto& ld = lightPacket.GetLightData();
                         const auto& skyMasks = ld.GetSkyYMask();
@@ -117,7 +117,7 @@ void ClientEngine::handleWorld(int packetId, const std::vector<uint8_t>& data, s
                                 sec->blockLight.assign(2048, 0);
                             }
                         }
-                        if (glRenderer) glRenderer->markChunkForUpdate(lx, lz);
+                        if (m_engine->glRenderer) m_engine->glRenderer->markChunkForUpdate(lx, lz);
                     }
                 }
             } catch (const std::exception& e) {
@@ -147,8 +147,8 @@ void ClientEngine::handleWorld(int packetId, const std::vector<uint8_t>& data, s
             int sectionY = (int)(rawPos & 0xFFFFF);
             if (sectionY >= 524288) sectionY -= 1048576;
 
-            if (!chunkManager) break;
-            auto chunk = chunkManager->getChunk(chunkX, chunkZ);
+            if (!m_engine->chunkManager) break;
+            auto chunk = m_engine->chunkManager->getChunk(chunkX, chunkZ);
             if (!chunk) {
                 LOGE("SectionBlocksUpdate: chunk (%d, %d) not loaded", chunkX, chunkZ);
                 break;
@@ -166,8 +166,8 @@ void ClientEngine::handleWorld(int packetId, const std::vector<uint8_t>& data, s
                 chunk->setBlockState(localX, blockY, localZ, blockState);
             }
 
-            if (glRenderer) {
-                glRenderer->markChunkForUpdate(chunkX, chunkZ);
+            if (m_engine->glRenderer) {
+                m_engine->glRenderer->markChunkForUpdate(chunkX, chunkZ);
             }
             break;
         }

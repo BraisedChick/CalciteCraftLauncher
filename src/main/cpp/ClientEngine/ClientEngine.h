@@ -17,6 +17,7 @@ class GLRenderer;
 class AESEncrypter;
 
 class ClientEngine {
+    friend class NetworkManager;
 public:
     ClientEngine();
     ~ClientEngine();
@@ -121,55 +122,6 @@ public:
     void loadLanguage(const std::string& json);
 
 private:
-    // 紧急数据包队列（延迟敏感：位置、方块更新、生命等）
-    struct PacketTask {
-        int packetId;
-        std::vector<uint8_t> data;
-        size_t startPos;
-    };
-    std::queue<PacketTask> urgentQueue;
-    std::mutex urgentQueueMutex;
-    std::condition_variable urgentCV;
-    std::thread urgentProcessor;
-    std::atomic<bool> urgentProcessorRunning{false};
-
-    // 普通数据包队列（登录、物品、聊天等）
-    std::queue<PacketTask> normalQueue;
-    std::mutex normalQueueMutex;
-    std::condition_variable normalCV;
-    std::thread normalProcessor;
-    std::atomic<bool> normalProcessorRunning{false};
-
-    struct ChunkLoadTask {
-        std::vector<uint8_t> rawData;  // 完整原始包数据（从 VarInt chunk packet ID 之后开始）
-    };
-    std::queue<ChunkLoadTask> chunkQueue;
-    std::mutex chunkQueueMutex;
-    std::condition_variable chunkCV;
-    std::thread chunkWorker;
-    std::atomic<bool> chunkWorkerRunning{false};
-
-    void handlePlayPacket(int packetId,
-                         const std::vector<uint8_t>& data, size_t startPos);
-    void urgentProcessorFunc();
-    void normalProcessorFunc();
-    void parseChunkDataPacket(const std::vector<uint8_t>& data, size_t startPos);
-    size_t calculateNBTSize(const std::vector<uint8_t>& data, size_t startPos);
-    void chunkWorkerFunc();
-
-    // Handler 注册表
-    using PacketHandler = void (ClientEngine::*)(int packetId, const std::vector<uint8_t>& data, size_t startPos);
-    void registerHandlers();
-    std::unordered_map<int, PacketHandler> m_packetHandlers;
-
-    // 按业务域拆分的 handler 函数（各 handler 通过 registerHandlers 注册到 m_packetHandlers）
-    void handleLogin(int packetId, const std::vector<uint8_t>& data, size_t startPos);
-    void handleWorld(int packetId, const std::vector<uint8_t>& data, size_t startPos);
-    void handleEntity(int packetId, const std::vector<uint8_t>& data, size_t startPos);
-    void handleInventory(int packetId, const std::vector<uint8_t>& data, size_t startPos);
-    void handleChat(int packetId, const std::vector<uint8_t>& data, size_t startPos);
-    void handlePlayerStatus(int packetId, const std::vector<uint8_t>& data, size_t startPos);
-
     // Chat Component JSON 解析（translate/with/text 多层结构）
     std::string parseChatComponent(const std::string& rawJson) const;
 

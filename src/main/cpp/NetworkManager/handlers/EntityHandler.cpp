@@ -1,4 +1,4 @@
-#include "../ClientEngine.h"
+#include "NetworkManager/NetworkManager.h"
 #include "utils.h"
 #include "EntityManager.h"
 #include "Entity.h"
@@ -13,7 +13,7 @@
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundRemoveEntitiesPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundSetEntityMotionPacket.hpp"
 
-void ClientEngine::handleEntity(int packetId, const std::vector<uint8_t>& data, size_t startPos) {
+void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data, size_t startPos) {
     switch (packetId) {
 #if PROTOCOL_VERSION >= 762
         case 0x00: // BundlePacket - 跳过

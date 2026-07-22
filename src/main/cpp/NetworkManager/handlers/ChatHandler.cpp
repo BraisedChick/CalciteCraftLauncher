@@ -1,6 +1,6 @@
-#include "../ClientEngine.h"
+#include "NetworkManager/NetworkManager.h"
+#include "ClientEngine/ClientEngine.h"
 #include "utils.h"
-#include "EntityManager.h"
 #include "gui/GameUI.h"
 
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundChatPacket.hpp"
@@ -8,7 +8,7 @@
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundPlayerChatPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundDisguisedChatPacket.hpp"
 
-void ClientEngine::handleChat(int packetId, const std::vector<uint8_t>& data, size_t startPos) {
+void NetworkManager::handleChat(int packetId, const std::vector<uint8_t>& data, size_t startPos) {
     switch (packetId) {
 #if PROTOCOL_VERSION < 762
         case 0x0F:
@@ -24,7 +24,7 @@ void ClientEngine::handleChat(int packetId, const std::vector<uint8_t>& data, si
                 size_t len = pktData.size();
                 chatPacket.Read(iter, len);
                 std::string rawJson = chatPacket.GetMessage().GetRawText();
-                std::string text = rawJson.empty() ? chatPacket.GetMessage().GetText() : parseChatComponent(rawJson);
+                std::string text = rawJson.empty() ? chatPacket.GetMessage().GetText() : m_engine->parseChatComponent(rawJson);
                 unsigned int chatColor = (rawJson.find("multiplayer.player.") != std::string::npos) ? 0xFF55FFFF : 0xFFFFFFFF;
                 GameUI::getInstance().addChatMessage(text, chatColor);
 #else
@@ -34,7 +34,7 @@ void ClientEngine::handleChat(int packetId, const std::vector<uint8_t>& data, si
                 size_t len = pktData.size();
                 sysChat.Read(iter, len);
                 std::string rawJson = sysChat.GetContent().GetRawText();
-                std::string text = rawJson.empty() ? sysChat.GetContent().GetText() : parseChatComponent(rawJson);
+                std::string text = rawJson.empty() ? sysChat.GetContent().GetText() : m_engine->parseChatComponent(rawJson);
                 unsigned int chatColor = (rawJson.find("multiplayer.player.") != std::string::npos) ? 0xFF55FFFF : 0xFFFFFFFF;
                 GameUI::getInstance().addChatMessage(text, chatColor);
 #endif
@@ -67,7 +67,7 @@ void ClientEngine::handleChat(int packetId, const std::vector<uint8_t>& data, si
 #else
                 if (playerChat.GetUnsignedContent().has_value()) {
                     std::string rawJson = playerChat.GetUnsignedContent()->GetRawText();
-                    text = rawJson.empty() ? playerChat.GetUnsignedContent()->GetText() : parseChatComponent(rawJson);
+                    text = rawJson.empty() ? playerChat.GetUnsignedContent()->GetText() : m_engine->parseChatComponent(rawJson);
                 }
 #if PROTOCOL_VERSION >= 761
                 if (text.empty()) {
@@ -102,7 +102,7 @@ void ClientEngine::handleChat(int packetId, const std::vector<uint8_t>& data, si
                 size_t len = pktData.size();
                 disgChat.Read(iter, len);
                 std::string rawJson = disgChat.GetMessage().GetRawText();
-                std::string text = rawJson.empty() ? disgChat.GetMessage().GetText() : parseChatComponent(rawJson);
+                std::string text = rawJson.empty() ? disgChat.GetMessage().GetText() : m_engine->parseChatComponent(rawJson);
                 if (!text.empty()) {
                     unsigned int chatColor = (rawJson.find("multiplayer.player.") != std::string::npos) ? 0xFF55FFFF : 0xFFFFFFFF;
                     GameUI::getInstance().addChatMessage(text, chatColor);

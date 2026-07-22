@@ -1,4 +1,5 @@
-#include "../ClientEngine.h"
+#include "NetworkManager/NetworkManager.h"
+#include "ClientEngine/ClientEngine.h"
 #include "utils.h"
 #include "EntityManager.h"
 #include "Entity.h"
@@ -15,7 +16,7 @@
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundGameEventPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundRespawnPacket.hpp"
 
-void ClientEngine::handleLogin(int packetId, const std::vector<uint8_t>& data, size_t startPos) {
+void NetworkManager::handleLogin(int packetId, const std::vector<uint8_t>& data, size_t startPos) {
     switch (packetId) {
 #if PROTOCOL_VERSION < 762
         case 0x26:
@@ -32,11 +33,11 @@ void ClientEngine::handleLogin(int packetId, const std::vector<uint8_t>& data, s
 
             try {
                 loginPacket.Read(iter, length);
-                gameMode = loginPacket.GetGameType();
-                Collision::getInstance().setGameMode(gameMode);
+                m_engine->gameMode = loginPacket.GetGameType();
+                Collision::getInstance().setGameMode(m_engine->gameMode);
                 int playerId = loginPacket.GetPlayerId();
-                this->playerId = playerId;
-                LOGI("Player ID: %d, GameType: %d", playerId, gameMode);
+                m_engine->playerId = playerId;
+                LOGI("Player ID: %d, GameType: %d", playerId, m_engine->gameMode);
 
                 {
                     Entity playerEntity;
@@ -155,14 +156,14 @@ void ClientEngine::handleLogin(int packetId, const std::vector<uint8_t>& data, s
                 try {
                     const auto& dimType = loginPacket.GetDimensionType();
                     if (dimType.contains("min_y") && dimType.contains("height")) {
-                        dimensionMinY = dimType["min_y"].get<int>();
-                        dimensionHeight = dimType["height"].get<int>();
-                        VersionManager::getInstance().setDimensionConfig(dimensionMinY, dimensionMinY + dimensionHeight);
+                        m_engine->dimensionMinY = dimType["min_y"].get<int>();
+                        m_engine->dimensionHeight = dimType["height"].get<int>();
+                        VersionManager::getInstance().setDimensionConfig(m_engine->dimensionMinY, m_engine->dimensionMinY + m_engine->dimensionHeight);
                     }
                 } catch (const std::exception& e) {
                     LOGW("Failed to parse DimensionType from Login: %s", e.what());
-                    dimensionMinY = -64;
-                    dimensionHeight = 384;
+                    m_engine->dimensionMinY = -64;
+                    m_engine->dimensionHeight = 384;
                     VersionManager::getInstance().setDimensionConfig(-64, 320);
                 }
 #else
@@ -184,9 +185,9 @@ void ClientEngine::handleLogin(int packetId, const std::vector<uint8_t>& data, s
                                     auto minYIt = elem.find("min_y");
                                     auto heightIt = elem.find("height");
                                     if (minYIt != elem.end() && heightIt != elem.end()) {
-                                        dimensionMinY = minYIt->second.get<int>();
-                                        dimensionHeight = heightIt->second.get<int>();
-                                        VersionManager::getInstance().setDimensionConfig(dimensionMinY, dimensionMinY + dimensionHeight);
+                                        m_engine->dimensionMinY = minYIt->second.get<int>();
+                                        m_engine->dimensionHeight = heightIt->second.get<int>();
+                                        VersionManager::getInstance().setDimensionConfig(m_engine->dimensionMinY, m_engine->dimensionMinY + m_engine->dimensionHeight);
                                     }
                                     break;
                                 }
@@ -198,7 +199,7 @@ void ClientEngine::handleLogin(int packetId, const std::vector<uint8_t>& data, s
                 }
 #endif
                 LOGI("Dimension info: min_y=%d, height=%d (Y range: %d to %d)",
-                     dimensionMinY, dimensionHeight, dimensionMinY, dimensionMinY + dimensionHeight - 1);
+                     m_engine->dimensionMinY, m_engine->dimensionHeight, m_engine->dimensionMinY, m_engine->dimensionMinY + m_engine->dimensionHeight - 1);
             } catch (const std::exception& e) {
                 LOGE("Failed to parse Login packet: %s", e.what());
             }
@@ -218,7 +219,7 @@ void ClientEngine::handleLogin(int packetId, const std::vector<uint8_t>& data, s
             gameEventPacket.Read(iter, len);
             if (gameEventPacket.GetType() == 3) {
                 int newMode = static_cast<int>(gameEventPacket.GetParam());
-                gameMode = newMode;
+                m_engine->gameMode = newMode;
                 Collision::getInstance().setGameMode(newMode);
             }
             LOGI("gamemode change");
@@ -237,17 +238,17 @@ void ClientEngine::handleLogin(int packetId, const std::vector<uint8_t>& data, s
             size_t len = pktData.size();
             respawnPacket.Read(iter, len);
             int newMode = respawnPacket.GetPlayerGameType();
-            gameMode = newMode;
+            m_engine->gameMode = newMode;
             Collision::getInstance().setGameMode(newMode);
 
 #if PROTOCOL_VERSION < 759
             try {
                 const auto& dimType = respawnPacket.GetDimensionType();
                 if (dimType.contains("min_y") && dimType.contains("height")) {
-                    dimensionMinY = dimType["min_y"].get<int>();
-                    dimensionHeight = dimType["height"].get<int>();
-                    VersionManager::getInstance().setDimensionConfig(dimensionMinY, dimensionMinY + dimensionHeight);
-                    LOGI("Respawn: New dimension min_y=%d, height=%d", dimensionMinY, dimensionHeight);
+                    m_engine->dimensionMinY = dimType["min_y"].get<int>();
+                    m_engine->dimensionHeight = dimType["height"].get<int>();
+                    VersionManager::getInstance().setDimensionConfig(m_engine->dimensionMinY, m_engine->dimensionMinY + m_engine->dimensionHeight);
+                    LOGI("Respawn: New dimension min_y=%d, height=%d", m_engine->dimensionMinY, m_engine->dimensionHeight);
                 }
             } catch (const std::exception& e) {
                 LOGW("Failed to parse DimensionType from Respawn: %s", e.what());
@@ -258,11 +259,11 @@ void ClientEngine::handleLogin(int packetId, const std::vector<uint8_t>& data, s
 #endif
 
             LOGI("Respawn: Dimension change, clearing chunks and entities");
-            if (chunkManager) {
-                chunkManager->clear();
+            if (m_engine->chunkManager) {
+                m_engine->chunkManager->clear();
             }
-            if (glRenderer) {
-                glRenderer->clearChunks();
+            if (m_engine->glRenderer) {
+                m_engine->glRenderer->clearChunks();
             }
             EntityManager::getInstance().removeAllEntities();
             break;

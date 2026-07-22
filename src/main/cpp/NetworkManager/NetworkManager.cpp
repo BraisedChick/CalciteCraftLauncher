@@ -1,4 +1,4 @@
-#include "NetworkManager.h"
+#include "NetworkManager/NetworkManager.h"
 #include "AESEncrypter.h"
 #include "protocolCraft/BinaryReadWrite.hpp"
 #include "Compression.h"
@@ -183,68 +183,68 @@ void NetworkManager::registerHandlers() {
 
 #if PROTOCOL_VERSION < 762
     // 1.18.2
-    reg(0x26, &ClientEngine::handleLogin);
-    reg(0x21, &ClientEngine::handlePlayerStatus);
-    reg(0x38, &ClientEngine::handlePlayerStatus);
-    reg(0x22, &ClientEngine::handleWorld);
-    reg(0x0C, &ClientEngine::handleWorld);
-    reg(0x25, &ClientEngine::handleWorld);
-    reg(0x3F, &ClientEngine::handleWorld);
-    reg(0x14, &ClientEngine::handleInventory);
-    reg(0x16, &ClientEngine::handleInventory);
-    reg(0x35, &ClientEngine::handlePlayerStatus);
-    reg(0x51, &ClientEngine::handlePlayerStatus);
-    reg(0x52, &ClientEngine::handlePlayerStatus);
-    reg(0x1E, &ClientEngine::handleLogin);
-    reg(0x3D, &ClientEngine::handleLogin);
-    reg(0x59, &ClientEngine::handlePlayerStatus);
-    reg(0x48, &ClientEngine::handlePlayerStatus);
-    reg(0x00, &ClientEngine::handleEntity);
-    reg(0x02, &ClientEngine::handleEntity);
-    reg(0x04, &ClientEngine::handleEntity);
-    reg(0x2A, &ClientEngine::handleEntity);
-    reg(0x29, &ClientEngine::handleEntity);
-    reg(0x2B, &ClientEngine::handleEntity);
-    reg(0x62, &ClientEngine::handleEntity);
-    reg(0x3A, &ClientEngine::handleEntity);
-    reg(0x4F, &ClientEngine::handleEntity);
-    reg(0x2E, &ClientEngine::handleInventory);
-    reg(0x13, &ClientEngine::handleInventory);
-    reg(0x0F, &ClientEngine::handleChat);
+    reg(0x26, &NetworkManager::handleLogin);
+    reg(0x21, &NetworkManager::handlePlayerStatus);
+    reg(0x38, &NetworkManager::handlePlayerStatus);
+    reg(0x22, &NetworkManager::handleWorld);
+    reg(0x0C, &NetworkManager::handleWorld);
+    reg(0x25, &NetworkManager::handleWorld);
+    reg(0x3F, &NetworkManager::handleWorld);
+    reg(0x14, &NetworkManager::handleInventory);
+    reg(0x16, &NetworkManager::handleInventory);
+    reg(0x35, &NetworkManager::handlePlayerStatus);
+    reg(0x51, &NetworkManager::handlePlayerStatus);
+    reg(0x52, &NetworkManager::handlePlayerStatus);
+    reg(0x1E, &NetworkManager::handleLogin);
+    reg(0x3D, &NetworkManager::handleLogin);
+    reg(0x59, &NetworkManager::handlePlayerStatus);
+    reg(0x48, &NetworkManager::handlePlayerStatus);
+    reg(0x00, &NetworkManager::handleEntity);
+    reg(0x02, &NetworkManager::handleEntity);
+    reg(0x04, &NetworkManager::handleEntity);
+    reg(0x2A, &NetworkManager::handleEntity);
+    reg(0x29, &NetworkManager::handleEntity);
+    reg(0x2B, &NetworkManager::handleEntity);
+    reg(0x62, &NetworkManager::handleEntity);
+    reg(0x3A, &NetworkManager::handleEntity);
+    reg(0x4F, &NetworkManager::handleEntity);
+    reg(0x2E, &NetworkManager::handleInventory);
+    reg(0x13, &NetworkManager::handleInventory);
+    reg(0x0F, &NetworkManager::handleChat);
 #else
     // 1.19+
-    reg(0x28, &ClientEngine::handleLogin);
-    reg(0x23, &ClientEngine::handlePlayerStatus);
-    reg(0x3C, &ClientEngine::handlePlayerStatus);
-    reg(0x24, &ClientEngine::handleWorld);
-    reg(0x0A, &ClientEngine::handleWorld);
-    reg(0x27, &ClientEngine::handleWorld);
-    reg(0x43, &ClientEngine::handleWorld);
-    reg(0x12, &ClientEngine::handleInventory);
-    reg(0x14, &ClientEngine::handleInventory);
-    reg(0x38, &ClientEngine::handlePlayerStatus);
-    reg(0x56, &ClientEngine::handlePlayerStatus);
-    reg(0x57, &ClientEngine::handlePlayerStatus);
-    reg(0x1F, &ClientEngine::handleLogin);
-    reg(0x41, &ClientEngine::handleLogin);
-    reg(0x5E, &ClientEngine::handlePlayerStatus);
-    reg(0x4D, &ClientEngine::handlePlayerStatus);
-    reg(0x00, &ClientEngine::handlePlayerStatus); // BundlePacket
-    reg(0x01, &ClientEngine::handleEntity);
+    reg(0x28, &NetworkManager::handleLogin);
+    reg(0x23, &NetworkManager::handlePlayerStatus);
+    reg(0x3C, &NetworkManager::handlePlayerStatus);
+    reg(0x24, &NetworkManager::handleWorld);
+    reg(0x0A, &NetworkManager::handleWorld);
+    reg(0x27, &NetworkManager::handleWorld);
+    reg(0x43, &NetworkManager::handleWorld);
+    reg(0x12, &NetworkManager::handleInventory);
+    reg(0x14, &NetworkManager::handleInventory);
+    reg(0x38, &NetworkManager::handlePlayerStatus);
+    reg(0x56, &NetworkManager::handlePlayerStatus);
+    reg(0x57, &NetworkManager::handlePlayerStatus);
+    reg(0x1F, &NetworkManager::handleLogin);
+    reg(0x41, &NetworkManager::handleLogin);
+    reg(0x5E, &NetworkManager::handlePlayerStatus);
+    reg(0x4D, &NetworkManager::handlePlayerStatus);
+    reg(0x00, &NetworkManager::handlePlayerStatus); // BundlePacket
+    reg(0x01, &NetworkManager::handleEntity);
 #if PROTOCOL_VERSION < 764
-    reg(0x03, &ClientEngine::handleEntity); // AddPlayer
+    reg(0x03, &NetworkManager::handleEntity); // AddPlayer
 #endif
-    reg(0x2C, &ClientEngine::handleEntity);
-    reg(0x2B, &ClientEngine::handleEntity);
-    reg(0x2D, &ClientEngine::handleEntity);
-    reg(0x68, &ClientEngine::handleEntity);
-    reg(0x3E, &ClientEngine::handleEntity);
-    reg(0x54, &ClientEngine::handleEntity);
-    reg(0x30, &ClientEngine::handleInventory);
-    reg(0x11, &ClientEngine::handleInventory);
-    reg(0x63, &ClientEngine::handleChat);
-    reg(0x34, &ClientEngine::handleChat);
-    reg(0x1A, &ClientEngine::handleChat);
+    reg(0x2C, &NetworkManager::handleEntity);
+    reg(0x2B, &NetworkManager::handleEntity);
+    reg(0x2D, &NetworkManager::handleEntity);
+    reg(0x68, &NetworkManager::handleEntity);
+    reg(0x3E, &NetworkManager::handleEntity);
+    reg(0x54, &NetworkManager::handleEntity);
+    reg(0x30, &NetworkManager::handleInventory);
+    reg(0x11, &NetworkManager::handleInventory);
+    reg(0x63, &NetworkManager::handleChat);
+    reg(0x34, &NetworkManager::handleChat);
+    reg(0x1A, &NetworkManager::handleChat);
 #endif
 }
 
@@ -256,7 +256,7 @@ void NetworkManager::handlePlayPacket(int packetId,
     auto it = m_packetHandlers.find(packetId);
     if (it != m_packetHandlers.end()) {
         try {
-            (m_engine->*(it->second))(packetId, data, startPos);
+            (this->*(it->second))(packetId, data, startPos);
         } catch (const std::exception& e) {
             LOGE("Error handling packet 0x%02X: %s", packetId, e.what());
         }

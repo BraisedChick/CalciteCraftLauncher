@@ -1,4 +1,4 @@
-#include "../ClientEngine.h"
+#include "NetworkManager/NetworkManager.h"
 #include "utils.h"
 #include "PlayerInventory.h"
 #include "BlockRegistry.h"
@@ -61,7 +61,7 @@ static int getMaxDurability(const std::string& itemName) {
     return (it != durabilityMap.end()) ? it->second : 0;
 }
 
-void ClientEngine::handleInventory(int packetId, const std::vector<uint8_t>& data, size_t startPos) {
+void NetworkManager::handleInventory(int packetId, const std::vector<uint8_t>& data, size_t startPos) {
     switch (packetId) {
 #if PROTOCOL_VERSION < 762
         case 0x14:
