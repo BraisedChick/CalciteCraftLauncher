@@ -248,6 +248,9 @@ void TextureAtlas::parseElementFaces(ModelElementData& element,
 
         // tintindex
         face.tintindex = (int8_t)fc.value("tintindex", -1);
+
+        // UV 旋转 (0/90/180/270)
+        face.rotation = (uint16_t)fc.value("rotation", 0);
     }
 }
 
@@ -457,8 +460,8 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
         if (resolved.empty()) continue;
 
         ModelTextures mt;
-        mt.top = getFirstTexture(resolved, {"up", "top", "all", "end", "particle"});
-        mt.side = getFirstTexture(resolved, {"north", "south", "east", "west", "side", "all", "end", "particle"});
+        mt.top = getFirstTexture(resolved, {"up", "top", "all", "end", "particle", "platform"});
+        mt.side = getFirstTexture(resolved, {"north", "south", "east", "west", "side", "all", "end", "particle", "inside"});
         mt.bottom = getFirstTexture(resolved, {"down", "bottom", "all", "end", "particle"});
 
         if (mt.top.empty())    mt.top = "block/stone";
@@ -838,6 +841,31 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const json& j) 
                 std::vector<std::string> sorted(collectedValues.begin(), collectedValues.end());
                 std::sort(sorted.begin(), sorted.end());
                 propValueList[prop] = std::move(sorted);
+            }
+        }
+    }
+
+    // 用协议（blocks.json）的属性值顺序覆盖 blockstate 的推导顺序
+    // 确保 offset 编码与协议完全一致
+    {
+        const auto* blockInfo = BlockRegistry::getInstance().getBlockInfoByName(blockName);
+        if (blockInfo && !blockInfo->stateProperties.empty()) {
+            for (const auto& sp : blockInfo->stateProperties) {
+                auto plIt = propValueList.find(sp.name);
+                if (plIt != propValueList.end()) {
+                    // 保留与 blockstate JSON 实际出现值的交集，但按协议顺序
+                    std::vector<std::string> ordered;
+                    for (const auto& val : sp.values) {
+                        auto psIt = propValueSet.find(sp.name);
+                        if (psIt != propValueSet.end() &&
+                            psIt->second.find(val) != psIt->second.end()) {
+                            ordered.push_back(val);
+                        }
+                    }
+                    if (!ordered.empty()) {
+                        propValueList[sp.name] = std::move(ordered);
+                    }
+                }
             }
         }
     }

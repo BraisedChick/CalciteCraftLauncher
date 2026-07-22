@@ -38,6 +38,7 @@ struct ModelFaceData {
     float uv[4] = {0, 0, 16, 16}; // UV 坐标（Minecraft 0-16 像素空间）
     int8_t cullface = -1;    // 面剔除方向（FaceDir）,-1=不剔除
     int8_t tintindex = -1;   // -1=不染色, 0=草色, 1=树叶色
+    uint16_t rotation = 0;   // UV 旋转 (0/90/180/270)
     bool shade = true;       // 漫反射光照
 };
 

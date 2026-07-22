@@ -274,6 +274,36 @@ static void generateFromModel(
             };
             int fvIndex = FACEDIR_TO_FACE[dir];
 
+            // 用 fv 模板计算每个顶点默认 UV
+            float vertUV[4][2];
+            for (int v = 0; v < 4; v++) {
+                const float* fvp = FV[fvIndex][v];
+                vertUV[v][0] = u1 + fvp[3] * (u2 - u1);
+                vertUV[v][1] = v1 + fvp[4] * (v2 - v1);
+            }
+            // UV 旋转：vertUV 数组旋转 (shift = 90/180/270)
+            // 所有面从外部看，UV的顺时针旋转在屏幕上都是顺时针，无需根据法线方向取反
+            if (face.rotation != 0) {
+                float angleRad = face.rotation * (3.14159265f / 180.0f);
+                float cosA = cosf(angleRad);
+                float sinA = sinf(angleRad);
+                for (int v = 0; v < 4; v++) {
+                    float u = vertUV[v][0] - 0.5f;
+                    float vv = vertUV[v][1] - 0.5f;
+                    float nu = u * cosA + vv * sinA;
+                    float nv = -u * sinA + vv * cosA;
+                    vertUV[v][0] = nu + 0.5f;
+                    vertUV[v][1] = nv + 0.5f;
+                }
+            }
+            // FV[0](TOP)模板的 fv[4]=[0,0,1,1] 与其他模板 [1,1,0,0] 相反，
+            // 导致 V 方向反了 180°，需翻转补偿
+            if (fvIndex == 0) {
+                for (int v = 0; v < 4; v++) {
+                    vertUV[v][1] = 1.0f - vertUV[v][1];
+                }
+            }
+
             // 是否需要草覆盖层（grass block side overlay 的特判）
             bool needsOverlay = false;
             float texLayer = static_cast<float>(face.textureLayer);
@@ -353,8 +383,10 @@ static void generateFromModel(
                 faceVerts[v].pos[0] = blockX + lx / 16.0f;
                 faceVerts[v].pos[1] = blockY + ly / 16.0f;
                 faceVerts[v].pos[2] = blockZ + lz / 16.0f;
-                faceVerts[v].texCoord[0] = u1 + fv[3] * (u2 - u1);
-                faceVerts[v].texCoord[1] = v1 + fv[4] * (v2 - v1);
+
+                // UV 坐标：从 vertUV 取当前 vertex 的默认 UV（后面统一旋转）
+                faceVerts[v].texCoord[0] = vertUV[v][0];
+                faceVerts[v].texCoord[1] = vertUV[v][1];
                 faceVerts[v].texIndex = texLayer;
                 faceVerts[v].color[0] = cr;
                 faceVerts[v].color[1] = cg;
@@ -366,6 +398,7 @@ static void generateFromModel(
                 faceVerts[v].normal[2] = FACEDIR_NORMALS[dir][2];
                 // uv2 默认全亮 (240, 240)
             }
+
             vertices.insert(vertices.end(), faceVerts, faceVerts + 4);
 
             // 两个三角形 (CCW)，批量插入
