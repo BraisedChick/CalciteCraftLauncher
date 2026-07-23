@@ -187,7 +187,7 @@ void NetworkManager::handlePlayerStatus(int packetId, const std::vector<uint8_t>
             auto iter = pktData.cbegin();
             size_t len = pktData.size();
             timePacket.Read(iter, len);
-            Light::getInstance().setWorldDayTime(timePacket.GetDayTime());
+            m_engine->getLight()->setWorldDayTime(timePacket.GetDayTime());
             break;
         }
 

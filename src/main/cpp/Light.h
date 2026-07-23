@@ -12,7 +12,7 @@ class ChunkManager;
 /// 光照系统管理：光照贴图纹理 + 昼夜循环 + 天空颜色 + 方块光传播
 class Light {
 public:
-    static Light& getInstance();
+    Light();
     ~Light();
 
     // ===== 光照贴图纹理 =====
@@ -47,7 +47,6 @@ public:
     void setChunkManager(ChunkManager* cm) { chunkManagerRef = cm; }
 
 private:
-    Light();
     void startWorkerThread();
     void workerLoop();
 

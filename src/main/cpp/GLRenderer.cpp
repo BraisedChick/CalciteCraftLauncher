@@ -611,9 +611,7 @@ bool GLRenderer::createShaders() {
         return false;
     }
 
-    // ===== 创建光照贴图 =====
-    Light::getInstance().createLightmapTexture();
-    lightmapTextureID = Light::getInstance().getLightmapTextureID();
+    // 光照贴图纹理延迟到渲染循环中创建（需要 GameEngine 存在）
 
     LOGI("Mojang shaders loaded successfully");
     return true;
@@ -1363,10 +1361,19 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     }
 
     // ===== 昼夜循环：更新光照贴图和天空颜色 =====
-    Light::getInstance().update();
-    float skyR = Light::getInstance().getSkyColorR();
-    float skyG = Light::getInstance().getSkyColorG();
-    float skyB = Light::getInstance().getSkyColorB();
+    // 延迟创建光照贴图（首次进入渲染循环时 GameEngine 已存在）
+    auto* gameForLight = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+    if (gameForLight && gameForLight->getLight()) {
+        auto* light = gameForLight->getLight();
+        if (lightmapTextureID == 0) {
+            light->createLightmapTexture();
+            lightmapTextureID = light->getLightmapTextureID();
+        }
+        light->update();
+    }
+    float skyR = (gameForLight && gameForLight->getLight()) ? gameForLight->getLight()->getSkyColorR() : 0.53f;
+    float skyG = (gameForLight && gameForLight->getLight()) ? gameForLight->getLight()->getSkyColorG() : 0.81f;
+    float skyB = (gameForLight && gameForLight->getLight()) ? gameForLight->getLight()->getSkyColorB() : 0.92f;
 
     glClearColor(skyR, skyG, skyB, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1764,9 +1771,9 @@ void GLRenderer::renderCrackOverlay(const glm::mat4& viewMatrix, const glm::mat4
 
     float fogEnd = farPlane;
     float fogStart = farPlane * 0.7f;
-    float skyR = Light::getInstance().getSkyColorR();
-    float skyG = Light::getInstance().getSkyColorG();
-    float skyB = Light::getInstance().getSkyColorB();
+    float skyR = (ClientEngine::getInstance() && ClientEngine::getInstance()->getGame() && ClientEngine::getInstance()->getGame()->getLight()) ? ClientEngine::getInstance()->getGame()->getLight()->getSkyColorR() : 0.53f;
+    float skyG = (ClientEngine::getInstance() && ClientEngine::getInstance()->getGame() && ClientEngine::getInstance()->getGame()->getLight()) ? ClientEngine::getInstance()->getGame()->getLight()->getSkyColorG() : 0.81f;
+    float skyB = (ClientEngine::getInstance() && ClientEngine::getInstance()->getGame() && ClientEngine::getInstance()->getGame()->getLight()) ? ClientEngine::getInstance()->getGame()->getLight()->getSkyColorB() : 0.92f;
     if (shader.uFogStart != -1) glUniform1f(shader.uFogStart, fogStart);
     if (shader.uFogEnd != -1) glUniform1f(shader.uFogEnd, fogEnd);
     if (shader.uFogColor != -1) glUniform4f(shader.uFogColor, skyR, skyG, skyB, 1.0f);

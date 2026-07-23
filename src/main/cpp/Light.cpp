@@ -12,11 +12,6 @@
 #define LOG_TAG "Light"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-Light& Light::getInstance() {
-    static Light instance;
-    return instance;
-}
-
 // ===== 昼夜计算 =====
 
 float Light::getSkyDarken() const {

@@ -94,7 +94,8 @@ GameEngine::GameEngine(ClientEngine* client)
       chunkManager(nullptr),
       m_inventory(std::make_unique<PlayerInventory>()),
       m_entityManager(std::make_unique<EntityManager>()),
-      m_collision(std::make_unique<Collision>()) {
+      m_collision(std::make_unique<Collision>()),
+      m_light(std::make_unique<Light>()) {
 }
 
 GameEngine::~GameEngine() {
@@ -104,7 +105,7 @@ GameEngine::~GameEngine() {
     // 2. 清除外部模块对内部对象的引用
     if (chunkManager) {
         m_collision->setChunkManager(nullptr);
-        Light::getInstance().setChunkManager(nullptr);
+        m_light->setChunkManager(nullptr);
         if (getRenderer()) getRenderer()->setChunkManager(nullptr);
     }
 
@@ -257,7 +258,7 @@ bool GameEngine::start(const std::string& host, int port) {
         getRenderer()->setChunkManager(chunkManager.get());
     }
     m_collision->setChunkManager(chunkManager.get());
-    Light::getInstance().setChunkManager(chunkManager.get());
+    m_light->setChunkManager(chunkManager.get());
     LOGI("ChunkManager created and linked to renderer/collision/light");
 
     net = std::make_unique<NetworkManager>();
@@ -927,11 +928,11 @@ void GameEngine::disconnect() {
 }
 
 float GameEngine::getSkyDarken() const {
-    return Light::getInstance().getSkyDarken();
+    return m_light->getSkyDarken();
 }
 
 long long GameEngine::getWorldDayTime() const {
-    return Light::getInstance().getWorldDayTime();
+    return m_light->getWorldDayTime();
 }
 
 void GameEngine::loadLanguage(const std::string& json) {

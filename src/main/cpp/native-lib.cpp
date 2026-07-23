@@ -72,7 +72,7 @@ static void renderLoop() {
                         game->getCollision()->setChunkManager(cm);
                         JNI_LOGI("PlayerController: ChunkManager acquired from engine");
                     }
-                    Light::getInstance().setChunkManager(cm);
+                    game->getLight()->setChunkManager(cm);
                 }
             }
 
@@ -109,7 +109,7 @@ static void renderLoop() {
                 // 检查是否有已完成的光照重算，标记邻近 chunk
                 {
                     int lx, ly, lz;
-                    if (Light::getInstance().pollCompletedLightRecalc(&lx, &ly, &lz)) {
+                    if (game->getLight()->pollCompletedLightRecalc(&lx, &ly, &lz)) {
                         int cx = lx >> 4;
                         int cz = lz >> 4;
                         for (int dx = -2; dx <= 2; dx++) {
@@ -345,7 +345,7 @@ Java_com_calcite_MainActivity_initRenderer(
 
                 // 3. 清除单例中指向会话内部对象的裸指针
                 // Collision 由 GameEngine 持有，析构时自动清理
-                Light::getInstance().setChunkManager(nullptr);
+                // Light 由 GameEngine 持有，析构时自动清理
 
                 if (client->getRenderer()) {
                     client->getRenderer()->clearChunks();
