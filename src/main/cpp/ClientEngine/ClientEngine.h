@@ -139,6 +139,10 @@ public:
     // 本地玩家实体 ID
     int getPlayerId() const { return playerId; }
 
+    // 维度信息
+    int getDimensionMinY() const { return dimensionMinY; }
+    int getDimensionHeight() const { return dimensionHeight; }
+
     // 世界时间（DayTime 0-24000，用于昼夜循环）
     long long getWorldDayTime() const;
     // 天空暗度因子：0.0=白天，1.0=夜晚

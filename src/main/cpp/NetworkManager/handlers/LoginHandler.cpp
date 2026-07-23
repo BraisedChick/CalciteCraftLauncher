@@ -7,7 +7,6 @@
 #include "CameraController.h"
 #include "Light.h"
 #include "PlayerInventory.h"
-#include "MinecraftVersion.h"
 #include "BiomeColorManager.h"
 #include "ChunkManager.h"
 #include "GLRenderer.h"
@@ -158,13 +157,11 @@ void NetworkManager::handleLogin(int packetId, const std::vector<uint8_t>& data,
                     if (dimType.contains("min_y") && dimType.contains("height")) {
                         m_engine->dimensionMinY = dimType["min_y"].get<int>();
                         m_engine->dimensionHeight = dimType["height"].get<int>();
-                        VersionManager::getInstance().setDimensionConfig(m_engine->dimensionMinY, m_engine->dimensionMinY + m_engine->dimensionHeight);
                     }
                 } catch (const std::exception& e) {
                     LOGW("Failed to parse DimensionType from Login: %s", e.what());
                     m_engine->dimensionMinY = -64;
                     m_engine->dimensionHeight = 384;
-                    VersionManager::getInstance().setDimensionConfig(-64, 320);
                 }
 #else
                 try {
@@ -187,7 +184,6 @@ void NetworkManager::handleLogin(int packetId, const std::vector<uint8_t>& data,
                                     if (minYIt != elem.end() && heightIt != elem.end()) {
                                         m_engine->dimensionMinY = minYIt->second.get<int>();
                                         m_engine->dimensionHeight = heightIt->second.get<int>();
-                                        VersionManager::getInstance().setDimensionConfig(m_engine->dimensionMinY, m_engine->dimensionMinY + m_engine->dimensionHeight);
                                     }
                                     break;
                                 }
@@ -247,7 +243,6 @@ void NetworkManager::handleLogin(int packetId, const std::vector<uint8_t>& data,
                 if (dimType.contains("min_y") && dimType.contains("height")) {
                     m_engine->dimensionMinY = dimType["min_y"].get<int>();
                     m_engine->dimensionHeight = dimType["height"].get<int>();
-                    VersionManager::getInstance().setDimensionConfig(m_engine->dimensionMinY, m_engine->dimensionMinY + m_engine->dimensionHeight);
                     LOGI("Respawn: New dimension min_y=%d, height=%d", m_engine->dimensionMinY, m_engine->dimensionHeight);
                 }
             } catch (const std::exception& e) {

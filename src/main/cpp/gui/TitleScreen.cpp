@@ -121,7 +121,7 @@ void TitleScreen::render(int mouseX, int mouseY) {
     }
 
     ImGui::SetCursorPos(ImVec2(30.0f, h - 40.0f));
-    std::string verLabel = "Minecraft " + VersionManager::getInstance().getVersionName();
+    std::string verLabel = "Minecraft " + std::string(getProtocolVersionName(PROTOCOL_VERSION));
     ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", verLabel.c_str());
 
     ImGui::End();

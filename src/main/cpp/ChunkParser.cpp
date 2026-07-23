@@ -148,32 +148,22 @@ std::unique_ptr<Chunk> ChunkParser::parseChunkData(
     const std::vector<uint8_t>& blockEntitiesData,
     int dimensionMinY
 ) {
-    // 获取当前协议版本
-    const auto& versionMgr = VersionManager::getInstance();
-    int protocolVersion = versionMgr.getProtocolVersion();
-    ChunkDataFormat format = versionMgr.getChunkFormat();
-
-    // 根据区块数据格式版本选择解析方法
-    switch (format) {
-        case ChunkDataFormat::Legacy:
-            return parseLegacyChunk(chunkX, chunkZ, data, primaryBitMask);
-            
-        case ChunkDataFormat::Modern:
-            return parseModernChunk(chunkX, chunkZ, data, primaryBitMask);
-            
-        case ChunkDataFormat::Extended:
-            return parseExtendedChunk(chunkX, chunkZ, data, primaryBitMask,
-                                     heightmapsData, dimensionMinY);
-            
-        case ChunkDataFormat::Latest:
-            return parseLatestChunk(chunkX, chunkZ, data, primaryBitMask,
-                                   heightmapsData, blockEntitiesData);
-            
-        default:
-            LOGW("Unknown chunk format, using Extended as fallback");
-            return parseExtendedChunk(chunkX, chunkZ, data, primaryBitMask,
-                                     heightmapsData, dimensionMinY);
-    }
+    // 编译期根据 PROTOCOL_VERSION 宏选择区块解析方法
+#if PROTOCOL_VERSION >= 766
+    // 1.20.5+ Latest
+    return parseLatestChunk(chunkX, chunkZ, data, primaryBitMask,
+                            heightmapsData, blockEntitiesData);
+#elif PROTOCOL_VERSION >= 757
+    // 1.18+ Extended
+    return parseExtendedChunk(chunkX, chunkZ, data, primaryBitMask,
+                              heightmapsData, dimensionMinY);
+#elif PROTOCOL_VERSION >= 404
+    // 1.13-1.17 Modern
+    return parseModernChunk(chunkX, chunkZ, data, primaryBitMask);
+#else
+    // 1.8-1.12 Legacy
+    return parseLegacyChunk(chunkX, chunkZ, data, primaryBitMask);
+#endif
 }
 
 // ===== Legacy Chunk Parser (1.8 - 1.12) =====

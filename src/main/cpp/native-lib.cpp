@@ -12,7 +12,6 @@
 #include "utils.h"
 #include "TextureLoader.h"
 #include "ResourcepackManager.h"
-#include "MinecraftVersion.h"
 #include "BlockRegistry.h"
 #include "CameraController.h"
 #include "Collision.h"
@@ -35,6 +34,7 @@ static bool g_useVulkan = false;
 static bool g_initialized = false;
 static bool g_rendererTypeSet = false;  // 标记是否已设置渲染器类型
 static std::atomic<bool> g_rendering(false);
+static std::atomic<bool> g_renderThreadIdle(false);  // 渲染线程已进入非游戏分支（安全删除引擎）
 
 static std::thread g_renderThread;
 
@@ -58,66 +58,90 @@ static void renderLoop() {
         float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
         lastTime = currentTime;
 
-        // 确保 PlayerController 和 Light 持有 ChunkManager 引用
-        if (ClientEngine::getInstance()) {
-            auto* cm = ClientEngine::getInstance()->getChunkManager();
-            if (cm) {
-                if (!Collision::getInstance().hasChunkManager()) {
-                    Collision::getInstance().setChunkManager(cm);
-                    JNI_LOGI("PlayerController: ChunkManager acquired from engine");
+        bool inGame = (GameUI::getInstance().getState() == UIState::IN_GAME);
+
+        if (inGame) {
+            g_renderThreadIdle.store(false, std::memory_order_release);
+
+            // 确保 PlayerController 和 Light 持有 ChunkManager 引用
+            if (ClientEngine::getInstance()) {
+                auto* cm = ClientEngine::getInstance()->getChunkManager();
+                if (cm) {
+                    if (!Collision::getInstance().hasChunkManager()) {
+                        Collision::getInstance().setChunkManager(cm);
+                        JNI_LOGI("PlayerController: ChunkManager acquired from engine");
+                    }
+                    Light::getInstance().setChunkManager(cm);
                 }
-                Light::getInstance().setChunkManager(cm);
             }
-        }
 
-        // 背包/菜单/死亡界面打开时，重置移动输入但不中断物理（玩家仍受重力下落）
-        if (ClientEngine::getInstance() && GameUI::getInstance().getState() == UIState::IN_GAME
-            && GameUI::getInstance().isInGameUIActive()) {
-            Collision::getInstance().resetMovement();
-        }
+            // 背包/菜单/死亡界面打开时，重置移动输入但不中断物理（玩家仍受重力下落）
+            if (ClientEngine::getInstance() && GameUI::getInstance().isInGameUIActive()) {
+                Collision::getInstance().resetMovement();
+            }
 
-        // 更新玩家物理（传入视角方向计算移动）
-        float camPitch = CameraController::getInstance().getPitch();
-        float camYaw = CameraController::getInstance().getYaw();
-        glm::vec3 physPos;
-        bool onGround = false;
-        Collision::getInstance().update(deltaTime, camPitch, camYaw, &physPos, &onGround);
+            // 更新玩家物理（传入视角方向计算移动）
+            float camPitch = CameraController::getInstance().getPitch();
+            float camYaw = CameraController::getInstance().getYaw();
+            glm::vec3 physPos;
+            bool onGround = false;
+            Collision::getInstance().update(deltaTime, camPitch, camYaw, &physPos, &onGround);
 
-        // 发送玩家移动数据包到服务器（使用精确物理位置，已原子读取，无竞态）
-        if (ClientEngine::getInstance()) {
-            float curPitch = CameraController::getInstance().getPitch();
-            float curYaw = CameraController::getInstance().getYaw();
-            ClientEngine::getInstance()->sendPlayerMovement(physPos.x, physPos.y, physPos.z, curYaw, curPitch, onGround);
-        }
+            // 发送玩家移动数据包到服务器（使用精确物理位置，已原子读取，无竞态）
+            if (ClientEngine::getInstance()) {
+                float curPitch = CameraController::getInstance().getPitch();
+                float curYaw = CameraController::getInstance().getYaw();
+                ClientEngine::getInstance()->sendPlayerMovement(physPos.x, physPos.y, physPos.z, curYaw, curPitch, onGround);
+            }
 
-        if (frameCount <= 5 || frameCount % 60 == 0) {
-            JNI_LOGI("Rendering frame %d", frameCount);
-        }
+            if (frameCount <= 5 || frameCount % 60 == 0) {
+                JNI_LOGI("Rendering frame %d", frameCount);
+            }
 
-        // 从 CameraController 获取摄像机数据
-        auto pos = CameraController::getInstance().getSmoothPosition();
-        float pitch = CameraController::getInstance().getPitch();
-        float yaw = CameraController::getInstance().getYaw();
+            // 从 CameraController 获取摄像机数据
+            auto pos = CameraController::getInstance().getSmoothPosition();
+            float pitch = CameraController::getInstance().getPitch();
+            float yaw = CameraController::getInstance().getYaw();
 
-        if (ClientEngine::getInstance() && ClientEngine::getInstance()->getRenderer()) {
-            auto* renderer = ClientEngine::getInstance()->getRenderer();
-            // 检查是否有已完成的光照重算，标记邻近 chunk
-            {
-                int lx, ly, lz;
-                if (Light::getInstance().pollCompletedLightRecalc(&lx, &ly, &lz)) {
-                    int cx = lx >> 4;
-                    int cz = lz >> 4;
-                    for (int dx = -2; dx <= 2; dx++) {
-                        for (int dz = -2; dz <= 2; dz++) {
-                            renderer->markChunkForUpdate(cx + dx, cz + dz);
+            if (ClientEngine::getInstance() && ClientEngine::getInstance()->getRenderer()) {
+                auto* renderer = ClientEngine::getInstance()->getRenderer();
+                // 检查是否有已完成的光照重算，标记邻近 chunk
+                {
+                    int lx, ly, lz;
+                    if (Light::getInstance().pollCompletedLightRecalc(&lx, &ly, &lz)) {
+                        int cx = lx >> 4;
+                        int cz = lz >> 4;
+                        for (int dx = -2; dx <= 2; dx++) {
+                            for (int dz = -2; dz <= 2; dz++) {
+                                renderer->markChunkForUpdate(cx + dx, cz + dz);
+                            }
                         }
                     }
                 }
+
+                renderer->render(pos.x, pos.y, pos.z, pitch, yaw);
+            } else if (!ClientEngine::getInstance() && g_pendingRenderer) {
+                g_pendingRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
+            } else if (g_useVulkan && g_vulkanRenderer) {
+                g_vulkanRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
             }
+        } else {
+            // 非游戏状态：不访问任何引擎资源，GLRenderer::render() 内部渲染全景+ImGui
+            g_renderThreadIdle.store(true, std::memory_order_release);
 
-            renderer->render(pos.x, pos.y, pos.z, pitch, yaw);
+            auto pos = CameraController::getInstance().getSmoothPosition();
+            float pitch = CameraController::getInstance().getPitch();
+            float yaw = CameraController::getInstance().getYaw();
 
-            // 每帧检查 ImGui 是否需要键盘输入
+            if (g_pendingRenderer) {
+                g_pendingRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
+            } else if (g_useVulkan && g_vulkanRenderer) {
+                g_vulkanRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
+            }
+        }
+
+        // 每帧检查 ImGui 是否需要键盘输入（所有渲染路径通用）
+        {
             static bool lastWantTextInput = false;
             bool wantText = GameUI::getInstance().wantsTextInput();
             
@@ -130,23 +154,22 @@ static void renderLoop() {
                     int ger = JniBridge::getJvm()->GetEnv((void**)&env, JNI_VERSION_1_6);
                     if (ger == JNI_EDETACHED) {
                         if (JniBridge::getJvm()->AttachCurrentThread(&env, nullptr) == JNI_OK) attached = true;
-                        else continue;
-                    } else if (ger != JNI_OK) {
-                        continue;
+                    } else if (ger == JNI_OK) {
+                        // already attached
+                    } else {
+                        env = nullptr;
                     }
-                    jclass clazz = env->GetObjectClass(JniBridge::getActivity());
-                    jmethodID method = env->GetMethodID(clazz, "showKeyboardImGui", "(Z)V");
-                    if (method) {
-                        env->CallVoidMethod(JniBridge::getActivity(), method, wantText);
+                    if (env) {
+                        jclass clazz = env->GetObjectClass(JniBridge::getActivity());
+                        jmethodID method = env->GetMethodID(clazz, "showKeyboardImGui", "(Z)V");
+                        if (method) {
+                            env->CallVoidMethod(JniBridge::getActivity(), method, wantText);
+                        }
+                        env->DeleteLocalRef(clazz);
+                        if (attached) JniBridge::detachCurrentThread();
                     }
-                    env->DeleteLocalRef(clazz);
-                    if (attached) JniBridge::detachCurrentThread();
                 }
             }
-        } else if (!ClientEngine::getInstance() && g_pendingRenderer) {
-            g_pendingRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
-        } else if (g_useVulkan && g_vulkanRenderer) {
-            g_vulkanRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
         }
 
         // 音乐管理器每帧驱动
@@ -306,16 +329,31 @@ Java_com_calcite_MainActivity_initRenderer(
 
                 // 断开连接后回到主菜单
                 JNI_LOGI("Disconnected, returning to title screen");
+
+                // 1. 先切状态 → 渲染线程下一帧自动进入安全分支（不访问引擎）
+                auto& ui = GameUI::getInstance();
+                ui.setState(UIState::MAIN_MENU);
+
+                // 2. 等渲染线程确认已进入非游戏分支
+                while (!g_renderThreadIdle.load(std::memory_order_acquire)) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                JNI_LOGI("Render thread in safe branch, cleaning up engine");
+
+                // 3. 清除单例中指向引擎内部对象的裸指针
+                Collision::getInstance().setChunkManager(nullptr);
+                Light::getInstance().setChunkManager(nullptr);
+
                 if (engine->getRenderer()) {
                     engine->getRenderer()->clearChunks();
                 }
 
-                // 从引擎释放渲染器，归还给 JNI 层暂存
+                // 4. 释放渲染器，删除引擎
                 g_pendingRenderer = engine->releaseRenderer();
                 delete engine;
+                JNI_LOGI("Engine deleted safely");
 
-                auto& ui = GameUI::getInstance();
-                ui.setState(UIState::MAIN_MENU);
+                // 5. 更新 UI
                 ui.setGameMenuOpen(false);
                 ui.setDeathScreenActive(false);
                 ui.setOptionsOpen(false);
@@ -513,20 +551,6 @@ Java_com_calcite_MainActivity_setRendererType(
     g_useVulkan = (bool)useVulkan;
     g_rendererTypeSet = true;
     JNI_LOGI("Renderer type set to: %s", useVulkan ? "Vulkan" : "OpenGL ES");
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_calcite_MainActivity_setProtocolVersion(
-        JNIEnv* env,
-        jobject thiz,
-        jint version) {
-
-    int protocolVersion = (int)version;
-    VersionManager::getInstance().setProtocolVersion(protocolVersion);
-
-    JNI_LOGI("Protocol version set to: %d (%s)",
-             protocolVersion,
-             VersionManager::getInstance().getVersionName().c_str());
 }
 
 extern "C" JNIEXPORT void JNICALL

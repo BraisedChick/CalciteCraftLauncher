@@ -3,12 +3,28 @@
 #include <cstdint>
 #include <array>
 #include <memory>
-#include "MinecraftVersion.h"
 
 // Minecraft 区块尺寸（动态配置）
 constexpr int CHUNK_WIDTH = 16;
 constexpr int CHUNK_DEPTH = 16;
 constexpr int SECTION_HEIGHT = 16; // Section 高度通常为 16
+
+// 维度配置（编译期默认值，运行时由 ChunkParser 覆盖）
+struct DimensionConfig {
+    int minY = 0;
+    int maxY = 256;
+
+    int getSectionCount() const { return (maxY - minY) / SECTION_HEIGHT; }
+};
+
+// 编译期默认维度配置：1.18+ 为 -64~320，早期为 0~256
+constexpr DimensionConfig getDefaultDimensionConfig() {
+#if PROTOCOL_VERSION >= 757
+    return {-64, 320};
+#else
+    return {0, 256};
+#endif
+}
 
 // 区块坐标
 struct ChunkPos {
@@ -85,8 +101,8 @@ struct Chunk {
     std::vector<uint8_t> blockEntities;
     bool isLoaded = false;
     
-    // 维度配置（从 VersionManager 获取）
-    DimensionConfig dimension;
+    // 维度配置（编译期默认值，运行时由 ChunkParser 覆盖）
+    DimensionConfig dimension = getDefaultDimensionConfig();
 
     Chunk() : pos({0, 0}) {
         initializeSections();
@@ -98,9 +114,6 @@ struct Chunk {
     
     // 初始化 sections（根据维度配置）
     void initializeSections() {
-        const auto& versionMgr = VersionManager::getInstance();
-        dimension = versionMgr.getDimensionConfig();
-        
         int sectionCount = dimension.getSectionCount();
         sections.resize(sectionCount);
         

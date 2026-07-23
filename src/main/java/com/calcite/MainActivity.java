@@ -169,9 +169,6 @@ public class MainActivity extends Activity {
             android.util.Log.i("MainActivity", "Premium auth info set for: " + username);
         }
 
-        // 保存协议版本
-        saveProtocolVersion(protocolVersion);
-
         // 初始化视图
         rendererSurfaceView = findViewById(R.id.gameSurface);
 
@@ -350,7 +347,6 @@ public class MainActivity extends Activity {
     private native void setTextureZipPath(String zipPath);
     private native void resizeRenderer(int width, int height);
     private native void setRendererType(boolean useVulkan);
-    private native void setProtocolVersion(int version);
     private native void setUsername(String username);
     private native void setAuthInfo(String accessToken, String uuid, String tokenType);
     private native void onTouchEventImGui(int pointerId, float x, float y, int action);
@@ -430,10 +426,6 @@ public class MainActivity extends Activity {
      */
     public boolean joinServer(String accessToken, String uuid, String serverHash) {
         return com.calcite.auth.MicrosoftAuthService.joinServer(accessToken, uuid, serverHash);
-    }
-
-    private void saveProtocolVersion(int version) {
-        setProtocolVersion(version);
     }
 
     public void onVulkanSurfaceCreated(android.view.Surface surface) {

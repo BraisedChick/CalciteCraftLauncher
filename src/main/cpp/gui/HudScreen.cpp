@@ -412,7 +412,7 @@ void HudScreen::render(int mouseX, int mouseY) {
             ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoInputs |
             ImGuiWindowFlags_NoBackground);
 
-        ImGui::TextColored(ImVec4(1, 1, 0, 1), "Minecraft %s", VersionManager::getInstance().getVersionName().c_str());
+        ImGui::TextColored(ImVec4(1, 1, 0, 1), "Minecraft %s", getProtocolVersionName(PROTOCOL_VERSION));
         ImGui::Text("FPS: %.0f", displayFps);
         ImGui::Text("E: %d/%d", ClientEngine::getInstance()->getEntityRenderer()->getRenderedCount(),
                      ClientEngine::getInstance()->getEntityRenderer()->getTotalCount());

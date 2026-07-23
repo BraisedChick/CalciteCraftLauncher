@@ -10,7 +10,6 @@
 #include "TextureAtlas.h"
 #include "BlockRegistry.h"
 #include "BiomeColorManager.h"
-#include "MinecraftVersion.h"
 #include "Light.h"
 #include "gui/GameUI.h"
 #include "ClientEngine/ClientEngine.h"
@@ -1449,9 +1448,9 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     int chunksRendered = 0;
     int totalTriangles = 0;
 
-    const auto& dim = VersionManager::getInstance().getDimensionConfig();
-    float worldMinY = (float)dim.minY;
-    float worldMaxY = (float)dim.maxY;
+    const auto* engine = ClientEngine::getInstance();
+    float worldMinY = (float)(engine ? engine->getDimensionMinY() : -64);
+    float worldMaxY = (float)(engine ? (engine->getDimensionMinY() + engine->getDimensionHeight()) : 320);
 
     // 加锁保护 chunkRenderCache
     std::lock_guard<std::mutex> renderLock(cacheMutex);

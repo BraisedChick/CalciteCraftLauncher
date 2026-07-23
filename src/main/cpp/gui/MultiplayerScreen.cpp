@@ -7,7 +7,6 @@
 #include "imgui.h"
 #include "TextureLoader.h"
 #include "ServerList.h"
-#include "MinecraftVersion.h"
 #include "stb_image.h"
 
 #include <android/log.h>
@@ -406,8 +405,7 @@ void MultiplayerScreen::pingServer(int index) {
     servers[index].pingFailed = false;
     std::string ip = servers[index].ip;
     int port = servers[index].port;
-    int protocolVersion = VersionManager::getInstance().getProtocolVersion();
-    if (protocolVersion == 0) protocolVersion = 758;
+    int protocolVersion = PROTOCOL_VERSION;
 
     std::thread([this, index, ip, port, protocolVersion]() {
         PingResult result = ServerList::ping(ip, port, protocolVersion);

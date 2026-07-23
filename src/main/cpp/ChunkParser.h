@@ -1,6 +1,5 @@
 #pragma once
 #include "Chunk.h"
-#include "MinecraftVersion.h"
 #include <vector>
 #include <cstdint>
 #include <memory>

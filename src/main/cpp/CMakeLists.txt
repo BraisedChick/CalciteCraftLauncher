@@ -65,7 +65,6 @@ set(APP_SOURCES
     AESEncrypter_armv8.cpp
     ChunkManager.cpp
     ChunkParser.cpp
-    MinecraftVersion.cpp
     VulkanRenderer.cpp
     GLRenderer.cpp
     Light.cpp

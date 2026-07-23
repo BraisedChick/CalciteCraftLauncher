@@ -307,13 +307,8 @@ bool ClientEngine::start(const std::string& host, int port) {
     {
         LOGI("Sending handshake packet via ProtocolCraft");
 
-        // 从 VersionManager 获取协议版本（由 Java 层版本选择设置）
-        int protocolVersion = VersionManager::getInstance().getProtocolVersion();
-        if (protocolVersion == 0) {
-            LOGE("Protocol version not set! Please select a version in launcher");
-            net->disconnect();
-            return false;
-        }
+        // 协议版本由编译期 PROTOCOL_VERSION 宏确定（每个版本构建独立 .so）
+        int protocolVersion = PROTOCOL_VERSION;
 
         ProtocolCraft::ServerboundClientIntentionPacket handshake;
         handshake.SetProtocolVersion(protocolVersion);
@@ -323,7 +318,7 @@ bool ClientEngine::start(const std::string& host, int port) {
 
         LOGI("Using protocol version: %d (%s)",
              protocolVersion,
-             VersionManager::getInstance().getVersionName().c_str());
+             getProtocolVersionName(protocolVersion));
 
         ProtocolCraft::WriteContainer writeData;
         handshake.Write(writeData);
