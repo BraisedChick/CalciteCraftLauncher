@@ -30,7 +30,6 @@
 #define JNI_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, JNI_LOG_TAG, __VA_ARGS__)
 
 static VulkanRenderer* g_vulkanRenderer = nullptr;
-static std::unique_ptr<GLRenderer> g_pendingRenderer;  // 引擎未创建时暂存渲染器，断开连接后也暂存
 static bool g_useVulkan = false;
 static bool g_initialized = false;
 static bool g_rendererTypeSet = false;  // 标记是否已设置渲染器类型
@@ -43,7 +42,7 @@ static void renderLoop() {
     JNI_LOGI("Render thread started");
 
     // 在渲染线程中重新绑定 EGL context
-    auto* renderLoopRenderer = ClientEngine::getInstance() ? ClientEngine::getInstance()->getRenderer() : g_pendingRenderer.get();
+    auto* renderLoopRenderer = ClientEngine::getInstance() ? ClientEngine::getInstance()->getRenderer() : nullptr;
     if (renderLoopRenderer) {
         renderLoopRenderer->makeCurrent();
     }
@@ -122,8 +121,6 @@ static void renderLoop() {
                 }
 
                 renderer->render(pos.x, pos.y, pos.z, pitch, yaw);
-            } else if (!ClientEngine::getInstance() && g_pendingRenderer) {
-                g_pendingRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
             } else if (g_useVulkan && g_vulkanRenderer) {
                 g_vulkanRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
             }
@@ -135,7 +132,7 @@ static void renderLoop() {
             float pitch = CameraController::getInstance().getPitch();
             float yaw = CameraController::getInstance().getYaw();
 
-            auto* activeRenderer = ClientEngine::getInstance() ? ClientEngine::getInstance()->getRenderer() : g_pendingRenderer.get();
+            auto* activeRenderer = ClientEngine::getInstance() ? ClientEngine::getInstance()->getRenderer() : nullptr;
             if (activeRenderer) {
                 activeRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
             } else if (g_useVulkan && g_vulkanRenderer) {
@@ -250,6 +247,12 @@ Java_com_calcite_MainActivity_initRenderer(
         JNI_LOGI("No renderer type set, defaulting to OpenGL ES");
     }
 
+    // 确保 ClientEngine 全局单例存在（TextureAtlas 等全局资源由它持有）
+    if (!ClientEngine::getInstance()) {
+        new ClientEngine();
+        JNI_LOGI("ClientEngine created early for global resource ownership");
+    }
+
     if (g_useVulkan) {
         // 使用 Vulkan
         JNI_LOGI("Initializing Vulkan renderer...");
@@ -267,34 +270,27 @@ Java_com_calcite_MainActivity_initRenderer(
     } else {
         // 使用 OpenGL ES
         JNI_LOGI("Initializing OpenGL ES renderer...");
-        g_pendingRenderer = std::make_unique<GLRenderer>();
+        auto glRenderer = std::make_unique<GLRenderer>();
 
-        if (!g_pendingRenderer->initialize(window)) {
+        if (!glRenderer->initialize(window)) {
             JNI_LOGE("Failed to initialize OpenGL renderer");
-            g_pendingRenderer.reset();
             ANativeWindow_release(window);
             return;
         }
 
+        // 初始化成功，交给 ClientEngine 持有
+        ClientEngine::getInstance()->setRenderer(std::move(glRenderer));
         JNI_LOGI("OpenGL ES renderer initialized successfully");
     }
 
     // 设置 ImGui 连接回调（在任意渲染器初始化后）
     {
-        auto* activeRenderer = ClientEngine::getInstance() ? ClientEngine::getInstance()->getRenderer() : g_pendingRenderer.get();
+        auto* activeRenderer = ClientEngine::getInstance() ? ClientEngine::getInstance()->getRenderer() : nullptr;
         if (activeRenderer) {
         GameUI::getInstance().setConnectCallback([](const std::string& ip, int port) {
             JNI_LOGI("UI Connect: %s:%d user=%s", ip.c_str(), port, ClientEngine::getUsername().c_str());
             std::thread([ip, port]() {
-                // 确保 ClientEngine 全局单例存在
                 auto* client = ClientEngine::getInstance();
-                if (!client) {
-                    client = new ClientEngine();
-                    // 将暂存的渲染器交给全局引擎
-                    if (g_pendingRenderer) {
-                        client->setRenderer(std::move(g_pendingRenderer));
-                    }
-                }
 
                 // 销毁旧会话（如果有）
                 client->destroyGame();
@@ -404,8 +400,6 @@ Java_com_calcite_MainActivity_renderFrame(
         g_vulkanRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
     } else if (ClientEngine::getInstance() && ClientEngine::getInstance()->getRenderer()) {
         ClientEngine::getInstance()->getRenderer()->render(pos.x, pos.y, pos.z, pitch, yaw);
-    } else if (g_pendingRenderer) {
-        g_pendingRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
     }
 }
 
@@ -427,12 +421,7 @@ Java_com_calcite_MainActivity_cleanupRenderer(
     }
 
     // 2. 使 EGL context 在当前线程活跃，才能安全删除 GL 资源
-    GLRenderer* glRenderer = nullptr;
-    if (ClientEngine::getInstance()) {
-        glRenderer = ClientEngine::getInstance()->getRenderer();
-    } else if (g_pendingRenderer) {
-        glRenderer = g_pendingRenderer.get();
-    }
+    GLRenderer* glRenderer = ClientEngine::getInstance() ? ClientEngine::getInstance()->getRenderer() : nullptr;
     if (glRenderer) {
         glRenderer->makeCurrent();
     }
@@ -446,12 +435,10 @@ Java_com_calcite_MainActivity_cleanupRenderer(
         g_vulkanRenderer = nullptr;
     }
 
-    // 从引擎提取渲染器再删除引擎，或者直接删除暂存的渲染器
+    // 删除 ClientEngine（内部会销毁渲染器和会话）
     if (ClientEngine::getInstance()) {
-        g_pendingRenderer = ClientEngine::getInstance()->releaseRenderer();
         delete ClientEngine::getInstance();
     }
-    g_pendingRenderer.reset();
     // 释放 Activity 全局引用，防止内存泄漏
     JniBridge::cleanup(env);
 
@@ -532,12 +519,7 @@ Java_com_calcite_MainActivity_resizeRenderer(
 
     JNI_LOGI("Resizing renderer to %dx%d", width, height);
 
-    GLRenderer* glRenderer = nullptr;
-    if (ClientEngine::getInstance()) {
-        glRenderer = ClientEngine::getInstance()->getRenderer();
-    } else if (g_pendingRenderer) {
-        glRenderer = g_pendingRenderer.get();
-    }
+    GLRenderer* glRenderer = ClientEngine::getInstance() ? ClientEngine::getInstance()->getRenderer() : nullptr;
 
     if (glRenderer) {
         glRenderer->recreateSurface(width, height);

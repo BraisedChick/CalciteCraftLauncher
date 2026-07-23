@@ -96,8 +96,8 @@ bool GLRenderer::initialize(ANativeWindow* window) {
 
     // 同步加载 TextureAtlas（仅模型解析，快速 ~1 秒，在 UI 线程执行）
     LOGI("Initializing TextureAtlas...");
-    TextureAtlas::getInstance().initialize();
-    LOGI("TextureAtlas initialized: %d layers", TextureAtlas::getInstance().getLayerCount());
+    ClientEngine::getInstance()->getTextureAtlas()->initialize();
+    LOGI("TextureAtlas initialized: %d layers", ClientEngine::getInstance()->getTextureAtlas()->getLayerCount());
 
     // 预计算全部方块元数据（之后 getBlockMetadata 无锁访问）
     BlockRegistry::getInstance().precomputeAll();
@@ -126,7 +126,7 @@ bool GLRenderer::finishTextureInit() {
 
     if (textureArrayID == 0) {
         // 第一帧：创建纹理数组
-        textureTotalCount = TextureAtlas::getInstance().getLayerCount();
+        textureTotalCount = ClientEngine::getInstance()->getTextureAtlas()->getLayerCount();
         if (textureTotalCount <= 0) {
             LOGE("No texture layers to initialize");
             textureInitPending = false;
@@ -136,7 +136,7 @@ bool GLRenderer::finishTextureInit() {
         // 获取第一张纹理的尺寸
         {
             TextureData firstTex = TextureLoader::loadImage(
-                TextureAtlas::getInstance().getTextureFileName(0));
+                ClientEngine::getInstance()->getTextureAtlas()->getTextureFileName(0));
             if (firstTex.data) {
                 textureWidth = firstTex.width;
                 textureHeight = firstTex.height;
@@ -178,7 +178,7 @@ bool GLRenderer::finishTextureInit() {
     // 逐帧分批上传纹理
     int end = std::min(textureNextBatch + TEXTURES_PER_FRAME, textureTotalCount);
     for (int i = textureNextBatch; i < end; i++) {
-        std::string filename = TextureAtlas::getInstance().getTextureFileName(i);
+        std::string filename = ClientEngine::getInstance()->getTextureAtlas()->getTextureFileName(i);
         TextureData texData = TextureLoader::loadImage(filename);
         if (texData.data) {
             glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0,
@@ -189,7 +189,7 @@ bool GLRenderer::finishTextureInit() {
         } else {
             LOGW("Texture not found: %s, using placeholder for layer %d", filename.c_str(), i);
             uint8_t r, g, b;
-            TextureAtlas::getInstance().getPlaceholderColor(i, r, g, b);
+            ClientEngine::getInstance()->getTextureAtlas()->getPlaceholderColor(i, r, g, b);
             std::vector<uint8_t> placeholder(textureWidth * textureHeight * 4);
             for (int p = 0; p < textureWidth * textureHeight; p++) {
                 placeholder[p * 4 + 0] = r;
@@ -369,8 +369,8 @@ static void rasterQuad(uint8_t* out, int iconSize,
 }
 
 GLuint GLRenderer::renderBlockIcon(const std::string& modelName, int iconSize) {
-    auto& atlas = TextureAtlas::getInstance();
-    const auto* modelObj = atlas.getBlockModel(modelName);
+    auto* atlas = ClientEngine::getInstance()->getTextureAtlas();
+    const auto* modelObj = atlas->getBlockModel(modelName);
     if (!modelObj || modelObj->elements.empty()) {
         return 0;
     }
@@ -385,7 +385,7 @@ GLuint GLRenderer::renderBlockIcon(const std::string& modelName, int iconSize) {
     std::unordered_map<int, TexCacheEntry> texCache;
     auto loadTex = [&](int layer) -> bool {
         if (texCache.find(layer) != texCache.end()) return true;
-        std::string fname = atlas.getTextureFileName(layer);
+        std::string fname = atlas->getTextureFileName(layer);
         TextureData td = TextureLoader::loadImage(fname);
         if (!td.data) return false;
         // 检查纹理是否有透明像素
@@ -521,10 +521,10 @@ GLuint GLRenderer::renderBlockIcon(const std::string& modelName, int iconSize) {
 
 void GLRenderer::preRenderBlockIcons() {
     LOGI("Pre-rendering block icons for inventory...");
-    auto& atlas = TextureAtlas::getInstance();
+    auto* atlas = ClientEngine::getInstance()->getTextureAtlas();
     int rendered = 0;
     // 遍历所有已加载的 block 模型，检查是否有对应的 item 引用
-    for (const auto& [itemName, parentModel] : atlas.getItemModelCache()) {
+    for (const auto& [itemName, parentModel] : atlas->getItemModelCache()) {
         // 跳过已有 2D 纹理的物品
         // 直接渲染 3D 图标（getItemTexture 会优先检查 2D 纹理）
         if (blockIconCache.find(itemName) != blockIconCache.end()) continue;
@@ -1654,7 +1654,7 @@ void GLRenderer::renderCrackOverlay(const glm::mat4& viewMatrix, const glm::mat4
     int by = ui.getDigBlockY();
     int bz = ui.getDigBlockZ();
 
-    int texLayer = TextureAtlas::getInstance().getDestroyStageLayer(stage);
+    int texLayer = ClientEngine::getInstance()->getTextureAtlas()->getDestroyStageLayer(stage);
     if (texLayer < 0) return;
 
     // 顶点/索引变化时才更新 VAO

@@ -6,6 +6,7 @@
 class GLRenderer;
 class GameEngine;
 class EntityRenderer;
+class TextureAtlas;
 
 // 全局引擎（单例）：App 启动 → App 退出
 // 持有渲染器、全局 UI/音频资源、当前会话（GameEngine）
@@ -35,6 +36,9 @@ public:
     // ===== 实体渲染器（OpenGL 组件，全局生命周期） =====
     EntityRenderer* getEntityRenderer() { return m_entityRenderer.get(); }
 
+    // ===== 纹理图集（全局生命周期） =====
+    TextureAtlas* getTextureAtlas() { return m_textureAtlas.get(); }
+
     // ===== 会话管理 =====
     // 创建新会话（断开旧会话后调用）
     GameEngine* createGame();
@@ -46,6 +50,7 @@ public:
 private:
     std::unique_ptr<GLRenderer> m_renderer;
     std::unique_ptr<EntityRenderer> m_entityRenderer;
+    std::unique_ptr<TextureAtlas> m_textureAtlas;
     std::unique_ptr<GameEngine> m_gameEngine;
 
     static ClientEngine* instance;

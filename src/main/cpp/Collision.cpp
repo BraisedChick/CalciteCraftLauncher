@@ -483,8 +483,8 @@ std::vector<AABB> Collision::getBlockAABBs(int blockX, int blockY, int blockZ) c
     const auto& meta = BlockRegistry::getInstance().getBlockMetadata(state);
     if (meta.isPlant || meta.isWater || meta.isNoCollision) return {};
 
-    auto& atlas = TextureAtlas::getInstance();
-    if (!atlas.isInitialized()) {
+    auto* atlas = ClientEngine::getInstance()->getTextureAtlas();
+    if (!atlas || !atlas->isInitialized()) {
         // TextureAtlas 未初始化：使用高度值回退
         float h = meta.height;
         if (h <= 0.0f) return {};
@@ -492,7 +492,7 @@ std::vector<AABB> Collision::getBlockAABBs(int blockX, int blockY, int blockZ) c
                      (float)(blockX + 1), (float)blockY + h, (float)(blockZ + 1))};
     }
 
-    auto boxes = atlas.getBlockCollisionBoxes(meta.name, state, meta.minStateId);
+    auto boxes = atlas->getBlockCollisionBoxes(meta.name, state, meta.minStateId);
     if (boxes.empty()) {
         // 无模型数据 → 全方块碰撞
         return {AABB((float)blockX, (float)blockY, (float)blockZ,

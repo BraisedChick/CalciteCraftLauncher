@@ -108,7 +108,7 @@ struct CollisionBox {
 // ============================================================
 class TextureAtlas {
 public:
-    static TextureAtlas& getInstance();
+    TextureAtlas() = default;
 
     // 加载所有模型 JSON，解析 parent 链，构建纹理索引
     // progressCallback 可选，用于在长时间解析过程中显示进度
@@ -169,8 +169,6 @@ public:
     bool isInitialized() const { return initialized; }
 
 private:
-    TextureAtlas() = default;
-
     // 单个方块的模型纹理（解析后的纹理路径，如 "block/stone"）
     struct ModelTextures {
         std::string top;

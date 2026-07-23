@@ -1,5 +1,6 @@
 #include "BlockRegistry.h"
 #include "TextureAtlas.h"
+#include "ClientEngine/ClientEngine.h"
 #include "3rdparty/json.hpp"
 #include <fstream>
 #include <sstream>
@@ -283,14 +284,14 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
 
     meta.isFullBlock = false;
     if (blockState != 0 && !meta.isAir && !meta.isWater && !meta.isLeaves && !meta.isPlant) {
-        auto& atlas = TextureAtlas::getInstance();
-        if (atlas.isInitialized()) {
-            const auto* model = atlas.getBlockModel(meta.name);
+        auto* atlas = ClientEngine::getInstance()->getTextureAtlas();
+        if (atlas && atlas->isInitialized()) {
+            const auto* model = atlas->getBlockModel(meta.name);
             if ((!model || model->elements.empty()) && meta.minStateId >= 0) {
-                const auto* variant = atlas.getBlockStateVariant(
+                const auto* variant = atlas->getBlockStateVariant(
                     meta.name, blockState, meta.minStateId);
                 if (variant) {
-                    model = atlas.getBlockModel(variant->modelName());
+                    model = atlas->getBlockModel(variant->modelName());
                 }
             }
             if (model && !model->elements.empty()) {
@@ -320,9 +321,9 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         meta.isOpaque = false;
     }
 
-    auto& atlas = TextureAtlas::getInstance();
-    if (atlas.isInitialized()) {
-        auto tex = atlas.getBlockTexture(meta.name);
+    auto* atlas = ClientEngine::getInstance()->getTextureAtlas();
+    if (atlas && atlas->isInitialized()) {
+        auto tex = atlas->getBlockTexture(meta.name);
         meta.texTop = tex.top;
         meta.texSide = tex.side;
         meta.texBottom = tex.bottom;

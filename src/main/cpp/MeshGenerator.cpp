@@ -2,6 +2,7 @@
 #include "BlockRegistry.h"
 #include "TextureAtlas.h"
 #include "BiomeColorManager.h"
+#include "ClientEngine/ClientEngine.h"
 #include "gui/GameUI.h"
 #include <android/log.h>
 #include <map>
@@ -321,7 +322,7 @@ static void generateFromModel(
                 }
             } else if (isSnowCovered && dir == FACE_UP) {
                 // 雪覆盖的草地顶面
-                texLayer = static_cast<float>(TextureAtlas::getInstance().getGrassBlockSnowLayer());
+                texLayer = static_cast<float>(ClientEngine::getInstance()->getTextureAtlas()->getGrassBlockSnowLayer());
             }
 
             // 确定面的颜色（所有 4 个顶点相同，提出到循环外）
@@ -517,10 +518,10 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
     float baseZ = chunkZ * CHUNK_DEPTH;
 
     // 缓存特殊纹理层索引（从 TextureAtlas 动态查询）
-    auto& atlas = TextureAtlas::getInstance();
-    float grassSideLayer = static_cast<float>(atlas.getGrassSideLayer());
-    float grassOverlayLayer = static_cast<float>(atlas.getGrassSideOverlayLayer());
-    float grassSnowLayer = static_cast<float>(atlas.getGrassBlockSnowLayer());
+    auto* atlas = ClientEngine::getInstance()->getTextureAtlas();
+    float grassSideLayer = static_cast<float>(atlas->getGrassSideLayer());
+    float grassOverlayLayer = static_cast<float>(atlas->getGrassSideOverlayLayer());
+    float grassSnowLayer = static_cast<float>(atlas->getGrassBlockSnowLayer());
 
     // ---- 相邻 Section blockStates 缓存 ----
     const int32_t* const selfData = section.blockStates.data();
@@ -626,7 +627,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
     auto getModel = [&](const std::string& name) -> const ResolvedBlockModel* {
         auto it = modelCache.find(name);
         if (it != modelCache.end()) return it->second;
-        auto* m = atlas.getBlockModel(name);
+        auto* m = atlas->getBlockModel(name);
         modelCache[name] = m;
         return m;
     };
@@ -722,7 +723,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
 
                 if (!blockMeta.isWater) {
                     // Blockstate 变体查找
-                    const BlockStateVariant* variant = atlas.getBlockStateVariant(
+                    const BlockStateVariant* variant = atlas->getBlockStateVariant(
                             blockMeta.name, blockState, blockMeta.minStateId);
 
                     if (variant && !variant->models.empty()) {

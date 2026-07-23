@@ -15,11 +15,6 @@
 
 using json = nlohmann::json;
 
-TextureAtlas& TextureAtlas::getInstance() {
-    static TextureAtlas instance;
-    return instance;
-}
-
 // ============================================================
 // 辅助函数
 // ============================================================
