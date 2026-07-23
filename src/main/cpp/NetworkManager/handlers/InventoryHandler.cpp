@@ -1,5 +1,6 @@
 #include "NetworkManager/NetworkManager.h"
 #include "ClientEngine/GameEngine.h"
+#include "ClientEngine/ClientEngine.h"
 #include "utils.h"
 #include "PlayerInventory.h"
 #include "BlockRegistry.h"
@@ -90,7 +91,7 @@ void NetworkManager::handleInventory(int packetId, const std::vector<uint8_t>& d
                     is.count = slot.GetItemCount();
                     is.damage = extractItemDamage(slot);
                     if (is.damage > 0) {
-                        is.maxDamage = getMaxDurability(BlockRegistry::getInstance().getItemName(is.itemId));
+                        is.maxDamage = getMaxDurability(ClientEngine::getInstance()->getBlockRegistry()->getItemName(is.itemId));
                     }
                     nonEmptyCount++;
                 }
@@ -137,7 +138,7 @@ void NetworkManager::handleInventory(int packetId, const std::vector<uint8_t>& d
                 is.count = pcSlot.GetItemCount();
                 is.damage = extractItemDamage(pcSlot);
                 if (is.damage > 0) {
-                    is.maxDamage = getMaxDurability(BlockRegistry::getInstance().getItemName(is.itemId));
+                    is.maxDamage = getMaxDurability(ClientEngine::getInstance()->getBlockRegistry()->getItemName(is.itemId));
                 }
             }
 

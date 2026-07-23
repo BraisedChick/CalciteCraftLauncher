@@ -91,7 +91,7 @@ void InventoryScreen::renderPlayerInventory(float w, float h) {
 
     auto renderItem = [&](float sx, float sy, const InvSlot& slot) {
         if (!slot.present || slot.itemId <= 0) return;
-        std::string itemName = BlockRegistry::getInstance().getItemName(slot.itemId);
+        std::string itemName = ClientEngine::getInstance()->getBlockRegistry()->getItemName(slot.itemId);
         if (itemName.empty()) return;
         GLuint tex = ResourcepackManager::getInstance().getItemTexture(itemName);
         if (tex == 0) return;
@@ -370,7 +370,7 @@ void InventoryScreen::renderPlayerInventory(float w, float h) {
                 IM_COL32(255, 255, 0, 200), 0.0f, 0, 2.0f);
 
             if (cursorItem.present && cursorItem.itemId > 0 && countForThisSlot > 0) {
-                std::string itemName = BlockRegistry::getInstance().getItemName(cursorItem.itemId);
+                std::string itemName = ClientEngine::getInstance()->getBlockRegistry()->getItemName(cursorItem.itemId);
                 GLuint tex = ResourcepackManager::getInstance().getItemTexture(itemName);
                 if (tex != 0) {
                     float pad = 5.0f;
@@ -488,7 +488,7 @@ void InventoryScreen::renderCraftingTable(float w, float h) {
 
     auto renderItem = [&](float sx, float sy, const InvSlot& slot) {
         if (!slot.present || slot.itemId <= 0) return;
-        std::string itemName = BlockRegistry::getInstance().getItemName(slot.itemId);
+        std::string itemName = ClientEngine::getInstance()->getBlockRegistry()->getItemName(slot.itemId);
         if (itemName.empty()) return;
         GLuint tex = ResourcepackManager::getInstance().getItemTexture(itemName);
         if (tex == 0) return;

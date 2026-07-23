@@ -1,6 +1,7 @@
 #include "Raycast.h"
 #include "ChunkManager.h"
 #include "BlockRegistry.h"
+#include "ClientEngine/ClientEngine.h"
 #include "Collision.h"
 #include <cmath>
 #include <algorithm>
@@ -147,7 +148,7 @@ RaycastResult rayCast(glm::vec3 origin, glm::vec3 direction,
         uint32_t state = chunk->getBlockState(localX, voxelY, localZ);
         if (state == 0) continue;
 
-        const auto& meta = BlockRegistry::getInstance().getBlockMetadata((int32_t)state);
+        const auto& meta = ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata((int32_t)state);
         if (meta.isAir) continue;
 
         // 获取方块的碰撞箱

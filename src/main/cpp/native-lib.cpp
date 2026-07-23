@@ -204,19 +204,26 @@ Java_com_calcite_MainActivity_initRenderer(
     env->GetJavaVM(&jvm);
     JniBridge::init(jvm, env->NewGlobalRef(thiz));
 
+    // 确保 ClientEngine 全局单例存在（BlockRegistry/TextureAtlas 等全局资源由它持有）
+    if (!ClientEngine::getInstance()) {
+        new ClientEngine();
+        JNI_LOGI("ClientEngine created early for global resource ownership");
+    }
+
     // 加载 BlockRegistry（全局只加载一次，必须在渲染器初始化之前）
     static bool blockRegistryLoaded = false;
     if (!blockRegistryLoaded) {
+        auto* registry = ClientEngine::getInstance()->getBlockRegistry();
         std::string blocksJsonContent = TextureLoader::readTextFromZip("blocks.json");
-        if (!blocksJsonContent.empty() && BlockRegistry::getInstance().loadFromJson(blocksJsonContent)) {
+        if (!blocksJsonContent.empty() && registry->loadFromJson(blocksJsonContent)) {
             JNI_LOGI("BlockRegistry loaded successfully: %zu blocks",
-                     BlockRegistry::getInstance().getBlockCount());
+                     registry->getBlockCount());
         } else {
             JNI_LOGE("Failed to load BlockRegistry, using fallback mapping");
         }
 
         std::string itemsJsonContent = TextureLoader::readTextFromZip("items.json");
-        if (!itemsJsonContent.empty() && BlockRegistry::getInstance().loadItems(itemsJsonContent)) {
+        if (!itemsJsonContent.empty() && registry->loadItems(itemsJsonContent)) {
             JNI_LOGI("Items loaded successfully from ZIP");
         } else {
             JNI_LOGI("No items.json in ZIP, blocks-only mode");
@@ -245,12 +252,6 @@ Java_com_calcite_MainActivity_initRenderer(
     if (!g_rendererTypeSet) {
         g_useVulkan = false;
         JNI_LOGI("No renderer type set, defaulting to OpenGL ES");
-    }
-
-    // 确保 ClientEngine 全局单例存在（TextureAtlas 等全局资源由它持有）
-    if (!ClientEngine::getInstance()) {
-        new ClientEngine();
-        JNI_LOGI("ClientEngine created early for global resource ownership");
     }
 
     if (g_useVulkan) {

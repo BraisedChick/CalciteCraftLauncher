@@ -726,7 +726,7 @@ void GameUI::performBlockPlacement() {
 
     // 手持食物且饥饿值未满 → 吃东西（发送 UseItem 包）
     if (hasItem) {
-        std::string itemName = BlockRegistry::getInstance().getItemName(held.itemId);
+        std::string itemName = ClientEngine::getInstance()->getBlockRegistry()->getItemName(held.itemId);
         static const std::unordered_set<std::string> foodItems = {
             "apple", "bread", "cooked_beef", "cooked_porkchop", "cooked_chicken",
             "cooked_cod", "cooked_salmon", "beef", "porkchop", "chicken",
@@ -768,7 +768,7 @@ void GameUI::performBlockPlacement() {
     auto chunk = cm->getChunk(result.blockX >> 4, result.blockZ >> 4);
     if (!chunk) return;
     uint32_t state = chunk->getBlockState(result.blockX & 15, result.blockY, result.blockZ & 15);
-    auto meta = BlockRegistry::getInstance().getBlockMetadata(state);
+    auto meta = ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(state);
 
     // 检查目标是否为可交互方块（门、活板门、工作台、箱子等）
     // 门类方块的名称以 _door 或 _trapdoor 结尾，但铁门只能由红石控制
@@ -869,7 +869,7 @@ int GameUI::getTargetEntity(float reachDistance) const {
 
 // 根据方块名称映射到音效类别（对应 sounds 目录下的 step/ dig/ 子目录）
 static std::string getBlockSoundCategory(uint32_t blockState) {
-    std::string name = BlockRegistry::getInstance().getBlockName(blockState);
+    std::string name = ClientEngine::getInstance()->getBlockRegistry()->getBlockName(blockState);
     if (name.empty()) return "stone";
 
     // 按常见方块类型分组
@@ -987,7 +987,7 @@ void GameUI::performBlockBreak() {
         auto chunk = cm->getChunk(result.blockX >> 4, result.blockZ >> 4);
         if (chunk) {
             uint32_t state = chunk->getBlockState(result.blockX & 15, result.blockY, result.blockZ & 15);
-            auto meta = BlockRegistry::getInstance().getBlockMetadata(state);
+            auto meta = ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(state);
             if (meta.hardness < 0.0f) {
                 // 不可破坏（基岩等）
                 digging = false;
@@ -1023,7 +1023,7 @@ static float getPlayerDigSpeed(const std::string& material) {
     const InvSlot& held = inv.getHotbarSlot(inv.getSelectedSlot());
     if (!held.present || held.itemId <= 0) return 1.0f; // 空手
 
-    std::string itemName = BlockRegistry::getInstance().getItemName(held.itemId);
+    std::string itemName = ClientEngine::getInstance()->getBlockRegistry()->getItemName(held.itemId);
 
     // 判断工具类型是否匹配该方块材质
     bool isPickaxe = itemName.find("pickaxe") != std::string::npos;
@@ -1067,7 +1067,7 @@ static bool hasCorrectToolFor(const std::string& material, bool requiresCorrectT
     const InvSlot& held = inv.getHotbarSlot(inv.getSelectedSlot());
     if (!held.present || held.itemId <= 0) return false; // 空手
 
-    std::string itemName = BlockRegistry::getInstance().getItemName(held.itemId);
+    std::string itemName = ClientEngine::getInstance()->getBlockRegistry()->getItemName(held.itemId);
     std::string requiredType = material.substr(9); // "pickaxe", "shovel" 等
 
     if (requiredType == "pickaxe") return itemName.find("pickaxe") != std::string::npos;
@@ -1124,7 +1124,7 @@ void GameUI::continueDestroyBlock() {
     auto chunk = cm->getChunk(result.blockX >> 4, result.blockZ >> 4);
     if (!chunk) return;
     uint32_t state = chunk->getBlockState(result.blockX & 15, result.blockY, result.blockZ & 15);
-    auto meta = BlockRegistry::getInstance().getBlockMetadata(state);
+    auto meta = ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(state);
 
     if (meta.hardness < 0.0f) {
         engine->sendBlockBreakAbort(digBlockX, digBlockY, digBlockZ, digFace);

@@ -480,7 +480,7 @@ std::vector<AABB> Collision::getBlockAABBs(int blockX, int blockY, int blockZ) c
     int32_t state = chunk->getBlockState(blockX & 15, blockY, blockZ & 15);
     if (state == 0) return {};
 
-    const auto& meta = BlockRegistry::getInstance().getBlockMetadata(state);
+    const auto& meta = ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(state);
     if (meta.isPlant || meta.isWater || meta.isNoCollision) return {};
 
     auto* atlas = ClientEngine::getInstance()->getTextureAtlas();

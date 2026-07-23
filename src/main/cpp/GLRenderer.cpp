@@ -100,7 +100,7 @@ bool GLRenderer::initialize(ANativeWindow* window) {
     LOGI("TextureAtlas initialized: %d layers", ClientEngine::getInstance()->getTextureAtlas()->getLayerCount());
 
     // 预计算全部方块元数据（之后 getBlockMetadata 无锁访问）
-    BlockRegistry::getInstance().precomputeAll();
+    ClientEngine::getInstance()->getBlockRegistry()->precomputeAll();
 
     // 初始化 BiomeColorManager
     LOGI("Initializing BiomeColorManager...");
@@ -860,7 +860,7 @@ static uint64_t computeSectionVisibility(const ChunkSection& section) {
         int idx=toIdx(x,y,z);
         int32_t st=section.blockStates[idx];
         if(!st) continue;
-        auto& meta=BlockRegistry::getInstance().getBlockMetadata(st);
+        auto& meta=ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(st);
         if(meta.isFullBlock&&meta.isOpaque) { isSolid[idx]=true; solidCount++; }
     }
     if(solidCount==4096) return 0;

@@ -3,6 +3,7 @@
 #include "GLRenderer.h"
 #include "EntityRenderer.h"
 #include "TextureAtlas.h"
+#include "BlockRegistry.h"
 #include "utils.h"
 
 ClientEngine* ClientEngine::instance = nullptr;
@@ -14,6 +15,7 @@ std::string ClientEngine::s_username = "Player";
 ClientEngine::ClientEngine() {
     instance = this;
     m_textureAtlas = std::make_unique<TextureAtlas>();
+    m_blockRegistry = std::make_unique<BlockRegistry>();
     m_entityRenderer = std::make_unique<EntityRenderer>();
 }
 

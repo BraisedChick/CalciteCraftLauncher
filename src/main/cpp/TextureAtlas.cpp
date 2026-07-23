@@ -1,6 +1,7 @@
 #include "TextureAtlas.h"
 #include "TextureLoader.h"
 #include "BlockRegistry.h"
+#include "ClientEngine/ClientEngine.h"
 #include "3rdparty/json.hpp"
 #include <android/log.h>
 #include <algorithm>
@@ -843,7 +844,7 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const json& j) 
     // 用协议（blocks.json）的属性值顺序覆盖 blockstate 的推导顺序
     // 确保 offset 编码与协议完全一致
     {
-        const auto* blockInfo = BlockRegistry::getInstance().getBlockInfoByName(blockName);
+        const auto* blockInfo = ClientEngine::getInstance()->getBlockRegistry()->getBlockInfoByName(blockName);
         if (blockInfo && !blockInfo->stateProperties.empty()) {
             for (const auto& sp : blockInfo->stateProperties) {
                 auto plIt = propValueList.find(sp.name);
@@ -869,8 +870,8 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const json& j) 
 
     // 检测并补充缺失的布尔属性
     if (propValueList.find("waterlogged") == propValueList.end() && !hasSimpleVariant) {
-        const auto& registry = BlockRegistry::getInstance();
-        const auto* blockInfo = registry.getBlockInfoByName(blockName);
+        auto* registry = ClientEngine::getInstance()->getBlockRegistry();
+        const auto* blockInfo = registry->getBlockInfoByName(blockName);
         if (blockInfo) {
             int expectedStates = 1;
             for (const auto& [prop, values] : propValueList) {
@@ -1031,7 +1032,7 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const json& j) {
     std::vector<std::string> propNames;
     std::vector<std::vector<std::string>> propValueList;
 
-    const auto* blockInfo = BlockRegistry::getInstance().getBlockInfoByName(blockName);
+    const auto* blockInfo = ClientEngine::getInstance()->getBlockRegistry()->getBlockInfoByName(blockName);
     if (blockInfo && !blockInfo->stateProperties.empty()) {
         for (const auto& sp : blockInfo->stateProperties) {
             propNames.push_back(sp.name);

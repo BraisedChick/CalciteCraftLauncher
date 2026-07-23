@@ -213,7 +213,7 @@ void HudScreen::render(int mouseX, int mouseY) {
         }
 
         if (hotbar[i].present && hotbar[i].itemId > 0) {
-            std::string itemName = BlockRegistry::getInstance().getItemName(hotbar[i].itemId);
+            std::string itemName = ClientEngine::getInstance()->getBlockRegistry()->getItemName(hotbar[i].itemId);
             if (!itemName.empty()) {
                 GLuint tex = ResourcepackManager::getInstance().getItemTexture(itemName);
                 if (tex != 0) {

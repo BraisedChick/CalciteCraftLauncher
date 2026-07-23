@@ -53,10 +53,7 @@ struct BlockMetadata {
 
 class BlockRegistry {
 public:
-    static BlockRegistry& getInstance() {
-        static BlockRegistry instance;
-        return instance;
-    }
+    BlockRegistry() : loaded(false) {}
 
     // 从 JSON 字符串加载方块数据
     bool loadFromJson(const std::string& jsonContent);
@@ -89,7 +86,6 @@ public:
     const BlockInfo* getBlockInfoByName(const std::string& name) const;
 
 private:
-    BlockRegistry() : loaded(false) {}
 
     // blockState ID → blocks 数组索引的映射（避免指针失效问题）
     std::map<int32_t, size_t> stateToBlock;

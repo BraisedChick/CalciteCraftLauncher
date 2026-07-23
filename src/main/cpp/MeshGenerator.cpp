@@ -223,7 +223,7 @@ static void generateFromModel(
     // 面剔除检测：直接读取预计算的 isFullBlock + isOpaque（无锁）
     auto isNeighborSolid = [](int32_t state) -> bool {
         if (state == 0) return false;
-        const auto& meta = BlockRegistry::getInstance().getBlockMetadata(state);
+        const auto& meta = ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(state);
         return meta.isFullBlock && meta.isOpaque;
     };
 
@@ -618,7 +618,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
     // 面剔除检测：几何完整且不透明的方块才会遮挡相邻面
     auto isSolid = [](int32_t state) -> bool {
         if (state == 0) return false;
-        const auto& meta = BlockRegistry::getInstance().getBlockMetadata(state);
+        const auto& meta = ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(state);
         return meta.isFullBlock && meta.isOpaque;
     };
 
@@ -645,8 +645,8 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                 int32_t blockState = section.blockStates[index];
                 if (blockState == 0) continue;
 
-                auto& registry = BlockRegistry::getInstance();
-                const auto& blockMeta = registry.getBlockMetadata(blockState);
+                auto* registry = ClientEngine::getInstance()->getBlockRegistry();
+                const auto& blockMeta = registry->getBlockMetadata(blockState);
 
                 // 跳过空气变种（如 cave_air, void_air）
                 if (blockMeta.isAir) continue;
@@ -674,7 +674,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     // power 0: #4B0000 (暗红) → power 15: #FF0000 (亮红)
                     // 从 blockState 提取 power 值
                     int power = 0;
-                    const auto* blockInfo = registry.getBlockInfo(blockState);
+                    const auto* blockInfo = registry->getBlockInfo(blockState);
                     if (blockInfo && !blockInfo->stateProperties.empty()) {
                         // 计算 power 属性在 state ID 中的位置
                         int offset = blockState - blockInfo->minStateId;
@@ -719,7 +719,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                 // ===== 模型驱动渲染（适用于所有有模型数据的方块） =====
                 // 跳过水：水使用独立的渲染管道（alpha blend + 动画纹理）
                 bool isSnowCovered2 = (blockMeta.isGrassBlock && n[TOP] != 0 &&
-                                      BlockRegistry::getInstance().getBlockMetadata(n[TOP]).isSnow);
+                                      ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(n[TOP]).isSnow);
 
                 if (!blockMeta.isWater) {
                     // Blockstate 变体查找
@@ -784,7 +784,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     BiomeColorManager::getInstance().getWaterColor(biomeId, waterR, waterG, waterB);
 
                     auto isWaterBlock = [&](int32_t state) -> bool {
-                        return state != 0 && BlockRegistry::getInstance().getBlockMetadata(state).isWater;
+                        return state != 0 && ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(state).isWater;
                     };
 
                     // 顶面
@@ -807,7 +807,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                 countCubic++;
                 bool renderTop = (n[TOP] == 0) || !isSolid(n[TOP]);
                 bool isSnowCovered = (blockMeta.isGrassBlock && n[TOP] != 0 &&
-                                      BlockRegistry::getInstance().getBlockMetadata(n[TOP]).isSnow);
+                                      ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(n[TOP]).isSnow);
                 bool isGrassSide = blockMeta.isGrassBlock && !isSnowCovered;
 
                 // 顶面

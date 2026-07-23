@@ -1,6 +1,7 @@
 #include "Light.h"
 #include "ChunkManager.h"
 #include "BlockRegistry.h"
+#include "ClientEngine/ClientEngine.h"
 #include <android/log.h>
 #include <cmath>
 #include <algorithm>
@@ -252,7 +253,7 @@ bool Light::pollCompletedLightRecalc(int* outX, int* outY, int* outZ) {
 void Light::recalcBlockLight(ChunkManager* chunkMgr, int wx, int wy, int wz) {
     if (!chunkMgr) return;
 
-    auto& registry = BlockRegistry::getInstance();
+    auto* registry = ClientEngine::getInstance()->getBlockRegistry();
 
     // 区块缓存：避免反复 getChunk() 导致 mutex + map 查找开销
     std::unordered_map<uint64_t, std::shared_ptr<Chunk>> chunkCache;
@@ -322,7 +323,7 @@ void Light::recalcBlockLight(ChunkManager* chunkMgr, int wx, int wy, int wz) {
                 int bx = wx + dx, by = wy + dy, bz = wz + dz;
                 int32_t state = getStateAt(bx, by, bz);
                 if (state == 0) continue;
-                const auto* info = registry.getBlockInfo(state);
+                const auto* info = registry->getBlockInfo(state);
                 if (!info) continue;
                 int emission = getBlockEmission(info->name.c_str());
                 if (emission > 0) {
@@ -351,7 +352,7 @@ void Light::recalcBlockLight(ChunkManager* chunkMgr, int wx, int wy, int wz) {
 
             int32_t neighborState = getStateAt(ax, ay, az);
             if (neighborState != 0) {
-                const auto& meta = registry.getBlockMetadata(neighborState);
+                const auto& meta = registry->getBlockMetadata(neighborState);
                 if (meta.isFullBlock && meta.isOpaque) continue;
             }
 
