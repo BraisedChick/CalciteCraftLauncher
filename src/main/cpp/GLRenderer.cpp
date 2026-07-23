@@ -5,6 +5,7 @@
 #include <android/asset_manager.h>
 #include <cstring>
 #include <cstddef>  // for offsetof
+#include <time.h>   // clock_nanosleep
 #include "TextureLoader.h"
 #include "MeshGenerator.h"
 #include "TextureAtlas.h"
@@ -1304,9 +1305,6 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         return;
     }
 
-    // 记录帧开始时间（用于帧率限制）
-    frameStartTime = std::chrono::high_resolution_clock::now();
-
     // 保存当前帧的相机位置（供 rebuildMeshFromChunks 等使用）
     lastCameraX = cx;
     lastCameraY = cy;
@@ -1325,20 +1323,7 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
 
         renderUI();
         eglSwapBuffers(display, surface);
-        // 帧率限制（菜单状态也需要）
-        if (maxFps > 0 && maxFps < 256) {
-            auto frameEnd = std::chrono::high_resolution_clock::now();
-            double elapsedMs = std::chrono::duration<double, std::milli>(frameEnd - frameStartTime).count();
-            double targetMs = 1000.0 / maxFps;
-            if (elapsedMs < targetMs) {
-                double sleepMs = targetMs - elapsedMs;
-                if (sleepMs > 1.0) {
-                    std::this_thread::sleep_for(std::chrono::microseconds((int64_t)(sleepMs * 1000)));
-                }
-                auto sleepEnd = frameStartTime + std::chrono::microseconds((int64_t)(targetMs * 1000));
-                while (std::chrono::high_resolution_clock::now() < sleepEnd) {}
-            }
-        }
+        limitFramerate();
         return;
     }
 
@@ -1390,19 +1375,7 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     if (shaderCutout.program == 0) {
         renderUI();
         eglSwapBuffers(display, surface);
-        if (maxFps > 0 && maxFps < 256) {
-            auto frameEnd = std::chrono::high_resolution_clock::now();
-            double elapsedMs = std::chrono::duration<double, std::milli>(frameEnd - frameStartTime).count();
-            double targetMs = 1000.0 / maxFps;
-            if (elapsedMs < targetMs) {
-                double sleepMs = targetMs - elapsedMs;
-                if (sleepMs > 1.0) {
-                    std::this_thread::sleep_for(std::chrono::microseconds((int64_t)(sleepMs * 1000)));
-                }
-                auto sleepEnd = frameStartTime + std::chrono::microseconds((int64_t)(targetMs * 1000));
-                while (std::chrono::high_resolution_clock::now() < sleepEnd) {}
-            }
-        }
+        limitFramerate();
         return;
     }
 
@@ -1620,24 +1593,8 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
 
     eglSwapBuffers(display, surface);
 
-    // 帧率限制（maxFps: 0=VSync, 1-255=指定fps, 256=无限制）
-    if (maxFps > 0 && maxFps < 256) {
-        auto frameEnd = std::chrono::high_resolution_clock::now();
-        double elapsedMs = std::chrono::duration<double, std::milli>(frameEnd - frameStartTime).count();
-        double targetMs = 1000.0 / maxFps;
-        if (elapsedMs < targetMs) {
-            double sleepMs = targetMs - elapsedMs;
-            // 粗略 sleep（毫秒级）
-            if (sleepMs > 1.0) {
-                std::this_thread::sleep_for(std::chrono::microseconds((int64_t)(sleepMs * 1000)));
-            }
-            // 精确 spin（剩余微秒级）
-            auto sleepEnd = frameStartTime + std::chrono::microseconds((int64_t)(targetMs * 1000));
-            while (std::chrono::high_resolution_clock::now() < sleepEnd) {
-                // busy wait for precision
-            }
-        }
-    }
+    // 帧率限制（统一使用绝对时间）
+    limitFramerate();
 }
 
 bool GLRenderer::initImGui() {
@@ -1837,6 +1794,14 @@ void GLRenderer::setMipmapLevel(int level) {
 
 void GLRenderer::setMaxFps(int fps) {
     maxFps = fps;
+    if (fps > 0 && fps < 256) {
+        frameIntervalNs = NANOSECONDS_PER_SECOND / fps;
+    } else {
+        frameIntervalNs = 0;
+    }
+    // 重置基准，下次限帧时重新以当前时间开始
+    frameTimeBaseValid = false;
+
     // 根据设置调整 eglSwapInterval
     int newInterval;
     if (fps == 0) {
@@ -1849,8 +1814,31 @@ void GLRenderer::setMaxFps(int fps) {
             eglSwapInterval(display, newInterval);
         }
         currentSwapInterval = newInterval;
-        LOGI("MaxFps changed to %d, swapInterval=%d", fps, newInterval);
     }
+    LOGI("MaxFps set to %d, interval=%lld ns, swapInterval=%d", fps, frameIntervalNs, newInterval);
+}
+
+void GLRenderer::limitFramerate() {
+    if (frameIntervalNs <= 0) {
+        frameTimeBaseValid = false;
+        return;
+    }
+
+    // 首次启用或刚调整 FPS，以当前时刻为起点
+    if (!frameTimeBaseValid) {
+        clock_gettime(CLOCK_MONOTONIC, &frameTimeBase);
+        frameTimeBaseValid = true;
+    }
+
+    // 计算下一帧的绝对唤醒时间
+    frameTimeBase.tv_nsec += frameIntervalNs;
+    while (frameTimeBase.tv_nsec >= NANOSECONDS_PER_SECOND) {
+        frameTimeBase.tv_nsec -= NANOSECONDS_PER_SECOND;
+        frameTimeBase.tv_sec += 1;
+    }
+
+    // 绝对时间睡眠。如果目标时间已过（渲染超时），立即返回
+    clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &frameTimeBase, nullptr);
 }
 
 void GLRenderer::recreateSurface(int width, int height) {

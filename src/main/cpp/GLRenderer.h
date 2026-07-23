@@ -232,7 +232,14 @@ private:
     // 帧率限制（0=垂直同步, 1-255=fps值, 256=无限制）
     int maxFps = 0;
     int currentSwapInterval = 1;  // 当前 eglSwapInterval 值
-    std::chrono::high_resolution_clock::time_point frameStartTime;
+
+    // 绝对时间限帧（TIMER_ABSTIME，零漂移）
+    long long frameIntervalNs = 0;
+    struct timespec frameTimeBase = {0, 0};
+    bool frameTimeBaseValid = false;
+    static constexpr long long NANOSECONDS_PER_SECOND = 1000000000LL;
+
+    void limitFramerate();
 
     // ===== 区块合批渲染优化 =====
     struct SectionRenderData {
