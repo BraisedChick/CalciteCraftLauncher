@@ -75,6 +75,7 @@
 #include "BlockRegistry.h"
 #include "PlayerInventory.h"
 #include "gui/GameUI.h"
+#include "JniBridge.h"
 
 #include <glm/glm.hpp>
 #include <vector>
@@ -88,16 +89,10 @@
 using njson = nlohmann::json;
 
 ClientEngine* ClientEngine::instance = nullptr;
-
-// 前向声明：在 native-lib.cpp 中定义，用于通过 JNI 调用 Java 层处理完整加密请求
-// Java 层负责：生成共享密钥 + SHA1 哈希 + Session Join + RSA 加密
-extern bool callJavaHandleEncryptionRequest(
-    const std::string& serverID,
-    const std::vector<unsigned char>& publicKey,
-    const std::vector<unsigned char>& verifyToken,
-    std::vector<unsigned char>& sharedSecret,
-    std::vector<unsigned char>& encryptedSecret,
-    std::vector<unsigned char>& encryptedVerifyToken);
+std::string ClientEngine::s_pendingAccessToken;
+std::string ClientEngine::s_pendingPlayerUuid;
+std::string ClientEngine::s_pendingTokenType;
+std::string ClientEngine::s_username = "Player";
 
 ClientEngine::ClientEngine()
     : chunkManager(nullptr),
@@ -107,7 +102,34 @@ ClientEngine::ClientEngine()
     instance = this;
 }
 
-ClientEngine::~ClientEngine() = default;
+ClientEngine::~ClientEngine() {
+    instance = nullptr;
+}
+
+void ClientEngine::setRenderer(std::unique_ptr<GLRenderer> renderer) {
+    m_renderer = std::move(renderer);
+
+    // 如果 ChunkManager 已创建，立即传播到渲染器/Collision/Light
+    if (chunkManager) {
+        if (m_renderer) {
+            m_renderer->setChunkManager(chunkManager.get());
+        }
+        Collision::getInstance().setChunkManager(chunkManager.get());
+        Light::getInstance().setChunkManager(chunkManager.get());
+        LOGI("ChunkManager propagated to renderer/collision/light");
+
+        // 如果已收到玩家位置，同步摄像机
+        if (hasPosition) {
+            CameraController::getInstance().setPosition(playerX, playerY, playerZ);
+            CameraController::getInstance().setRotation(pitch, yaw);
+            LOGI("Camera synced to player position: (%.2f, %.2f, %.2f)", playerX, playerY, playerZ);
+        }
+    }
+}
+
+std::unique_ptr<GLRenderer> ClientEngine::releaseRenderer() {
+    return std::move(m_renderer);
+}
 
 void ClientEngine::setAuthInfo(const std::string& accessToken, const std::string& uuid, const std::string& tokenType) {
     this->accessToken = accessToken;
@@ -117,10 +139,146 @@ void ClientEngine::setAuthInfo(const std::string& accessToken, const std::string
     LOGI("Auth info set: premium=%d, uuid=%s", premium, playerUuid.c_str());
 }
 
-bool ClientEngine::start(const std::string& host, int port, const std::string& username) {
+void ClientEngine::setPendingAuth(const std::string& accessToken, const std::string& uuid, const std::string& tokenType) {
+    s_pendingAccessToken = accessToken;
+    s_pendingPlayerUuid = uuid;
+    s_pendingTokenType = tokenType;
+}
+
+bool ClientEngine::isPremiumPending() {
+    return !s_pendingAccessToken.empty();
+}
+
+const std::string& ClientEngine::getPendingAccessToken() { return s_pendingAccessToken; }
+const std::string& ClientEngine::getPendingPlayerUuid() { return s_pendingPlayerUuid; }
+const std::string& ClientEngine::getPendingTokenType() { return s_pendingTokenType; }
+
+bool ClientEngine::handleEncryptionRequest(
+    const std::string& serverID,
+    const std::vector<unsigned char>& publicKey,
+    const std::vector<unsigned char>& verifyToken,
+    std::vector<unsigned char>& sharedSecret,
+    std::vector<unsigned char>& encryptedSecret,
+    std::vector<unsigned char>& encryptedVerifyToken) {
+
+    if (!JniBridge::getJvm() || !JniBridge::getActivity()) {
+        LOGE("Cannot handle encryption request: JVM or Activity not available");
+        return false;
+    }
+
+    JNIEnv* env;
+    bool attached = false;
+    int getEnvResult = JniBridge::getJvm()->GetEnv((void**)&env, JNI_VERSION_1_6);
+    if (getEnvResult == JNI_EDETACHED) {
+        if (JniBridge::getJvm()->AttachCurrentThread(&env, nullptr) != JNI_OK) return false;
+        attached = true;
+    } else if (getEnvResult != JNI_OK) {
+        return false;
+    }
+
+    // 创建 Java 参数
+    jstring jServerID = env->NewStringUTF(serverID.c_str());
+
+    jbyteArray jPublicKey = env->NewByteArray(static_cast<jsize>(publicKey.size()));
+    env->SetByteArrayRegion(jPublicKey, 0, static_cast<jsize>(publicKey.size()),
+                            reinterpret_cast<const jbyte*>(publicKey.data()));
+
+    jbyteArray jVerifyToken = env->NewByteArray(static_cast<jsize>(verifyToken.size()));
+    env->SetByteArrayRegion(jVerifyToken, 0, static_cast<jsize>(verifyToken.size()),
+                            reinterpret_cast<const jbyte*>(verifyToken.data()));
+
+    jstring jAccessToken = env->NewStringUTF(accessToken.c_str());
+    jstring jPlayerUuid = env->NewStringUTF(playerUuid.c_str());
+
+    // 调用 MainActivity.handleEncryptionRequest
+    jclass clazz = env->GetObjectClass(JniBridge::getActivity());
+    jmethodID method = env->GetMethodID(clazz, "handleEncryptionRequest",
+        "(Ljava/lang/String;[B[BLjava/lang/String;Ljava/lang/String;)[B");
+
+    jbyteArray jResult = nullptr;
+    if (method) {
+        jResult = (jbyteArray)env->CallObjectMethod(JniBridge::getActivity(), method,
+            jServerID, jPublicKey, jVerifyToken, jAccessToken, jPlayerUuid);
+
+        if (env->ExceptionCheck()) {
+            LOGE("Java handleEncryptionRequest threw exception");
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+            jResult = nullptr;
+        }
+    } else {
+        LOGE("handleEncryptionRequest method not found");
+    }
+
+    bool success = false;
+    if (jResult != nullptr) {
+        // 解析返回的打包字节数组
+        // 格式：[4字节 sharedSecret_len][sharedSecret][4字节 encryptedSecret_len][encryptedSecret][4字节 encryptedVerifyToken_len][encryptedVerifyToken]
+        jsize resultLen = env->GetArrayLength(jResult);
+        jbyte* resultBytes = env->GetByteArrayElements(jResult, nullptr);
+
+        const uint8_t* data = reinterpret_cast<const uint8_t*>(resultBytes);
+        size_t offset = 0;
+
+        if (resultLen >= 4) {
+            // 读取 sharedSecret
+            int32_t ssLen = (data[offset] << 24) | (data[offset+1] << 16) | (data[offset+2] << 8) | data[offset+3];
+            offset += 4;
+            if (offset + ssLen <= (size_t)resultLen && ssLen > 0) {
+                sharedSecret.assign(data + offset, data + offset + ssLen);
+                offset += ssLen;
+            }
+
+            // 读取 encryptedSecret
+            if (offset + 4 <= (size_t)resultLen) {
+                int32_t esLen = (data[offset] << 24) | (data[offset+1] << 16) | (data[offset+2] << 8) | data[offset+3];
+                offset += 4;
+                if (offset + esLen <= (size_t)resultLen && esLen > 0) {
+                    encryptedSecret.assign(data + offset, data + offset + esLen);
+                    offset += esLen;
+                }
+            }
+
+            // 读取 encryptedVerifyToken
+            if (offset + 4 <= (size_t)resultLen) {
+                int32_t evtLen = (data[offset] << 24) | (data[offset+1] << 16) | (data[offset+2] << 8) | data[offset+3];
+                offset += 4;
+                if (offset + evtLen <= (size_t)resultLen && evtLen > 0) {
+                    encryptedVerifyToken.assign(data + offset, data + offset + evtLen);
+                    offset += evtLen;
+                }
+            }
+
+            success = !sharedSecret.empty() && !encryptedSecret.empty() && !encryptedVerifyToken.empty();
+        }
+
+        env->ReleaseByteArrayElements(jResult, resultBytes, JNI_ABORT);
+        LOGI("Encryption request handled: sharedSecret_len=%zu, encSecret_len=%zu, encVerifyToken_len=%zu",
+             sharedSecret.size(), encryptedSecret.size(), encryptedVerifyToken.size());
+    } else {
+        LOGE("handleEncryptionRequest returned null");
+    }
+
+    // 清理 JNI 引用
+    env->DeleteLocalRef(jServerID);
+    env->DeleteLocalRef(jPublicKey);
+    env->DeleteLocalRef(jVerifyToken);
+    env->DeleteLocalRef(jAccessToken);
+    env->DeleteLocalRef(jPlayerUuid);
+    if (jResult) env->DeleteLocalRef(jResult);
+    env->DeleteLocalRef(clazz);
+
+    if (attached) {
+        JniBridge::detachCurrentThread();
+    }
+
+    return success;
+}
+
+bool ClientEngine::start(const std::string& host, int port) {
     LOGI("========== Starting client ==========");
     LOGI("Server: %s:%d", host.c_str(), port);
-    LOGI("Username: %s", username.c_str());
+    LOGI("Username: %s", s_username.c_str());
 
     // 初始化压缩状态
     Compression::setEnabled(false);
@@ -131,8 +289,8 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
 
     // chunkManager 刚创建，通知相关模块更新指针
     // （native-lib.cpp 在 start() 之前调用 setChunkManager 时 chunkManager 还是 nullptr）
-    if (glRenderer) {
-        glRenderer->setChunkManager(chunkManager.get());
+    if (m_renderer) {
+        m_renderer->setChunkManager(chunkManager.get());
     }
     Collision::getInstance().setChunkManager(chunkManager.get());
     Light::getInstance().setChunkManager(chunkManager.get());
@@ -180,13 +338,13 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
 
     // ========== 登录阶段 - 发送 Login Start ==========
     {
-        LOGI("Sending login start: %s", username.c_str());
+        LOGI("Sending login start: %s", s_username.c_str());
 
         ProtocolCraft::ServerboundHelloPacket loginStart;
         #if PROTOCOL_VERSION < 759
-                loginStart.SetGameProfile(username);  // 1.18.2: 直接设置用户名
+                loginStart.SetGameProfile(s_username);  // 1.18.2: 直接设置用户名
         #else
-                loginStart.SetName_(username);  // 1.19+: 设置 Name_ 字段
+                loginStart.SetName_(s_username);  // 1.19+: 设置 Name_ 字段
         #endif
 
         ProtocolCraft::WriteContainer writeData;
@@ -280,7 +438,7 @@ bool ClientEngine::start(const std::string& host, int port, const std::string& u
                 std::vector<unsigned char> encryptedSharedSecret;
                 std::vector<unsigned char> encryptedVerifyToken;
 
-                bool encResult = callJavaHandleEncryptionRequest(
+                bool encResult = handleEncryptionRequest(
                     serverID, publicKey, verifyToken,
                     rawSharedSecret, encryptedSharedSecret, encryptedVerifyToken);
 

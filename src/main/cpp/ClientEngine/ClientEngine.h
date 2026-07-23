@@ -10,6 +10,7 @@
 #include <condition_variable>
 #include <map>
 #include <unordered_map>
+#include <jni.h>
 
 class ChunkManager;
 class NetworkManager;
@@ -27,7 +28,18 @@ public:
 
     static ClientEngine* getInstance() { return instance; }
 
-    bool start(const std::string& host, int port, const std::string& username);
+    // 玩家用户名（JNI 层写入，连接时读取）
+    static void setUsername(const std::string& name) { s_username = name; }
+    static const std::string& getUsername() { return s_username; }
+
+    // 暂存正版认证信息（JNI 层写入，连接回调读取）
+    static void setPendingAuth(const std::string& accessToken, const std::string& uuid, const std::string& tokenType);
+    static bool isPremiumPending();
+    static const std::string& getPendingAccessToken();
+    static const std::string& getPendingPlayerUuid();
+    static const std::string& getPendingTokenType();
+
+    bool start(const std::string& host, int port);
 
     // 设置正版认证信息
     void setAuthInfo(const std::string& accessToken, const std::string& uuid, const std::string& tokenType);
@@ -44,8 +56,14 @@ public:
     EntityManager* getEntityManager() { return m_entityManager.get(); }
     EntityRenderer* getEntityRenderer() { return m_entityRenderer.get(); }
 
-    // 设置渲染器引用
-    void setRenderer(GLRenderer* renderer) { glRenderer = renderer; }
+    // 设置渲染器（转移所有权），并自动传播 ChunkManager 到渲染器/Collision/Light
+    void setRenderer(std::unique_ptr<GLRenderer> renderer);
+
+    // 释放渲染器所有权（用于断开连接时归还给 JNI 层暂存）
+    std::unique_ptr<GLRenderer> releaseRenderer();
+
+    // 获取渲染器裸指针（非拥有）
+    GLRenderer* getRenderer() { return m_renderer.get(); }
 
     // 获取玩家位置
     double getPlayerX() const { return playerX; }
@@ -133,6 +151,15 @@ private:
     // Chat Component JSON 解析（translate/with/text 多层结构）
     std::string parseChatComponent(const std::string& rawJson) const;
 
+    // 通过 JNI 调用 Java 层处理加密请求（生成共享密钥 + SHA1 + Session Join + RSA）
+    bool handleEncryptionRequest(
+        const std::string& serverID,
+        const std::vector<unsigned char>& publicKey,
+        const std::vector<unsigned char>& verifyToken,
+        std::vector<unsigned char>& sharedSecret,
+        std::vector<unsigned char>& encryptedSecret,
+        std::vector<unsigned char>& encryptedVerifyToken);
+
     std::unique_ptr<ChunkManager> chunkManager;
     std::unique_ptr<NetworkManager> net;
     std::unique_ptr<PlayerInventory> m_inventory;
@@ -140,9 +167,15 @@ private:
     std::unique_ptr<EntityRenderer> m_entityRenderer;
     mutable std::mutex netMutex;
 
-    GLRenderer* glRenderer = nullptr;
+    std::unique_ptr<GLRenderer> m_renderer;
 
     static ClientEngine* instance;
+
+    // 暂存的正版认证信息（连接前由 JNI 层写入）
+    static std::string s_pendingAccessToken;
+    static std::string s_pendingPlayerUuid;
+    static std::string s_pendingTokenType;
+    static std::string s_username;
 
     // 玩家位置
     double playerX = 0.0;

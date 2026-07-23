@@ -2,6 +2,7 @@
 #include "TextureLoader.h"
 #include "TextureAtlas.h"
 #include "GLRenderer.h"
+#include "ClientEngine/ClientEngine.h"
 #include <android/log.h>
 #include <fstream>
 #include <sstream>
@@ -14,10 +15,6 @@ static std::string readFileFromDisk(const std::string& path) {
     ss << file.rdbuf();
     return ss.str();
 }
-
-// g_glRenderer 定义在 native-lib.cpp
-
-extern GLRenderer* g_glRenderer;
 
 #define LOG_TAG "Resourcepack"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -94,8 +91,8 @@ GLuint ResourcepackManager::getItemTexture(const std::string& itemName) {
     GLuint glTex = 0;
 
     // 1) 优先使用 3D 方块模型渲染的图标（所有可放置方块显示为立体）
-    if (g_glRenderer) {
-        const GLuint* cached = g_glRenderer->getBlockIcon(itemName);
+    if (ClientEngine::getInstance() && ClientEngine::getInstance()->getRenderer()) {
+        const GLuint* cached = ClientEngine::getInstance()->getRenderer()->getBlockIcon(itemName);
         if (cached) {
             glTex = *cached;
         }

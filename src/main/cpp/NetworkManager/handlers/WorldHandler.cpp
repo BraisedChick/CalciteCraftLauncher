@@ -53,8 +53,8 @@ void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data,
                 if (chunk) {
                     chunk->setBlockState(localX, blockY, localZ, blockState);
                     Light::getInstance().queueBlockLightRecalc(blockX, blockY, blockZ);
-                    if (m_engine->glRenderer) {
-                        m_engine->glRenderer->markChunkForUpdate(chunkX, chunkZ);
+                    if (m_engine->getRenderer()) {
+                        m_engine->getRenderer()->markChunkForUpdate(chunkX, chunkZ);
                     }
                 } else {
                     LOGW("BlockUpdate: chunk (%d, %d) not loaded", chunkX, chunkZ);
@@ -117,7 +117,7 @@ void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data,
                                 sec->blockLight.assign(2048, 0);
                             }
                         }
-                        if (m_engine->glRenderer) m_engine->glRenderer->markChunkForUpdate(lx, lz);
+                        if (m_engine->getRenderer()) m_engine->getRenderer()->markChunkForUpdate(lx, lz);
                     }
                 }
             } catch (const std::exception& e) {
@@ -166,8 +166,8 @@ void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data,
                 chunk->setBlockState(localX, blockY, localZ, blockState);
             }
 
-            if (m_engine->glRenderer) {
-                m_engine->glRenderer->markChunkForUpdate(chunkX, chunkZ);
+            if (m_engine->getRenderer()) {
+                m_engine->getRenderer()->markChunkForUpdate(chunkX, chunkZ);
             }
             break;
         }

@@ -18,7 +18,9 @@
 #include "EntityManager.h"
 #include "Collision.h"
 #include "PlayerInventory.h"
+#include "GLRenderer.h"
 #include "ClientEngine/ClientEngine.h"
+#include "JniBridge.h"
 #include "Raycast.h"
 #include "ChunkManager.h"
 #include "BlockRegistry.h"
@@ -143,6 +145,96 @@ bool GameUI::init() {
     LOGI("ImGui initialized successfully");
 
     loadSettings();
+
+    // ===== 注册 UI 回调（从 JNI 层迁移至此） =====
+
+    // 断开连接回调
+    setDisconnectCallback([]() {
+        LOGI("In-game disconnect requested");
+        auto* engine = ClientEngine::getInstance();
+        if (engine) {
+            engine->disconnect();
+        }
+    });
+
+    // 键盘显示回调（JNI 调用 Java 输入法）
+    setShowKeyboardCallback([](bool show) {
+        if (!JniBridge::getJvm() || !JniBridge::getActivity()) return;
+        JNIEnv* env;
+        bool attached = false;
+        int ger = JniBridge::getJvm()->GetEnv((void**)&env, JNI_VERSION_1_6);
+        if (ger == JNI_EDETACHED) {
+            if (JniBridge::getJvm()->AttachCurrentThread(&env, nullptr) == JNI_OK) attached = true;
+            else return;
+        } else if (ger != JNI_OK) {
+            return;
+        }
+        jclass clazz = env->GetObjectClass(JniBridge::getActivity());
+        jmethodID method = env->GetMethodID(clazz, "showKeyboardImGui", "(Z)V");
+        if (method) {
+            env->CallVoidMethod(JniBridge::getActivity(), method, show);
+        }
+        env->DeleteLocalRef(clazz);
+        if (attached) JniBridge::detachCurrentThread();
+    });
+
+    // FOV 更新回调
+    setFovCallback([](float fov) {
+        auto* engine = ClientEngine::getInstance();
+        if (engine && engine->getRenderer()) {
+            engine->getRenderer()->setFov(fov);
+        }
+    });
+
+    // 渲染距离更新回调
+    setRenderDistanceCallback([](int chunks) {
+        auto* engine = ClientEngine::getInstance();
+        if (engine && engine->getRenderer()) {
+            engine->getRenderer()->setRenderDistance(chunks);
+        }
+    });
+
+    // Mipmap 更新回调
+    setMipmapCallback([](int level) {
+        auto* engine = ClientEngine::getInstance();
+        if (engine && engine->getRenderer()) {
+            engine->getRenderer()->setMipmapLevel(level);
+        }
+    });
+
+    // 最大帧率回调
+    setMaxFpsCallback([](int fps) {
+        auto* engine = ClientEngine::getInstance();
+        if (engine && engine->getRenderer()) {
+            engine->getRenderer()->setMaxFps(fps);
+        }
+    });
+
+    // 退出游戏回调（返回 Java 启动器）
+    setExitCallback([]() {
+        JNIEnv* env;
+        bool attached = false;
+        int getEnvResult = JniBridge::getJvm()->GetEnv((void**)&env, JNI_VERSION_1_6);
+        if (getEnvResult == JNI_EDETACHED) {
+            if (JniBridge::getJvm()->AttachCurrentThread(&env, nullptr) != JNI_OK) return;
+            attached = true;
+        } else if (getEnvResult != JNI_OK) {
+            return;
+        }
+        jclass clazz = env->GetObjectClass(JniBridge::getActivity());
+        jmethodID finishMethod = env->GetMethodID(clazz, "finish", "()V");
+        if (finishMethod) {
+            env->CallVoidMethod(JniBridge::getActivity(), finishMethod);
+        }
+        env->DeleteLocalRef(clazz);
+        if (attached) {
+            JniBridge::detachCurrentThread();
+        }
+    });
+
+    // 设置应用已迁移至 native-lib.cpp 连接回调中（setRenderer 之后）
+    // 因为此时渲染器由 g_pendingRenderer 暂存，ClientEngine 尚未创建
+
     ScreenManager::getInstance().setScreen(std::make_unique<TitleScreen>());
 
     return true;

@@ -398,8 +398,8 @@ void NetworkManager::parseChunkDataPacket(const std::vector<uint8_t>& data, size
             }
         }
 
-        if (m_engine->glRenderer) {
-            m_engine->glRenderer->markChunkForUpdate(cx, cz);
+        if (m_engine && m_engine->getRenderer()) {
+            m_engine->getRenderer()->markChunkForUpdate(cx, cz);
         }
     } catch (const std::exception& e) {
         LOGW("Chunk worker: failed to load chunk (%d,%d): %s", cx, cz, e.what());

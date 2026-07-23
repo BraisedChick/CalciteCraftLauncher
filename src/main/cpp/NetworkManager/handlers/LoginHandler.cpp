@@ -262,8 +262,8 @@ void NetworkManager::handleLogin(int packetId, const std::vector<uint8_t>& data,
             if (m_engine->chunkManager) {
                 m_engine->chunkManager->clear();
             }
-            if (m_engine->glRenderer) {
-                m_engine->glRenderer->clearChunks();
+            if (m_engine->getRenderer()) {
+                m_engine->getRenderer()->clearChunks();
             }
             m_engine->getEntityManager()->removeAllEntities();
             break;
