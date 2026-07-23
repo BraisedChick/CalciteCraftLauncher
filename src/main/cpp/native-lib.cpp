@@ -13,7 +13,6 @@
 #include "utils.h"
 #include "TextureLoader.h"
 #include "ResourcepackManager.h"
-#include "BlockRegistry.h"
 #include "CameraController.h"
 #include "Collision.h"
 #include "Light.h"
@@ -211,26 +210,7 @@ Java_com_calcite_MainActivity_initRenderer(
     }
 
     // 加载 BlockRegistry（全局只加载一次，必须在渲染器初始化之前）
-    static bool blockRegistryLoaded = false;
-    if (!blockRegistryLoaded) {
-        auto* registry = ClientEngine::getInstance()->getBlockRegistry();
-        std::string blocksJsonContent = TextureLoader::readTextFromZip("blocks.json");
-        if (!blocksJsonContent.empty() && registry->loadFromJson(blocksJsonContent)) {
-            JNI_LOGI("BlockRegistry loaded successfully: %zu blocks",
-                     registry->getBlockCount());
-        } else {
-            JNI_LOGE("Failed to load BlockRegistry, using fallback mapping");
-        }
-
-        std::string itemsJsonContent = TextureLoader::readTextFromZip("items.json");
-        if (!itemsJsonContent.empty() && registry->loadItems(itemsJsonContent)) {
-            JNI_LOGI("Items loaded successfully from ZIP");
-        } else {
-            JNI_LOGI("No items.json in ZIP, blocks-only mode");
-        }
-
-        blockRegistryLoaded = true;
-    }
+    ClientEngine::getInstance()->loadBlockRegistry();
 
     if (!surface) {
         JNI_LOGE("Surface is null!");

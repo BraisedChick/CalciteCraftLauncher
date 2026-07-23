@@ -4,6 +4,7 @@
 #include "EntityRenderer.h"
 #include "TextureAtlas.h"
 #include "BlockRegistry.h"
+#include "TextureLoader.h"
 #include "utils.h"
 
 ClientEngine* ClientEngine::instance = nullptr;
@@ -54,4 +55,26 @@ GameEngine* ClientEngine::createGame() {
 
 void ClientEngine::destroyGame() {
     m_gameEngine.reset();
+}
+
+void ClientEngine::loadBlockRegistry() {
+    if (m_blockRegistryLoaded) return;
+    m_blockRegistryLoaded = true;
+
+    auto* registry = m_blockRegistry.get();
+    if (!registry) return;
+
+    std::string blocksJson = TextureLoader::readTextFromZip("blocks.json");
+    if (!blocksJson.empty() && registry->loadFromJson(blocksJson)) {
+        LOGI("BlockRegistry loaded successfully: %zu blocks", registry->getBlockCount());
+    } else {
+        LOGE("Failed to load BlockRegistry, using fallback mapping");
+    }
+
+    std::string itemsJson = TextureLoader::readTextFromZip("items.json");
+    if (!itemsJson.empty() && registry->loadItems(itemsJson)) {
+        LOGI("Items loaded successfully from ZIP");
+    } else {
+        LOGI("No items.json in ZIP, blocks-only mode");
+    }
 }

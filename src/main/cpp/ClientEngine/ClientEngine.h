@@ -42,6 +42,8 @@ public:
 
     // ===== 方块注册表（全局生命周期） =====
     BlockRegistry* getBlockRegistry() { return m_blockRegistry.get(); }
+    /// 从 ZIP 加载 blocks.json + items.json（幂等，多次调用只加载一次）
+    void loadBlockRegistry();
 
     // ===== 会话管理 =====
     // 创建新会话（断开旧会话后调用）
@@ -65,4 +67,5 @@ private:
     static std::string s_pendingPlayerUuid;
     static std::string s_pendingTokenType;
     static std::string s_username;
+    bool m_blockRegistryLoaded = false;
 };
