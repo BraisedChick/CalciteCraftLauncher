@@ -20,6 +20,7 @@
 #include "PlayerInventory.h"
 #include "GLRenderer.h"
 #include "ClientEngine/ClientEngine.h"
+#include "ClientEngine/GameEngine.h"
 #include "JniBridge.h"
 #include "Raycast.h"
 #include "ChunkManager.h"
@@ -151,9 +152,9 @@ bool GameUI::init() {
     // 断开连接回调
     setDisconnectCallback([]() {
         LOGI("In-game disconnect requested");
-        auto* engine = ClientEngine::getInstance();
-        if (engine) {
-            engine->disconnect();
+        auto* client = ClientEngine::getInstance();
+        if (client && client->getGame()) {
+            client->getGame()->disconnect();
         }
     });
 
@@ -297,7 +298,7 @@ void GameUI::render() {
     ImGui::NewFrame();
 
     if (currentState == UIState::IN_GAME) {
-        auto* engine = ClientEngine::getInstance();
+        auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
 
         // 挖掘后冷却递减（每刻 50ms）
         if (destroyDelay > 0) {
@@ -313,10 +314,10 @@ void GameUI::render() {
         if (buttons.attackPressed && destroyDelay <= 0) {
             continueDestroyBlock();
         }
-        float health = engine ? engine->getHealth() : 20.0f;
-        if (!deathScreenActive && health <= 0.0f && prevHealth > 0.0f && engine && engine->getGameMode() != 3) {
+        float health = game ? game->getHealth() : 20.0f;
+        if (!deathScreenActive && health <= 0.0f && prevHealth > 0.0f && game && game->getGameMode() != 3) {
             deathScreenActive = true;
-            std::string serverMsg = engine->getDeathMessage();
+            std::string serverMsg = game->getDeathMessage();
             deathReason = serverMsg.empty() ? "你被杀死了" : serverMsg;
         }
         prevHealth = health;
@@ -580,8 +581,8 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
         if (isInEButtonArea(x, y) && action == 0) {
             // 关闭外部容器时发送关闭包
             if (openContainerId > 0) {
-                auto* engine = ClientEngine::getInstance();
-                if (engine) engine->sendContainerClose();
+                auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+                if (game) game->sendContainerClose();
             }
             closeContainer();
             Collision::getInstance().resetMovement();
@@ -629,8 +630,8 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
             if (inventoryOpen) {
                 // 关闭外部容器时发送关闭包
                 if (openContainerId > 0) {
-                    auto* engine = ClientEngine::getInstance();
-                    if (engine) engine->sendContainerClose();
+                    auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+                    if (game) game->sendContainerClose();
                 }
                 closeContainer();
             } else {
@@ -640,8 +641,11 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
         } else if (currentState == UIState::IN_GAME) {
             int hbSlot = hotbarSlotAt(x, y);
             if (hbSlot >= 0) {
-                ClientEngine::getInstance()->getInventory()->setSelectedSlot(hbSlot);
-                ClientEngine::getInstance()->sendHeldItemChange(hbSlot);
+                auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+                if (game) {
+                    game->getInventory()->setSelectedSlot(hbSlot);
+                    game->sendHeldItemChange(hbSlot);
+                }
             } else {
                 pt->role = TouchPoint::CAMERA;
                 handleCameraTouch(pointerId, x, y, action);
@@ -714,7 +718,9 @@ void GameUI::handleJoystickTouch(int pointerId, float x, float y, int action) {
 }
 
 void GameUI::performBlockPlacement() {
-    auto& inv = *ClientEngine::getInstance()->getInventory();
+    auto* gameForInv = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+    if (!gameForInv) return;
+    auto& inv = *gameForInv->getInventory();
     const InvSlot& held = inv.getHotbarSlot(inv.getSelectedSlot());
     bool hasItem = held.present && held.itemId > 0;
 
@@ -735,9 +741,9 @@ void GameUI::performBlockPlacement() {
             "honey_bottle"
         };
         if (foodItems.find(itemName) != foodItems.end()) {
-            auto* engine = ClientEngine::getInstance();
-            if (engine) {
-                engine->sendUseItem(0);
+            auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+            if (game) {
+                game->sendUseItem(0);
                 LOGI("Ate food: %s", itemName.c_str());
             }
             return;
@@ -752,7 +758,7 @@ void GameUI::performBlockPlacement() {
     dir.y = -std::sin(pitch);
     dir.z = std::cos(yaw) * std::cos(pitch);
     glm::vec3 eyePos = playerPos + glm::vec3(0.0f, 1.62f, 0.0f);
-    auto* engine = ClientEngine::getInstance();
+    auto* engine = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
     if (!engine) return;
     auto* cm = engine->getChunkManager();
     if (!cm) return;
@@ -798,7 +804,7 @@ RaycastResult GameUI::getTargetBlock() const {
     dir.y = -std::sin(pitch);
     dir.z = std::cos(yaw) * std::cos(pitch);
     glm::vec3 eyePos = playerPos + glm::vec3(0.0f, 1.62f, 0.0f);
-    auto* engine = ClientEngine::getInstance();
+    auto* engine = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
     if (!engine) return {};
     auto* cm = engine->getChunkManager();
     if (!cm) return {};
@@ -815,16 +821,17 @@ int GameUI::getTargetEntity(float reachDistance) const {
     dir.z = std::cos(yaw) * std::cos(pitch);
     glm::vec3 eyePos = playerPos + glm::vec3(0.0f, 1.62f, 0.0f);
 
-    auto entities = ClientEngine::getInstance()->getEntityManager()->getAllEntities();
+    auto* gameForEnt = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+    if (!gameForEnt) return -1;
+    auto entities = gameForEnt->getEntityManager()->getAllEntities();
     int bestEntityId = -1;
     float bestDist = reachDistance + 1.0f;
 
     // 跳过自身玩家（entityId == local player）
     int localPlayerId = -1;
-    auto* engine = ClientEngine::getInstance();
-    if (engine) {
+    {
         Entity localPlayer;
-        if (ClientEngine::getInstance()->getEntityManager()->getEntity(engine->getPlayerId(), localPlayer))
+        if (gameForEnt->getEntityManager()->getEntity(gameForEnt->getPlayerId(), localPlayer))
             localPlayerId = localPlayer.entityId;
     }
 
@@ -937,7 +944,7 @@ static std::string getBlockSoundCategory(uint32_t blockState) {
 
 // 首次按下攻击按钮时调用
 void GameUI::performBlockBreak() {
-    auto* engine = ClientEngine::getInstance();
+    auto* engine = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
     if (!engine) return;
 
     // 优先检测准星下的实体
@@ -1010,7 +1017,9 @@ void GameUI::performBlockBreak() {
 // 根据手持物品计算玩家挖掘速度（对标 ItemStack/DiggerItem.getDestroySpeed）
 // 工具速度加成仅对匹配的方块类型生效
 static float getPlayerDigSpeed(const std::string& material) {
-    auto& inv = *ClientEngine::getInstance()->getInventory();
+    auto* g = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+    if (!g) return 1.0f;
+    auto& inv = *g->getInventory();
     const InvSlot& held = inv.getHotbarSlot(inv.getSelectedSlot());
     if (!held.present || held.itemId <= 0) return 1.0f; // 空手
 
@@ -1052,7 +1061,9 @@ static float getPlayerDigSpeed(const std::string& material) {
 static bool hasCorrectToolFor(const std::string& material, bool requiresCorrectTool) {
     if (!requiresCorrectTool) return true; // 不需要工具 → 总是有"正确工具"
 
-    auto& inv = *ClientEngine::getInstance()->getInventory();
+    auto* g = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+    if (!g) return false;
+    auto& inv = *g->getInventory();
     const InvSlot& held = inv.getHotbarSlot(inv.getSelectedSlot());
     if (!held.present || held.itemId <= 0) return false; // 空手
 
@@ -1070,7 +1081,7 @@ static bool hasCorrectToolFor(const std::string& material, bool requiresCorrectT
 
 // 每帧持续调用（对标 continueDestroyBlock）
 void GameUI::continueDestroyBlock() {
-    auto* engine = ClientEngine::getInstance();
+    auto* engine = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
     if (!engine) return;
 
     // 每帧也检测实体，如果准星对准了实体则优先攻击
@@ -1152,7 +1163,7 @@ void GameUI::continueDestroyBlock() {
 // 松开攻击按钮时调用（对标 stopDestroyBlock）
 void GameUI::stopDestroyBlock() {
     if (digging) {
-        auto* engine = ClientEngine::getInstance();
+        auto* engine = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
         if (engine) {
             engine->sendBlockBreakAbort(digBlockX, digBlockY, digBlockZ, digFace);
         }
@@ -1278,7 +1289,7 @@ void GameUI::sendChatMessage() {
         chatOpen = false;
         return;
     }
-    auto* engine = ClientEngine::getInstance();
+    auto* engine = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
     if (engine) {
         engine->sendChatMessage(std::string(chatInput));
     }

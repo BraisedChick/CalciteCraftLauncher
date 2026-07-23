@@ -7,6 +7,7 @@
 #include <thread>
 #include <atomic>
 #include "ClientEngine/ClientEngine.h"
+#include "ClientEngine/GameEngine.h"
 #include "VulkanRenderer.h"
 #include "GLRenderer.h"
 #include "utils.h"
@@ -64,8 +65,9 @@ static void renderLoop() {
             g_renderThreadIdle.store(false, std::memory_order_release);
 
             // 确保 PlayerController 和 Light 持有 ChunkManager 引用
-            if (ClientEngine::getInstance()) {
-                auto* cm = ClientEngine::getInstance()->getChunkManager();
+            auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+            if (game) {
+                auto* cm = game->getChunkManager();
                 if (cm) {
                     if (!Collision::getInstance().hasChunkManager()) {
                         Collision::getInstance().setChunkManager(cm);
@@ -76,7 +78,7 @@ static void renderLoop() {
             }
 
             // 背包/菜单/死亡界面打开时，重置移动输入但不中断物理（玩家仍受重力下落）
-            if (ClientEngine::getInstance() && GameUI::getInstance().isInGameUIActive()) {
+            if (game && GameUI::getInstance().isInGameUIActive()) {
                 Collision::getInstance().resetMovement();
             }
 
@@ -88,10 +90,10 @@ static void renderLoop() {
             Collision::getInstance().update(deltaTime, camPitch, camYaw, &physPos, &onGround);
 
             // 发送玩家移动数据包到服务器（使用精确物理位置，已原子读取，无竞态）
-            if (ClientEngine::getInstance()) {
+            if (game) {
                 float curPitch = CameraController::getInstance().getPitch();
                 float curYaw = CameraController::getInstance().getYaw();
-                ClientEngine::getInstance()->sendPlayerMovement(physPos.x, physPos.y, physPos.z, curYaw, curPitch, onGround);
+                game->sendPlayerMovement(physPos.x, physPos.y, physPos.z, curYaw, curPitch, onGround);
             }
 
             if (frameCount <= 5 || frameCount % 60 == 0) {
@@ -133,8 +135,9 @@ static void renderLoop() {
             float pitch = CameraController::getInstance().getPitch();
             float yaw = CameraController::getInstance().getYaw();
 
-            if (g_pendingRenderer) {
-                g_pendingRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
+            auto* activeRenderer = ClientEngine::getInstance() ? ClientEngine::getInstance()->getRenderer() : g_pendingRenderer.get();
+            if (activeRenderer) {
+                activeRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
             } else if (g_useVulkan && g_vulkanRenderer) {
                 g_vulkanRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
             }
@@ -283,17 +286,25 @@ Java_com_calcite_MainActivity_initRenderer(
         GameUI::getInstance().setConnectCallback([](const std::string& ip, int port) {
             JNI_LOGI("UI Connect: %s:%d user=%s", ip.c_str(), port, ClientEngine::getUsername().c_str());
             std::thread([ip, port]() {
-                // 清理旧引擎（提取渲染器后再删除）
-                if (ClientEngine::getInstance()) {
-                    g_pendingRenderer = ClientEngine::getInstance()->releaseRenderer();
-                    delete ClientEngine::getInstance();
+                // 确保 ClientEngine 全局单例存在
+                auto* client = ClientEngine::getInstance();
+                if (!client) {
+                    client = new ClientEngine();
+                    // 将暂存的渲染器交给全局引擎
+                    if (g_pendingRenderer) {
+                        client->setRenderer(std::move(g_pendingRenderer));
+                    }
                 }
 
-                auto* engine = new ClientEngine();
+                // 销毁旧会话（如果有）
+                client->destroyGame();
 
-                // 传递正版认证信息给引擎
+                // 创建新会话
+                auto* game = client->createGame();
+
+                // 传递正版认证信息给会话引擎
                 if (ClientEngine::isPremiumPending()) {
-                    engine->setAuthInfo(
+                    game->setAuthInfo(
                         ClientEngine::getPendingAccessToken(),
                         ClientEngine::getPendingPlayerUuid(),
                         ClientEngine::getPendingTokenType());
@@ -303,29 +314,24 @@ Java_com_calcite_MainActivity_initRenderer(
                 {
                     std::string langJson = TextureLoader::readTextFromZip("lang/zh_cn.json");
                     if (!langJson.empty()) {
-                        engine->loadLanguage(langJson);
+                        game->loadLanguage(langJson);
                     }
                 }
 
-                // 将暂存的渲染器交给引擎
-                if (g_pendingRenderer) {
-                    engine->setRenderer(std::move(g_pendingRenderer));
-                }
-
-                // 应用已加载的设置到渲染器（从 GameUI::init() 迁移至此，因为此时渲染器才归属引擎）
-                if (engine->getRenderer()) {
+                // 应用已加载的设置到渲染器
+                if (client->getRenderer()) {
                     auto& ui = GameUI::getInstance();
-                    engine->getRenderer()->setFov(ui.getOptionsFov());
-                    engine->getRenderer()->setRenderDistance(ui.getRenderDistance());
-                    engine->getRenderer()->setMipmapLevel(ui.getMipmapLevel());
-                    engine->getRenderer()->setMaxFps(ui.getMaxFps());
+                    client->getRenderer()->setFov(ui.getOptionsFov());
+                    client->getRenderer()->setRenderDistance(ui.getRenderDistance());
+                    client->getRenderer()->setMipmapLevel(ui.getMipmapLevel());
+                    client->getRenderer()->setMaxFps(ui.getMaxFps());
                 }
 
                 // start() 会阻塞直到断开连接，所以先切换到 IN_GAME
                 GameUI::getInstance().setState(UIState::IN_GAME);
                 GameUI::getInstance().clearChatMessages();
 
-                engine->start(ip, port);
+                game->start(ip, port);
 
                 // 断开连接后回到主菜单
                 JNI_LOGI("Disconnected, returning to title screen");
@@ -338,20 +344,19 @@ Java_com_calcite_MainActivity_initRenderer(
                 while (!g_renderThreadIdle.load(std::memory_order_acquire)) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
-                JNI_LOGI("Render thread in safe branch, cleaning up engine");
+                JNI_LOGI("Render thread in safe branch, cleaning up game engine");
 
-                // 3. 清除单例中指向引擎内部对象的裸指针
+                // 3. 清除单例中指向会话内部对象的裸指针
                 Collision::getInstance().setChunkManager(nullptr);
                 Light::getInstance().setChunkManager(nullptr);
 
-                if (engine->getRenderer()) {
-                    engine->getRenderer()->clearChunks();
+                if (client->getRenderer()) {
+                    client->getRenderer()->clearChunks();
                 }
 
-                // 4. 释放渲染器，删除引擎
-                g_pendingRenderer = engine->releaseRenderer();
-                delete engine;
-                JNI_LOGI("Engine deleted safely");
+                // 4. 销毁会话引擎（ClientEngine 保持存活）
+                client->destroyGame();
+                JNI_LOGI("Game engine destroyed safely");
 
                 // 5. 更新 UI
                 ui.setGameMenuOpen(false);
@@ -447,7 +452,6 @@ Java_com_calcite_MainActivity_cleanupRenderer(
         delete ClientEngine::getInstance();
     }
     g_pendingRenderer.reset();
-
     // 释放 Activity 全局引用，防止内存泄漏
     JniBridge::cleanup(env);
 
@@ -582,9 +586,9 @@ Java_com_calcite_MainActivity_setAuthInfo(
 
     JNI_LOGI("Auth info set: premium=%d, uuid=%s", isPremium, id);
 
-    // 如果 engine 已存在，同步进去
-    if (ClientEngine::getInstance()) {
-        ClientEngine::getInstance()->setAuthInfo(token, id, type);
+    // 如果会话已存在，同步进去
+    if (ClientEngine::getInstance() && ClientEngine::getInstance()->getGame()) {
+        ClientEngine::getInstance()->getGame()->setAuthInfo(token, id, type);
     }
 
     env->ReleaseStringUTFChars(accessToken, token);

@@ -13,6 +13,7 @@
 #include "Light.h"
 #include "gui/GameUI.h"
 #include "ClientEngine/ClientEngine.h"
+#include "ClientEngine/GameEngine.h"
 #include "EntityRenderer.h"
 #include "EntityManager.h"
 #include "imgui.h"
@@ -1448,9 +1449,9 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     int chunksRendered = 0;
     int totalTriangles = 0;
 
-    const auto* engine = ClientEngine::getInstance();
-    float worldMinY = (float)(engine ? engine->getDimensionMinY() : -64);
-    float worldMaxY = (float)(engine ? (engine->getDimensionMinY() + engine->getDimensionHeight()) : 320);
+    const auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+    float worldMinY = (float)(game ? game->getDimensionMinY() : -64);
+    float worldMaxY = (float)(game ? (game->getDimensionMinY() + game->getDimensionHeight()) : 320);
 
     // 加锁保护 chunkRenderCache
     std::lock_guard<std::mutex> renderLock(cacheMutex);
@@ -1587,11 +1588,14 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
 
     // ===== Phase 3: 实体渲染 =====
     {
-        EntityRenderer* er = ClientEngine::getInstance()->getEntityRenderer();
-        if (!er->isInitialized()) er->init();
-        auto entities = ClientEngine::getInstance()->getEntityManager()->getAllEntities();
-        if (!entities.empty()) {
-            er->renderAll(entities, viewMatrix, projMatrix, 1.0f);
+        auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+        auto* er = ClientEngine::getInstance() ? ClientEngine::getInstance()->getEntityRenderer() : nullptr;
+        if (game && er) {
+            if (!er->isInitialized()) er->init();
+            auto entities = game->getEntityManager()->getAllEntities();
+            if (!entities.empty()) {
+                er->renderAll(entities, viewMatrix, projMatrix, 1.0f);
+            }
         }
     }
 

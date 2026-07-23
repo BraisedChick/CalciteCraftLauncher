@@ -3,7 +3,7 @@
 #include "Screen.h"
 #include <memory>
 
-// Screen 管理器（类似 MC 的 Minecraft.setScreen() 机制）
+// Screen 管理器
 // 管理当前活跃 Screen 的生命周期和切换
 class ScreenManager {
 public:

@@ -7,6 +7,7 @@
 #include "GameUI.h"
 #include "CameraController.h"
 #include "ClientEngine/ClientEngine.h"
+#include "ClientEngine/GameEngine.h"
 #include "ResourcepackManager.h"
 #include "BlockRegistry.h"
 #include "PlayerInventory.h"
@@ -190,8 +191,12 @@ void HudScreen::render(int mouseX, int mouseY) {
         IM_COL32(0, 0, 0, 100), 4.0f);
 
     InvSlot hotbar[9];
-    ClientEngine::getInstance()->getInventory()->getHotbarSlots(hotbar);
-    int selSlot = ClientEngine::getInstance()->getInventory()->getSelectedSlot();
+    int selSlot = 0;
+    auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+    if (game) {
+        game->getInventory()->getHotbarSlots(hotbar);
+        selSlot = game->getInventory()->getSelectedSlot();
+    }
 
     for (int i = 0; i < 9; i++) {
         float sx = hotbarX + i * (SLOT_SIZE + SLOT_GAP);
@@ -262,7 +267,7 @@ void HudScreen::render(int mouseX, int mouseY) {
 
     // ===== 生命值 + 饥饿值 =====
     {
-        auto* engine = ClientEngine::getInstance();
+        auto* engine = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
         if (engine && engine->getGameMode() != 1) {
             float healthVal = engine->getHealth();
             int foodVal = engine->getFood();
@@ -414,8 +419,9 @@ void HudScreen::render(int mouseX, int mouseY) {
 
         ImGui::TextColored(ImVec4(1, 1, 0, 1), "Minecraft %s", getProtocolVersionName(PROTOCOL_VERSION));
         ImGui::Text("FPS: %.0f", displayFps);
-        ImGui::Text("E: %d/%d", ClientEngine::getInstance()->getEntityRenderer()->getRenderedCount(),
-                     ClientEngine::getInstance()->getEntityRenderer()->getTotalCount());
+        auto* er = ClientEngine::getInstance() ? ClientEngine::getInstance()->getEntityRenderer() : nullptr;
+        ImGui::Text("E: %d/%d", er ? er->getRenderedCount() : 0,
+                     er ? er->getTotalCount() : 0);
         ImGui::Text("");
 
         auto pos = CameraController::getInstance().getPosition();

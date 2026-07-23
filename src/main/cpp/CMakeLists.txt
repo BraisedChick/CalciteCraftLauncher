@@ -52,6 +52,7 @@ set(PROTOCOLCRAFT_SRC
 # ============================================================
 set(APP_SOURCES
     ClientEngine/ClientEngine.cpp
+    ClientEngine/GameEngine.cpp
     NetworkManager/handlers/LoginHandler.cpp
     NetworkManager/handlers/WorldHandler.cpp
     NetworkManager/handlers/EntityHandler.cpp

@@ -3,7 +3,7 @@
 #include "protocolCraft/BinaryReadWrite.hpp"
 #include "Compression.h"
 #include "utils.h"
-#include "ClientEngine/ClientEngine.h"
+#include "ClientEngine/GameEngine.h"
 #include "NetworkManager/handlers/PacketHandlerBase.h"
 #include "ChunkManager.h"
 #include "GLRenderer.h"

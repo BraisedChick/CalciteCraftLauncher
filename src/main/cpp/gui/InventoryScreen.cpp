@@ -8,6 +8,7 @@
 #include "BlockRegistry.h"
 #include "PlayerInventory.h"
 #include "ClientEngine/ClientEngine.h"
+#include "ClientEngine/GameEngine.h"
 #include "GameUI.h"
 
 #include <android/log.h>
@@ -82,7 +83,9 @@ void InventoryScreen::renderPlayerInventory(float w, float h) {
                containerY + 8.0f * S),
         IM_COL32(55, 55, 55, 255), title);
 
-    auto& inv = *ClientEngine::getInstance()->getInventory();
+    auto* gameForInv = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+    if (!gameForInv) return;
+    auto& inv = *gameForInv->getInventory();
     InvSlot hotbar[9];
     inv.getHotbarSlots(hotbar);
 
@@ -170,7 +173,7 @@ void InventoryScreen::renderPlayerInventory(float w, float h) {
     };
 
     // 全局拖拽检测
-    auto* engine = ClientEngine::getInstance();
+    auto* engine = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
     if (engine) {
         if (isDraggingSlot && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             int hoveredSlot = getSlotAtMouse();
@@ -254,7 +257,7 @@ void InventoryScreen::renderPlayerInventory(float w, float h) {
         char btnId[32];
         snprintf(btnId, sizeof(btnId), "##%s", id);
         ImGui::InvisibleButton(btnId, ImVec2(INV_SLOT, INV_SLOT));
-        auto* eng = ClientEngine::getInstance();
+        auto* eng = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
         if (!eng) { ImGui::PopStyleColor(3); return; }
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
             const InvSlot& cursor = inv.getCursorItem();
@@ -476,7 +479,9 @@ void InventoryScreen::renderCraftingTable(float w, float h) {
                containerY + 6.0f * S),
         IM_COL32(55, 55, 55, 255), title);
 
-    auto& inv = *ClientEngine::getInstance()->getInventory();
+    auto* gameForInv2 = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+    if (!gameForInv2) return;
+    auto& inv = *gameForInv2->getInventory();
     const auto& containerSlots = inv.getContainerSlots();
     InvSlot hotbar[9];
     inv.getHotbarSlots(hotbar);
@@ -568,7 +573,7 @@ void InventoryScreen::renderCraftingTable(float w, float h) {
         return -1;
     };
 
-    auto* engine = ClientEngine::getInstance();
+    auto* engine = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
     if (engine) {
         if (isDraggingSlot && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             int hoveredSlot = getCraftSlotAtMouse();
@@ -621,7 +626,7 @@ void InventoryScreen::renderCraftingTable(float w, float h) {
         char btnId[32];
         snprintf(btnId, sizeof(btnId), "##%s", id);
         ImGui::InvisibleButton(btnId, ImVec2(INV_SLOT, INV_SLOT));
-        auto* eng = ClientEngine::getInstance();
+        auto* eng = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
         if (!eng) { ImGui::PopStyleColor(3); return; }
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
             const InvSlot& cursor = inv.getCursorItem();

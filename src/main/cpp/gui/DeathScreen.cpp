@@ -5,6 +5,7 @@
 #include <GLES3/gl3.h>
 #include "imgui.h"
 #include "ClientEngine/ClientEngine.h"
+#include "ClientEngine/GameEngine.h"
 #include "GameUI.h"
 #include "GuiUtils.h"
 
@@ -42,10 +43,10 @@ void DeathScreen::render(int mouseX, int mouseY) {
     ImGui::SetCursorPos(ImVec2(CENTER_X - BTN_W * 0.5f, h * 0.5f));
     if (McButton("重生", ImVec2(BTN_W, BTN_H))) {
         GameUI::getInstance().setDeathScreenActive(false);
-        auto* engine = ClientEngine::getInstance();
-        if (engine) {
-            engine->clearDeathMessage();
-            engine->sendRespawn();
+        auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+        if (game) {
+            game->clearDeathMessage();
+            game->sendRespawn();
         }
     }
 
@@ -53,8 +54,8 @@ void DeathScreen::render(int mouseX, int mouseY) {
     ImGui::SetCursorPos(ImVec2(CENTER_X - BTN_W * 0.5f, h * 0.5f + BTN_H + SPACING));
     if (McButton("标题屏幕", ImVec2(BTN_W, BTN_H))) {
         GameUI::getInstance().setDeathScreenActive(false);
-        if (auto* engine = ClientEngine::getInstance()) {
-            engine->clearDeathMessage();
+        if (auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr) {
+            game->clearDeathMessage();
         }
         if (disconnectCallback) {
             disconnectCallback();

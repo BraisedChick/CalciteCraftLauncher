@@ -11,7 +11,7 @@
 #include <unordered_map>
 
 class AESEncrypter;
-class ClientEngine;
+class GameEngine;
 
 class NetworkManager {
 public:
@@ -30,7 +30,7 @@ public:
     bool isEncrypted() const;
 
     // === 引擎引用（handlers 通过此指针更新游戏状态） ===
-    void setEngine(ClientEngine* engine) { m_engine = engine; }
+    void setEngine(GameEngine* engine) { m_engine = engine; }
 
     // === 主入口（阻塞直到断开连接） ===
     bool run(const std::string& host, int port, const std::string& username);
@@ -42,10 +42,10 @@ public:
     // === PLAY 状态主循环（阻塞直到断开连接） ===
     void startPlayLoop();
 
-    // === Handler 注册表（由 ClientEngine 在登录完成后调用） ===
+    // === Handler 注册表（由 GameEngine 在登录完成后调用） ===
     void registerHandlers();
 
-    // === 区块数据入队（由 WorldHandler 从 ClientEngine 调用） ===
+    // === 区块数据入队（由 WorldHandler 从 GameEngine 调用） ===
     void enqueueChunkData(std::vector<uint8_t> rawData);
 
 private:
@@ -108,5 +108,5 @@ private:
     AESEncrypter* encrypter = nullptr;
 
     // 引擎引用（用于 handlers 更新游戏状态）
-    ClientEngine* m_engine = nullptr;
+    GameEngine* m_engine = nullptr;
 };

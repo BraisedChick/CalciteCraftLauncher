@@ -1,5 +1,5 @@
 #include "NetworkManager/NetworkManager.h"
-#include "ClientEngine/ClientEngine.h"
+#include "ClientEngine/GameEngine.h"
 #include "utils.h"
 #include "PlayerInventory.h"
 #include "BlockRegistry.h"
