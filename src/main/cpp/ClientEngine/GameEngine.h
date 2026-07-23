@@ -16,6 +16,7 @@ class ClientEngine;
 class AESEncrypter;
 class PlayerInventory;
 class EntityManager;
+class Collision;
 
 // 会话引擎：一次服务器连接的完整生命周期
 // 生命周期：连接服务器 → 断开连接
@@ -75,6 +76,7 @@ public:
     PlayerInventory* getInventory() { return m_inventory.get(); }
     EntityManager* getEntityManager() { return m_entityManager.get(); }
     NetworkManager* getNetworkManager() { return net.get(); }
+    Collision* getCollision() { return m_collision.get(); }
 
     // ===== 获取渲染器（通过 ClientEngine 转发） =====
     GLRenderer* getRenderer();
@@ -131,6 +133,7 @@ public:
     std::unique_ptr<NetworkManager> net;
     std::unique_ptr<PlayerInventory> m_inventory;
     std::unique_ptr<EntityManager> m_entityManager;
+    std::unique_ptr<Collision> m_collision;
     mutable std::mutex netMutex;
 
     // 玩家位置（handler 直接写入）

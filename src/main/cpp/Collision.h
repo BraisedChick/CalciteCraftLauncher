@@ -28,10 +28,7 @@ struct AABB {
 
 class Collision {
 public:
-    static Collision& getInstance() {
-        static Collision instance;
-        return instance;
-    }
+    Collision() = default;
 
     void setKeyState(int key, bool pressed);
     void setJoystickInput(float dx, float dy);
@@ -53,8 +50,6 @@ public:
     void setPlayerEntityId(int id) { playerEntityId = id; }
 
 private:
-    Collision();
-
     bool keyW = false;
     bool keyS = false;
     bool keyA = false;

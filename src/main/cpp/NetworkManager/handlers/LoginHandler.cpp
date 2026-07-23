@@ -33,7 +33,7 @@ void NetworkManager::handleLogin(int packetId, const std::vector<uint8_t>& data,
             try {
                 loginPacket.Read(iter, length);
                 m_engine->gameMode = loginPacket.GetGameType();
-                Collision::getInstance().setGameMode(m_engine->gameMode);
+                m_engine->getCollision()->setGameMode(m_engine->gameMode);
                 int playerId = loginPacket.GetPlayerId();
                 m_engine->playerId = playerId;
                 LOGI("Player ID: %d, GameType: %d", playerId, m_engine->gameMode);
@@ -44,7 +44,7 @@ void NetworkManager::handleLogin(int packetId, const std::vector<uint8_t>& data,
                     playerEntity.type = EntityType::PLAYER;
                     m_engine->getEntityManager()->addEntity(playerEntity);
                 }
-                Collision::getInstance().setPlayerEntityId(playerId);
+                m_engine->getCollision()->setPlayerEntityId(playerId);
 
                 // 从 RegistryHolder 解析服务器端 biome 注册表
                 try {
@@ -216,7 +216,7 @@ void NetworkManager::handleLogin(int packetId, const std::vector<uint8_t>& data,
             if (gameEventPacket.GetType() == 3) {
                 int newMode = static_cast<int>(gameEventPacket.GetParam());
                 m_engine->gameMode = newMode;
-                Collision::getInstance().setGameMode(newMode);
+                m_engine->getCollision()->setGameMode(newMode);
             }
             LOGI("gamemode change");
             break;
@@ -235,7 +235,7 @@ void NetworkManager::handleLogin(int packetId, const std::vector<uint8_t>& data,
             respawnPacket.Read(iter, len);
             int newMode = respawnPacket.GetPlayerGameType();
             m_engine->gameMode = newMode;
-            Collision::getInstance().setGameMode(newMode);
+            m_engine->getCollision()->setGameMode(newMode);
 
 #if PROTOCOL_VERSION < 759
             try {

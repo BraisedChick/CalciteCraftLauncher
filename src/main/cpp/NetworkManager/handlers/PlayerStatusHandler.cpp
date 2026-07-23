@@ -74,8 +74,8 @@ void NetworkManager::handlePlayerStatus(int packetId, const std::vector<uint8_t>
             m_engine->hasPosition = true;
 
             {
-                glm::vec3 curPos = Collision::getInstance().getPosition();
-                glm::vec3 curVel = Collision::getInstance().getVelocity();
+                glm::vec3 curPos = m_engine->getCollision()->getPosition();
+                glm::vec3 curVel = m_engine->getCollision()->getVelocity();
                 float diffX = curPos.x - m_engine->playerX;
                 float diffY = curPos.y - m_engine->playerY;
                 float diffZ = curPos.z - m_engine->playerZ;
@@ -89,7 +89,7 @@ void NetworkManager::handlePlayerStatus(int packetId, const std::vector<uint8_t>
 
             CameraController::getInstance().setPosition(m_engine->playerX, m_engine->playerY, m_engine->playerZ);
             CameraController::getInstance().setRotation(m_engine->pitch, m_engine->yaw);
-            Collision::getInstance().setPosition(m_engine->playerX, m_engine->playerY, m_engine->playerZ);
+            m_engine->getCollision()->setPosition(m_engine->playerX, m_engine->playerY, m_engine->playerZ);
 
             m_engine->lastSent.x = m_engine->playerX;
             m_engine->lastSent.y = m_engine->playerY;

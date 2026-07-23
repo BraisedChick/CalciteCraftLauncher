@@ -1,5 +1,7 @@
 #include "CameraController.h"
 #include "Collision.h"
+#include "ClientEngine/ClientEngine.h"
+#include "ClientEngine/GameEngine.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <android/log.h>
 
@@ -12,11 +14,15 @@ CameraController::CameraController()
 }
 
 glm::vec3 CameraController::getPosition() const {
-    return Collision::getInstance().getPosition();
+    auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+    if (!game || !game->getCollision()) return glm::vec3(0.0f, 60.0f, 0.0f);
+    return game->getCollision()->getPosition();
 }
 
 glm::vec3 CameraController::getSmoothPosition() const {
-    return Collision::getInstance().getSmoothPosition();
+    auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+    if (!game || !game->getCollision()) return glm::vec3(0.0f, 60.0f, 0.0f);
+    return game->getCollision()->getSmoothPosition();
 }
 
 float CameraController::getPitch() const {
@@ -30,7 +36,8 @@ float CameraController::getYaw() const {
 }
 
 void CameraController::setPosition(float x, float y, float z) {
-    Collision::getInstance().setPosition(x, y, z);
+    auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+    if (game && game->getCollision()) game->getCollision()->setPosition(x, y, z);
     LOGI("Camera position set to (%.2f, %.2f, %.2f)", x, y, z);
 }
 

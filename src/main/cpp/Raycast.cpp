@@ -2,6 +2,7 @@
 #include "ChunkManager.h"
 #include "BlockRegistry.h"
 #include "ClientEngine/ClientEngine.h"
+#include "ClientEngine/GameEngine.h"
 #include "Collision.h"
 #include <cmath>
 #include <algorithm>
@@ -159,7 +160,9 @@ RaycastResult rayCast(glm::vec3 origin, glm::vec3 direction,
                                  (float)(voxelX + 1), (float)(voxelY + 1), (float)(voxelZ + 1)));
         } else {
             // 普通方块：使用精确碰撞箱
-            boxes = Collision::getInstance().getBlockAABBs(voxelX, voxelY, voxelZ);
+            auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+            if (game && game->getCollision())
+                boxes = game->getCollision()->getBlockAABBs(voxelX, voxelY, voxelZ);
             if (boxes.empty()) {
                 // 无碰撞箱数据，回退到完整方块
                 boxes.push_back(AABB((float)voxelX, (float)voxelY, (float)voxelZ,

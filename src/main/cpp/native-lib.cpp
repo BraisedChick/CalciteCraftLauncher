@@ -68,8 +68,8 @@ static void renderLoop() {
             if (game) {
                 auto* cm = game->getChunkManager();
                 if (cm) {
-                    if (!Collision::getInstance().hasChunkManager()) {
-                        Collision::getInstance().setChunkManager(cm);
+                    if (!game->getCollision()->hasChunkManager()) {
+                        game->getCollision()->setChunkManager(cm);
                         JNI_LOGI("PlayerController: ChunkManager acquired from engine");
                     }
                     Light::getInstance().setChunkManager(cm);
@@ -78,7 +78,7 @@ static void renderLoop() {
 
             // 背包/菜单/死亡界面打开时，重置移动输入但不中断物理（玩家仍受重力下落）
             if (game && GameUI::getInstance().isInGameUIActive()) {
-                Collision::getInstance().resetMovement();
+                game->getCollision()->resetMovement();
             }
 
             // 更新玩家物理（传入视角方向计算移动）
@@ -86,7 +86,7 @@ static void renderLoop() {
             float camYaw = CameraController::getInstance().getYaw();
             glm::vec3 physPos;
             bool onGround = false;
-            Collision::getInstance().update(deltaTime, camPitch, camYaw, &physPos, &onGround);
+            game->getCollision()->update(deltaTime, camPitch, camYaw, &physPos, &onGround);
 
             // 发送玩家移动数据包到服务器（使用精确物理位置，已原子读取，无竞态）
             if (game) {
@@ -344,7 +344,7 @@ Java_com_calcite_MainActivity_initRenderer(
                 JNI_LOGI("Render thread in safe branch, cleaning up game engine");
 
                 // 3. 清除单例中指向会话内部对象的裸指针
-                Collision::getInstance().setChunkManager(nullptr);
+                // Collision 由 GameEngine 持有，析构时自动清理
                 Light::getInstance().setChunkManager(nullptr);
 
                 if (client->getRenderer()) {
@@ -467,7 +467,8 @@ Java_com_calcite_MainActivity_setKeyState(
         JNIEnv* env, jobject thiz,
         jint key, jboolean pressed) {
 
-    Collision::getInstance().setKeyState((int)key, (bool)pressed);
+    auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+    if (game && game->getCollision()) game->getCollision()->setKeyState((int)key, (bool)pressed);
 }
 
 extern "C" JNIEXPORT void JNICALL

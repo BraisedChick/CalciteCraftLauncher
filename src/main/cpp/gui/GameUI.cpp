@@ -585,7 +585,8 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
                 if (game) game->sendContainerClose();
             }
             closeContainer();
-            Collision::getInstance().resetMovement();
+            auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+            if (game && game->getCollision()) game->getCollision()->resetMovement();
             return;
         }
         queueTouchEvent(x, y, action);
@@ -601,15 +602,18 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
             handleJoystickTouch(pointerId, x, y, action);
         } else if (!isRoleTaken(TouchPoint::UP_BUTTON) && isInUpButtonArea(x, y)) {
             pt->role = TouchPoint::UP_BUTTON;
-            Collision::getInstance().setKeyState(GAMEKEY_UP, true);
+            auto* col = (ClientEngine::getInstance() && ClientEngine::getInstance()->getGame()) ? ClientEngine::getInstance()->getGame()->getCollision() : nullptr;
+            if (col) col->setKeyState(GAMEKEY_UP, true);
             buttons.upPressed = true;
         } else if (!isRoleTaken(TouchPoint::DOWN_BUTTON) && isInDownButtonArea(x, y)) {
             pt->role = TouchPoint::DOWN_BUTTON;
-            Collision::getInstance().setKeyState(GAMEKEY_DOWN, true);
+            auto* col = (ClientEngine::getInstance() && ClientEngine::getInstance()->getGame()) ? ClientEngine::getInstance()->getGame()->getCollision() : nullptr;
+            if (col) col->setKeyState(GAMEKEY_DOWN, true);
             buttons.downPressed = true;
         } else if (!isRoleTaken(TouchPoint::SPRINT_BUTTON) && isInSprintButtonArea(x, y)) {
             pt->role = TouchPoint::SPRINT_BUTTON;
-            Collision::getInstance().setKeyState(GAMEKEY_SPRINT, true);
+            auto* col = (ClientEngine::getInstance() && ClientEngine::getInstance()->getGame()) ? ClientEngine::getInstance()->getGame()->getCollision() : nullptr;
+            if (col) col->setKeyState(GAMEKEY_SPRINT, true);
             buttons.sprintPressed = !buttons.sprintPressed;
         } else if (!isRoleTaken(TouchPoint::ATTACK_BUTTON) && isInAttackButtonArea(x, y)) {
             pt->role = TouchPoint::ATTACK_BUTTON;
@@ -637,7 +641,8 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
             } else {
                 inventoryOpen = true;
             }
-            Collision::getInstance().resetMovement();
+            auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+            if (game && game->getCollision()) game->getCollision()->resetMovement();
         } else if (currentState == UIState::IN_GAME) {
             int hbSlot = hotbarSlotAt(x, y);
             if (hbSlot >= 0) {
@@ -668,12 +673,16 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
         switch (pt->role) {
             case TouchPoint::JOYSTICK: handleJoystickTouch(pointerId, x, y, action); break;
             case TouchPoint::CAMERA: break;
-            case TouchPoint::UP_BUTTON:
-                Collision::getInstance().setKeyState(GAMEKEY_UP, false);
+            case TouchPoint::UP_BUTTON: {
+                auto* col2 = (ClientEngine::getInstance() && ClientEngine::getInstance()->getGame()) ? ClientEngine::getInstance()->getGame()->getCollision() : nullptr;
+                if (col2) col2->setKeyState(GAMEKEY_UP, false);
                 buttons.upPressed = false; break;
-            case TouchPoint::DOWN_BUTTON:
-                Collision::getInstance().setKeyState(GAMEKEY_DOWN, false);
+            }
+            case TouchPoint::DOWN_BUTTON: {
+                auto* col2 = (ClientEngine::getInstance() && ClientEngine::getInstance()->getGame()) ? ClientEngine::getInstance()->getGame()->getCollision() : nullptr;
+                if (col2) col2->setKeyState(GAMEKEY_DOWN, false);
                 buttons.downPressed = false; break;
+            }
             case TouchPoint::SPRINT_BUTTON: break;
             case TouchPoint::ATTACK_BUTTON:
                 buttons.attackPressed = false;
@@ -691,6 +700,8 @@ void GameUI::handleJoystickTouch(int pointerId, float x, float y, int action) {
     ImGuiIO& io = ImGui::GetIO();
     float jx = JOYSTICK_CENTER_X;
     float jy = io.DisplaySize.y - JOYSTICK_CENTER_Y_OFFSET;
+    auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+    auto* col = (game && game->getCollision()) ? game->getCollision() : nullptr;
     switch (action) {
         case 0: {
             joystick.active = true;
@@ -698,7 +709,7 @@ void GameUI::handleJoystickTouch(int pointerId, float x, float y, int action) {
             float dist = sqrtf(dx * dx + dy * dy);
             if (dist > JOYSTICK_MAX_DIST) { dx = dx / dist * JOYSTICK_MAX_DIST; dy = dy / dist * JOYSTICK_MAX_DIST; }
             joystick.knobX = dx; joystick.knobY = dy;
-            Collision::getInstance().setJoystickInput(dx / JOYSTICK_MAX_DIST, dy / JOYSTICK_MAX_DIST);
+            if (col) col->setJoystickInput(dx / JOYSTICK_MAX_DIST, dy / JOYSTICK_MAX_DIST);
             break;
         }
         case 2: {
@@ -707,13 +718,13 @@ void GameUI::handleJoystickTouch(int pointerId, float x, float y, int action) {
                 float dist = sqrtf(dx * dx + dy * dy);
                 if (dist > JOYSTICK_MAX_DIST) { dx = dx / dist * JOYSTICK_MAX_DIST; dy = dy / dist * JOYSTICK_MAX_DIST; }
                 joystick.knobX = dx; joystick.knobY = dy;
-                Collision::getInstance().setJoystickInput(dx / JOYSTICK_MAX_DIST, dy / JOYSTICK_MAX_DIST);
+                if (col) col->setJoystickInput(dx / JOYSTICK_MAX_DIST, dy / JOYSTICK_MAX_DIST);
             }
             break;
         }
         case 1: case 3:
             joystick.active = false; joystick.knobX = 0; joystick.knobY = 0;
-            Collision::getInstance().setJoystickInput(0, 0); break;
+            if (col) col->setJoystickInput(0, 0); break;
     }
 }
 

@@ -20,11 +20,6 @@
 #define KEY_DOWN 5
 #define KEY_SPRINT 6
 
-Collision::Collision() {
-    LOGI("Collision initialized at (%.2f, %.2f, %.2f)",
-         position.x, position.y, position.z);
-}
-
 void Collision::setChunkManager(ChunkManager* mgr) {
     std::lock_guard<std::mutex> lock(mutex);
     chunkManager = mgr;
