@@ -567,6 +567,7 @@ bool GLRenderer::createEGLContext(ANativeWindow* window) {
         LOGE("Failed to choose EGL config");
         return false;
     }
+    eglConfig = config;  // 保存，用于后续 Surface 重建
 
     EGLint contextAttribs[] = {
             EGL_CONTEXT_CLIENT_VERSION, 3,
@@ -1305,6 +1306,15 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         return;
     }
 
+    // 处理挂起的 Surface 释放/重建请求（必须在持有 context 的渲染线程执行）
+    processSurfaceRequests();
+
+    // Surface 无效时跳过渲染（切屏中，等待重建）
+    if (surface == EGL_NO_SURFACE) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        return;
+    }
+
     // 保存当前帧的相机位置（供 rebuildMeshFromChunks 等使用）
     lastCameraX = cx;
     lastCameraY = cy;
@@ -1841,6 +1851,112 @@ void GLRenderer::limitFramerate() {
     clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &frameTimeBase, nullptr);
 }
 
+void GLRenderer::requestSurfaceRelease() {
+    // JNI/UI 线程调用：将释放请求交给渲染线程（context 持有者）执行，
+    // 并阻塞等待，确保返回 Android 前 EGL Surface 已真正销毁（避免悬空的 ANativeWindow）。
+    std::unique_lock<std::mutex> lk(surfaceReqMutex);
+    surfaceReleaseReq = true;
+    surfaceReqHandled = false;
+    // 带超时等待，防止渲染线程已停止时死锁
+    surfaceReqCV.wait_for(lk, std::chrono::milliseconds(500), [this]{ return surfaceReqHandled; });
+}
+
+void GLRenderer::requestSurfaceRecreate(ANativeWindow* window) {
+    // JNI/UI 线程调用：转移 window 所有权给渲染线程（后者处理完后负责 release）。
+    // 重建无需阻塞：surfaceChanged 返回后新 Surface 仍然有效。
+    std::lock_guard<std::mutex> lk(surfaceReqMutex);
+    // 若已有未消费的重建请求，先释放旧 window ref
+    if (surfaceRecreateReqWindow) {
+        ANativeWindow_release(surfaceRecreateReqWindow);
+    }
+    surfaceRecreateReqWindow = window;  // 所有权转移
+    surfaceReleaseReq = false;          // 重建优先，取消待处理的释放
+}
+
+void GLRenderer::processSurfaceRequests() {
+    // 渲染线程调用（持有 EGL context）：执行挂起的 Surface 释放/重建。
+    ANativeWindow* recreateWindow = nullptr;
+    bool doRelease = false;
+    {
+        std::lock_guard<std::mutex> lk(surfaceReqMutex);
+        recreateWindow = surfaceRecreateReqWindow;
+        surfaceRecreateReqWindow = nullptr;
+        doRelease = surfaceReleaseReq;
+    }
+
+    if (recreateWindow) {
+        // 切回：在渲染线程上用新 window 重建 Surface（内部会 eglMakeCurrent 重新绑定）
+        recreateSurface(recreateWindow);
+        ANativeWindow_release(recreateWindow);
+        std::lock_guard<std::mutex> lk(surfaceReqMutex);
+        surfaceReleaseReq = false;
+        surfaceReqHandled = true;
+        surfaceReqCV.notify_all();
+    } else if (doRelease) {
+        // 切出：在渲染线程上解绑并销毁 Surface
+        releaseSurface();
+        std::lock_guard<std::mutex> lk(surfaceReqMutex);
+        surfaceReleaseReq = false;
+        surfaceReqHandled = true;
+        surfaceReqCV.notify_all();
+    }
+}
+
+void GLRenderer::releaseSurface() {
+    if (display == EGL_NO_DISPLAY) return;
+
+    // 解绑当前上下文
+    eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+
+    if (surface != EGL_NO_SURFACE) {
+        eglDestroySurface(display, surface);
+        surface = EGL_NO_SURFACE;
+        LOGI("EGL Surface released (context preserved)");
+    }
+}
+
+bool GLRenderer::recreateSurface(ANativeWindow* window) {
+    if (display == EGL_NO_DISPLAY || context == EGL_NO_CONTEXT) {
+        LOGE("Cannot recreate surface: display or context invalid");
+        return false;
+    }
+
+    // 如果旧 Surface 还在，先释放
+    if (surface != EGL_NO_SURFACE) {
+        releaseSurface();
+    }
+
+    // 重新创建 Surface
+    surface = eglCreateWindowSurface(display, eglConfig, window, nullptr);
+    if (surface == EGL_NO_SURFACE) {
+        LOGE("Failed to recreate EGL surface: 0x%x", eglGetError());
+        return false;
+    }
+
+    // 重新绑定上下文
+    if (!eglMakeCurrent(display, surface, surface, context)) {
+        LOGE("Failed to make current after surface recreation: 0x%x", eglGetError());
+        eglDestroySurface(display, surface);
+        surface = EGL_NO_SURFACE;
+        return false;
+    }
+
+    // 更新窗口尺寸
+    screenWidth = ANativeWindow_getWidth(window);
+    screenHeight = ANativeWindow_getHeight(window);
+    glViewport(0, 0, screenWidth, screenHeight);
+
+    // 更新 ImGui 尺寸
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2((float)screenWidth, (float)screenHeight);
+
+    // 重置限帧基准（Surface 重建后时间线不连续）
+    frameTimeBaseValid = false;
+
+    LOGI("EGL Surface recreated: %dx%d", screenWidth, screenHeight);
+    return true;
+}
+
 void GLRenderer::recreateSurface(int width, int height) {
     screenWidth = width;
     screenHeight = height;
@@ -2211,6 +2327,7 @@ void GLRenderer::cleanup() {
 
         eglTerminate(display);
         display = EGL_NO_DISPLAY;
+        eglConfig = nullptr;
     }
 
     // 关闭 ImGui

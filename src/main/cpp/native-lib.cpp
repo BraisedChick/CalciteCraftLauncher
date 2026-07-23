@@ -404,7 +404,25 @@ Java_com_calcite_MainActivity_cleanupRenderer(
     // 2. 使 EGL context 在当前线程活跃，才能安全删除 GL 资源
     GLRenderer* glRenderer = ClientEngine::getInstance() ? ClientEngine::getInstance()->getRenderer() : nullptr;
     if (glRenderer) {
-        glRenderer->makeCurrent();
+        if (glRenderer->hasValidSurface()) {
+            glRenderer->makeCurrent();
+        } else {
+            // Surface 已释放（切屏后退出），创建临时 pbuffer 让 context 可用
+            JNI_LOGI("Surface already released, creating temp pbuffer for cleanup");
+            EGLConfig config = glRenderer->getEGLConfig();
+            EGLDisplay disp = glRenderer->getEGLDisplay();
+            EGLContext ctx = glRenderer->getEGLContext();
+            if (disp != EGL_NO_DISPLAY && ctx != EGL_NO_CONTEXT && config) {
+                EGLint pbufAttribs[] = { EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE };
+                EGLSurface tempSurface = eglCreatePbufferSurface(disp, config, pbufAttribs);
+                if (tempSurface != EGL_NO_SURFACE) {
+                    eglMakeCurrent(disp, tempSurface, tempSurface, ctx);
+                    JNI_LOGI("Temp pbuffer created and context made current");
+                } else {
+                    JNI_LOGE("Failed to create temp pbuffer: 0x%x", eglGetError());
+                }
+            }
+        }
     }
 
     // 3. 清除 GL 纹理缓存（现在 context 是当前的，glDeleteTextures 有效）
@@ -429,6 +447,46 @@ Java_com_calcite_MainActivity_cleanupRenderer(
     MusicManager::getInstance().shutdown();
 
     JNI_LOGI("Cleanup completed");
+}
+
+// 切屏出去时调用（请求释放 Surface，不销毁引擎）
+// 注意：EGL context 绑定在渲染线程，此处仅发起请求，实际释放由渲染线程执行
+extern "C" JNIEXPORT void JNICALL
+Java_com_calcite_MainActivity_onSurfaceReleased(
+        JNIEnv* env, jobject thiz) {
+    JNI_LOGI("onSurfaceReleased: requesting EGL Surface release");
+    auto* client = ClientEngine::getInstance();
+    if (client) {
+        auto* renderer = client->getRenderer();
+        if (renderer) {
+            renderer->requestSurfaceRelease();
+        }
+    }
+    // 渲染线程继续运行，render() 内部检测到 Surface 无效会跳过
+}
+
+// 切屏回来时调用（请求重建 Surface）
+// 注意：EGL context 绑定在渲染线程，此处仅发起请求并转移 window 所有权
+extern "C" JNIEXPORT void JNICALL
+Java_com_calcite_MainActivity_onSurfaceRecreated(
+        JNIEnv* env, jobject thiz, jobject surface) {
+    JNI_LOGI("onSurfaceRecreated: requesting EGL Surface recreation");
+    if (!surface) return;
+
+    ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
+    if (!window) return;
+
+    auto* client = ClientEngine::getInstance();
+    if (client) {
+        auto* renderer = client->getRenderer();
+        if (renderer) {
+            renderer->requestSurfaceRecreate(window);  // 所有权转移，渲染线程处理完负责 release
+            return;
+        }
+    }
+
+    // 没有 renderer 时直接释放，避免泄露
+    ANativeWindow_release(window);
 }
 
 extern "C" JNIEXPORT void JNICALL

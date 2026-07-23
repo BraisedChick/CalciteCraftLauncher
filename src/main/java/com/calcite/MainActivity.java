@@ -214,6 +214,12 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        // 应用真正退出，完全清理 native 资源
+        try {
+            cleanupRenderer();
+        } catch (Exception e) {
+            android.util.Log.e("MainActivity", "Exception in cleanupRenderer", e);
+        }
         if (logcatProcess != null) {
             logcatProcess.destroy();
             logcatProcess = null;
@@ -354,6 +360,8 @@ public class MainActivity extends Activity {
     private native boolean onBackPressedNative();
     native void addImGuiCharacter(int c);
     private native void setKeyState(int key, boolean pressed);
+    private native void onSurfaceReleased();
+    private native void onSurfaceRecreated(android.view.Surface surface);
 
     // ImGui 键盘显示/隐藏（从 C++ 渲染线程调用）
     public void showKeyboardImGui(final boolean show) {
@@ -448,9 +456,17 @@ public class MainActivity extends Activity {
 
     public void onVulkanSurfaceDestroyed() {
         try {
-            cleanupRenderer();
+            onSurfaceReleased();
         } catch (Exception e) {
-            android.util.Log.e("MainActivity", "Exception in cleanupRenderer", e);
+            android.util.Log.e("MainActivity", "Exception in onSurfaceReleased", e);
+        }
+    }
+
+    public void nativeSurfaceRecreated(android.view.Surface surface) {
+        try {
+            onSurfaceRecreated(surface);
+        } catch (Exception e) {
+            android.util.Log.e("MainActivity", "Exception in onSurfaceRecreated", e);
         }
     }
 

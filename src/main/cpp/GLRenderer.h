@@ -50,7 +50,19 @@ public:
     bool initialize(ANativeWindow* window);
     void cleanup();
     void render(float cameraX, float cameraY, float cameraZ, float pitch, float yaw);
-    void recreateSurface(int width, int height);
+    void recreateSurface(int width, int height);  // 窗口尺寸变化（仅更新 viewport）
+
+    // Surface 生命周期分离（切屏不闪退）
+    // 注意：EGL context 绑定线程唯一，实际的 EGL 操作必须在持有 context 的渲染线程执行。
+    // JNI/UI 线程只能通过 request* 接口发起请求，由渲染线程在 processSurfaceRequests() 中执行。
+    void requestSurfaceRelease();                   // JNI线程：请求释放 Surface（阻塞直到渲染线程完成）
+    void requestSurfaceRecreate(ANativeWindow* window); // JNI线程：请求重建 Surface（转移 window 所有权）
+    void releaseSurface();                          // 渲染线程：释放 Surface，保留 Context
+    bool recreateSurface(ANativeWindow* window);    // 渲染线程：用新 Window 重建 Surface
+    bool hasValidSurface() const { return surface != EGL_NO_SURFACE; }
+    EGLConfig getEGLConfig() const { return eglConfig; }
+    EGLDisplay getEGLDisplay() const { return display; }
+    EGLContext getEGLContext() const { return context; }
 
     void updateCamera(float cameraX, float cameraY, float cameraZ, float pitch, float yaw);
     void makeCurrent();
@@ -197,6 +209,7 @@ private:
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLContext context = EGL_NO_CONTEXT;
     EGLSurface surface = EGL_NO_SURFACE;
+    EGLConfig eglConfig = nullptr;  // 保存，用于 Surface 重建
 
     GLuint textureArrayID = 0;  // 纹理数组（替代单个 textureID）
     GLuint lightmapTextureID = 0;  // 光照贴图纹理（Sampler2，默认白色=全亮）
@@ -240,6 +253,14 @@ private:
     static constexpr long long NANOSECONDS_PER_SECOND = 1000000000LL;
 
     void limitFramerate();
+
+    // ===== Surface 生命周期跨线程请求（JNI线程发起，渲染线程执行）=====
+    void processSurfaceRequests();  // 渲染线程调用：执行挂起的释放/重建请求
+    std::mutex surfaceReqMutex;
+    std::condition_variable surfaceReqCV;
+    bool surfaceReleaseReq = false;              // 待处理的释放请求
+    ANativeWindow* surfaceRecreateReqWindow = nullptr;  // 待处理的重建请求（持有一个 ref）
+    bool surfaceReqHandled = false;              // 渲染线程处理完成标志
 
     // ===== 区块合批渲染优化 =====
     struct SectionRenderData {

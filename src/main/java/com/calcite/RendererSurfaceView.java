@@ -149,16 +149,17 @@ public class RendererSurfaceView extends SurfaceView implements SurfaceHolder.Ca
                     Log.w(TAG, "Surface invalid or already initialized, skipping");
                 }
             }, 100);
-        } else if (isRendererInitialized) {
-            Log.i(TAG, "Renderer already initialized, calling resize");
-            activity.onSurfaceChanged(width, height);
+        } else if (isRendererInitialized && holder.getSurface().isValid() && width > 0 && height > 0) {
+            // Surface 重建（切屏回来），用新 Surface 重建 EGL Surface
+            Log.i(TAG, "Renderer already initialized, recreating EGL Surface");
+            activity.nativeSurfaceRecreated(holder.getSurface());
         }
     }
 
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
-        Log.i(TAG, "=== surfaceDestroyed ===");
-        isRendererInitialized = false;
-        activity.onVulkanSurfaceDestroyed();
+        Log.i(TAG, "=== surfaceDestroyed: releasing EGL Surface ===");
+        // 不重置 isRendererInitialized，保留引擎/渲染器状态
+        activity.onVulkanSurfaceDestroyed();  // 调用 onSurfaceReleased
     }
 }
