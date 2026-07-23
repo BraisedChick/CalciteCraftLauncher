@@ -308,48 +308,59 @@ void Collision::tick() {
         }
 
         // 自动踏步：在地面上且被阻挡时，尝试抬腿
+        // 关键：先算出需要踏上的实际高度（阻挡方块顶面），只抬这么高再测头顶净空，
+        // 避免总是抬满 STEP_HEIGHT 导致头顶有方块时无法踏上矮台阶（如 0.125 高的雪片）
         if (onGround && fabsf(velocity.x) < fabsf(desiredVelX) - 1e-7f) {
-            position.y = origY + STEP_HEIGHT;
-            bool stepClear = true;
-            AABB stepBox = getPlayerAABB().offset(desiredVelX, 0.0f, 0.0f);
-            int sminBX = (int)floorf(stepBox.minX);
-            int smaxBX = (int)floorf(stepBox.maxX + 1e-5f);
-            int sminBY = (int)floorf(stepBox.minY);
-            int smaxBY = (int)floorf(stepBox.maxY + 1e-5f);
-            int sminBZ = (int)floorf(stepBox.minZ);
-            int smaxBZ = (int)floorf(stepBox.maxZ + 1e-5f);
-            for (int by = sminBY; by <= smaxBY && stepClear; by++) {
-                for (int bz = sminBZ; bz <= smaxBZ && stepClear; bz++) {
-                    for (int bx = sminBX; bx <= smaxBX && stepClear; bx++) {
+            // 1. 探测水平目标位置需要踏上的最高方块顶面（限制在 STEP_HEIGHT 内）
+            AABB probeBox = getPlayerAABB().offset(desiredVelX, 0.0f, 0.0f);
+            int pminBX = (int)floorf(probeBox.minX);
+            int pmaxBX = (int)floorf(probeBox.maxX + 1e-5f);
+            int pminBZ = (int)floorf(probeBox.minZ);
+            int pmaxBZ = (int)floorf(probeBox.maxZ + 1e-5f);
+            float newGround = origY;
+            for (int by = (int)floorf(origY); by <= (int)floorf(origY + STEP_HEIGHT); by++) {
+                for (int bz = pminBZ; bz <= pmaxBZ; bz++) {
+                    for (int bx = pminBX; bx <= pmaxBX; bx++) {
                         auto blockBoxes = getBlockAABBs(bx, by, bz);
-                        for (const auto& blockBox : blockBoxes) {
-                            if (stepBox.intersects(blockBox)) { stepClear = false; break; }
-                        }
-                        if (!stepClear) break;
-                    }
-                }
-            }
-            if (stepClear) {
-                // 找到目标位置的实际地面高度，精确落在地面上
-                float newGround = origY;
-                for (int by = (int)floorf(origY); by <= (int)floorf(origY + STEP_HEIGHT); by++) {
-                    for (int bz = sminBZ; bz <= smaxBZ; bz++) {
-                        for (int bx = sminBX; bx <= smaxBX; bx++) {
-                            auto blockBoxes = getBlockAABBs(bx, by, bz);
-                            for (const auto& ab : blockBoxes) {
-                                float top = ab.maxY;
-                                if (top > newGround && top <= origY + STEP_HEIGHT + 1e-4f) {
-                                    newGround = top;
-                                }
+                        for (const auto& ab : blockBoxes) {
+                            float top = ab.maxY;
+                            if (top > newGround + 1e-4f && top <= origY + STEP_HEIGHT + 1e-4f) {
+                                newGround = top;
                             }
                         }
                     }
                 }
-                velocity.x = desiredVelX;
-                steppedUp = true;
+            }
+
+            // 2. 确实有可踏方块时，只抬到该高度并测试整体净空（含头顶）
+            if (newGround > origY + 1e-4f) {
                 position.y = newGround;
-            } else {
-                position.y = origY;
+                bool stepClear = true;
+                AABB stepBox = getPlayerAABB().offset(desiredVelX, 0.0f, 0.0f);
+                int sminBX = (int)floorf(stepBox.minX);
+                int smaxBX = (int)floorf(stepBox.maxX + 1e-5f);
+                int sminBY = (int)floorf(stepBox.minY);
+                int smaxBY = (int)floorf(stepBox.maxY + 1e-5f);
+                int sminBZ = (int)floorf(stepBox.minZ);
+                int smaxBZ = (int)floorf(stepBox.maxZ + 1e-5f);
+                for (int by = sminBY; by <= smaxBY && stepClear; by++) {
+                    for (int bz = sminBZ; bz <= smaxBZ && stepClear; bz++) {
+                        for (int bx = sminBX; bx <= smaxBX && stepClear; bx++) {
+                            auto blockBoxes = getBlockAABBs(bx, by, bz);
+                            for (const auto& blockBox : blockBoxes) {
+                                if (stepBox.intersects(blockBox)) { stepClear = false; break; }
+                            }
+                            if (!stepClear) break;
+                        }
+                    }
+                }
+                if (stepClear) {
+                    velocity.x = desiredVelX;
+                    steppedUp = true;
+                    // position.y 已为 newGround
+                } else {
+                    position.y = origY;
+                }
             }
         }
 
@@ -390,47 +401,57 @@ void Collision::tick() {
         }
 
         // 自动踏步：仅当 X 轴未踏步时尝试（否则 Y 已被抬高，Z 在已抬高位置重测过）
+        // 同 X 轴：先算实际踏步高度，只抬这么高再测净空，避免头顶有方块时踏不上矮台阶
         if (onGround && !steppedUp && fabsf(velocity.z) < fabsf(desiredVelZ) - 1e-7f) {
-            position.y = origY + STEP_HEIGHT;
-            bool stepClear = true;
-            AABB stepBox = getPlayerAABB().offset(0.0f, 0.0f, desiredVelZ);
-            int sminBX = (int)floorf(stepBox.minX);
-            int smaxBX = (int)floorf(stepBox.maxX + 1e-5f);
-            int sminBY = (int)floorf(stepBox.minY);
-            int smaxBY = (int)floorf(stepBox.maxY + 1e-5f);
-            int sminBZ = (int)floorf(stepBox.minZ);
-            int smaxBZ = (int)floorf(stepBox.maxZ + 1e-5f);
-            for (int by = sminBY; by <= smaxBY && stepClear; by++) {
-                for (int bz = sminBZ; bz <= smaxBZ && stepClear; bz++) {
-                    for (int bx = sminBX; bx <= smaxBX && stepClear; bx++) {
+            // 1. 探测水平目标位置需要踏上的最高方块顶面（限制在 STEP_HEIGHT 内）
+            AABB probeBox = getPlayerAABB().offset(0.0f, 0.0f, desiredVelZ);
+            int pminBX = (int)floorf(probeBox.minX);
+            int pmaxBX = (int)floorf(probeBox.maxX + 1e-5f);
+            int pminBZ = (int)floorf(probeBox.minZ);
+            int pmaxBZ = (int)floorf(probeBox.maxZ + 1e-5f);
+            float newGround = origY;
+            for (int by = (int)floorf(origY); by <= (int)floorf(origY + STEP_HEIGHT); by++) {
+                for (int bz = pminBZ; bz <= pmaxBZ; bz++) {
+                    for (int bx = pminBX; bx <= pmaxBX; bx++) {
                         auto blockBoxes = getBlockAABBs(bx, by, bz);
-                        for (const auto& blockBox : blockBoxes) {
-                            if (stepBox.intersects(blockBox)) { stepClear = false; break; }
-                        }
-                        if (!stepClear) break;
-                    }
-                }
-            }
-            if (stepClear) {
-                // 找到目标位置的实际地面高度
-                float newGround = origY;
-                for (int by = (int)floorf(origY); by <= (int)floorf(origY + STEP_HEIGHT); by++) {
-                    for (int bz = sminBZ; bz <= smaxBZ; bz++) {
-                        for (int bx = sminBX; bx <= smaxBX; bx++) {
-                            auto blockBoxes = getBlockAABBs(bx, by, bz);
-                            for (const auto& ab : blockBoxes) {
-                                float top = ab.maxY;
-                                if (top > newGround && top <= origY + STEP_HEIGHT + 1e-4f) {
-                                    newGround = top;
-                                }
+                        for (const auto& ab : blockBoxes) {
+                            float top = ab.maxY;
+                            if (top > newGround + 1e-4f && top <= origY + STEP_HEIGHT + 1e-4f) {
+                                newGround = top;
                             }
                         }
                     }
                 }
-                velocity.z = desiredVelZ;
+            }
+
+            // 2. 确实有可踏方块时，只抬到该高度并测试整体净空（含头顶）
+            if (newGround > origY + 1e-4f) {
                 position.y = newGround;
-            } else {
-                position.y = origY;
+                bool stepClear = true;
+                AABB stepBox = getPlayerAABB().offset(0.0f, 0.0f, desiredVelZ);
+                int sminBX = (int)floorf(stepBox.minX);
+                int smaxBX = (int)floorf(stepBox.maxX + 1e-5f);
+                int sminBY = (int)floorf(stepBox.minY);
+                int smaxBY = (int)floorf(stepBox.maxY + 1e-5f);
+                int sminBZ = (int)floorf(stepBox.minZ);
+                int smaxBZ = (int)floorf(stepBox.maxZ + 1e-5f);
+                for (int by = sminBY; by <= smaxBY && stepClear; by++) {
+                    for (int bz = sminBZ; bz <= smaxBZ && stepClear; bz++) {
+                        for (int bx = sminBX; bx <= smaxBX && stepClear; bx++) {
+                            auto blockBoxes = getBlockAABBs(bx, by, bz);
+                            for (const auto& blockBox : blockBoxes) {
+                                if (stepBox.intersects(blockBox)) { stepClear = false; break; }
+                            }
+                            if (!stepClear) break;
+                        }
+                    }
+                }
+                if (stepClear) {
+                    velocity.z = desiredVelZ;
+                    // position.y 已为 newGround
+                } else {
+                    position.y = origY;
+                }
             }
         }
 
