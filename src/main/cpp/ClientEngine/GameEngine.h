@@ -18,6 +18,7 @@ class PlayerInventory;
 class EntityManager;
 class Collision;
 class Light;
+class Raycast;
 
 // 会话引擎：一次服务器连接的完整生命周期
 // 生命周期：连接服务器 → 断开连接
@@ -79,6 +80,7 @@ public:
     NetworkManager* getNetworkManager() { return net.get(); }
     Collision* getCollision() { return m_collision.get(); }
     Light* getLight() { return m_light.get(); }
+    Raycast* getRaycast() const { return m_raycast.get(); }
 
     // ===== 获取渲染器（通过 ClientEngine 转发） =====
     GLRenderer* getRenderer();
@@ -196,4 +198,7 @@ private:
 
     // AES 加密器
     std::unique_ptr<AESEncrypter> aesEncrypter;
+
+    // 射线检测器（注入 this，惰性访问 chunk/entity/collision/BlockRegistry）
+    std::unique_ptr<Raycast> m_raycast;
 };

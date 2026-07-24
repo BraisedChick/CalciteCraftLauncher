@@ -9,6 +9,8 @@
 #include <cmath>
 #include <algorithm>
 
+Raycast::Raycast(GameEngine* engine) : m_engine(engine) {}
+
 // 射线与 AABB 相交测试（返回进入和离开距离，不相交则返回 false）
 static bool rayIntersectAABB(
     const glm::vec3& origin, const glm::vec3& invDir,
@@ -59,9 +61,12 @@ static int8_t determineHitFace(const glm::vec3& origin, const glm::vec3& dir,
     }
 }
 
-RaycastResult rayCast(glm::vec3 origin, glm::vec3 direction,
-                      float maxDist, const ChunkManager& chunkManager) {
+RaycastResult Raycast::rayCast(glm::vec3 origin, glm::vec3 direction, float maxDist) {
     RaycastResult result;
+
+    ChunkManager* cmPtr = m_engine ? m_engine->getChunkManager() : nullptr;
+    if (!cmPtr) return result;
+    const ChunkManager& chunkManager = *cmPtr;
 
     // 方向归一化
     float dirLen = glm::length(direction);
@@ -151,7 +156,7 @@ RaycastResult rayCast(glm::vec3 origin, glm::vec3 direction,
         uint32_t state = chunk->getBlockState(localX, voxelY, localZ);
         if (state == 0) continue;
 
-        const auto& meta = ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata((int32_t)state);
+        const auto& meta = m_engine->getClient()->getBlockRegistry()->getBlockMetadata((int32_t)state);
         if (meta.isAir) continue;
 
         // 获取方块的碰撞箱
@@ -162,9 +167,9 @@ RaycastResult rayCast(glm::vec3 origin, glm::vec3 direction,
                                  (float)(voxelX + 1), (float)(voxelY + 1), (float)(voxelZ + 1)));
         } else {
             // 普通方块：使用精确碰撞箱
-            auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
-            if (game && game->getCollision())
-                boxes = game->getCollision()->getBlockAABBs(voxelX, voxelY, voxelZ);
+            Collision* col = m_engine->getCollision();
+            if (col)
+                boxes = col->getBlockAABBs(voxelX, voxelY, voxelZ);
             if (boxes.empty()) {
                 // 无碰撞箱数据，回退到完整方块
                 boxes.push_back(AABB((float)voxelX, (float)voxelY, (float)voxelZ,
@@ -193,7 +198,7 @@ RaycastResult rayCast(glm::vec3 origin, glm::vec3 direction,
 }
 
 // 计算摄像机眼睛位置和朝向向量
-static void getCameraEyeRay(glm::vec3& eyePos, glm::vec3& dir) {
+void Raycast::getCameraEyeRay(glm::vec3& eyePos, glm::vec3& dir) const {
     auto& cam = CameraController::getInstance();
     eyePos = cam.getPosition() + glm::vec3(0.0f, 1.62f, 0.0f);
     float pitch = cam.getPitch(), yaw = cam.getYaw();
@@ -202,17 +207,20 @@ static void getCameraEyeRay(glm::vec3& eyePos, glm::vec3& dir) {
     dir.z = std::cos(yaw) * std::cos(pitch);
 }
 
-RaycastResult rayCastFromCamera(float maxDist, const ChunkManager& chunkManager) {
+RaycastResult Raycast::rayCastFromCamera(float maxDist) {
     glm::vec3 eyePos, dir;
     getCameraEyeRay(eyePos, dir);
-    return rayCast(eyePos, dir, maxDist, chunkManager);
+    return rayCast(eyePos, dir, maxDist);
 }
 
-int rayCastEntity(float maxDist, const EntityManager& entityManager, int excludeEntityId) {
+int Raycast::rayCastEntity(float maxDist, int excludeEntityId) {
+    EntityManager* em = m_engine ? m_engine->getEntityManager() : nullptr;
+    if (!em) return -1;
+
     glm::vec3 eyePos, dir;
     getCameraEyeRay(eyePos, dir);
 
-    auto entities = entityManager.getAllEntities();
+    auto entities = em->getAllEntities();
     int bestId = -1;
     float bestDist = maxDist + 1.0f;
 
@@ -242,4 +250,13 @@ int rayCastEntity(float maxDist, const EntityManager& entityManager, int exclude
         }
     }
     return bestId;
+}
+
+// 综合查询：优先实体，其次方块。实体 reach 依据游戏模式（创造 6.0，其它 3.0）
+RaycastTarget Raycast::getTargetFromCamera(float maxDist, int excludeEntityId) {
+    RaycastTarget target;
+    float entityReach = (m_engine && m_engine->getGameMode() == 1) ? 6.0f : 3.0f;
+    target.entityId = rayCastEntity(entityReach, excludeEntityId);
+    target.block = rayCastFromCamera(maxDist);
+    return target;
 }

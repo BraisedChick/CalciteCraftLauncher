@@ -761,19 +761,12 @@ void GameUI::performBlockPlacement() {
         }
     }
 
-    auto& cam = CameraController::getInstance();
-    glm::vec3 playerPos = cam.getPosition();
-    float pitch = cam.getPitch(), yaw = cam.getYaw();
-    glm::vec3 dir;
-    dir.x = -std::sin(yaw) * std::cos(pitch);
-    dir.y = -std::sin(pitch);
-    dir.z = std::cos(yaw) * std::cos(pitch);
-    glm::vec3 eyePos = playerPos + glm::vec3(0.0f, 1.62f, 0.0f);
     auto* engine = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
     if (!engine) return;
+    auto* raycast = engine->getRaycast();
     auto* cm = engine->getChunkManager();
-    if (!cm) return;
-    auto result = rayCast(eyePos, dir, 5.0f, *cm);
+    if (!raycast || !cm) return;
+    auto result = raycast->rayCastFromCamera(4.5f);
     if (!result.hit) return;
 
     auto chunk = cm->getChunk(result.blockX >> 4, result.blockZ >> 4);
@@ -885,12 +878,13 @@ static std::string getBlockSoundCategory(uint32_t blockState) {
 void GameUI::performBlockBreak() {
     auto* engine = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
     if (!engine) return;
+    auto* raycast = engine->getRaycast();
+    if (!raycast) return;
 
-    // 优先检测准星下的实体
-    float reach = (engine->getGameMode() == 1) ? 6.0f : 3.0f;
-    int targetEntity = rayCastEntity(reach, *engine->getEntityManager(), engine->getPlayerId());
-    if (targetEntity >= 0) {
-        engine->sendEntityAttack(targetEntity);
+    // 综合检测：优先准星下的实体，其次方块
+    auto target = raycast->getTargetFromCamera(4.5f, engine->getPlayerId());
+    if (target.hasEntity()) {
+        engine->sendEntityAttack(target.entityId);
         destroyDelay = 5; // 攻击后冷却（防止攻击过快）
         return;
     }
@@ -898,7 +892,7 @@ void GameUI::performBlockBreak() {
     int gameMode = engine->getGameMode();
     auto* cm = engine->getChunkManager();
     if (!cm) return;
-    auto result = rayCastFromCamera(5.0f, *cm);
+    auto result = target.block;
     if (!result.hit) return;
 
     // 创造模式：瞬时破坏 + 5刻冷却
@@ -1023,12 +1017,13 @@ static bool hasCorrectToolFor(const std::string& material, bool requiresCorrectT
 void GameUI::continueDestroyBlock() {
     auto* engine = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
     if (!engine) return;
+    auto* raycast = engine->getRaycast();
+    if (!raycast) return;
 
-    // 每帧也检测实体，如果准星对准了实体则优先攻击
-    float reach = (engine->getGameMode() == 1) ? 6.0f : 3.0f;
-    int targetEntity = rayCastEntity(reach, *engine->getEntityManager(), engine->getPlayerId());
-    if (targetEntity >= 0) {
-        engine->sendEntityAttack(targetEntity);
+    // 综合检测：每帧优先检测实体，其次方块
+    auto target = raycast->getTargetFromCamera(4.5f, engine->getPlayerId());
+    if (target.hasEntity()) {
+        engine->sendEntityAttack(target.entityId);
         destroyDelay = 5;
         // 如果正在挖矿则中断
         if (digging) {
@@ -1042,7 +1037,7 @@ void GameUI::continueDestroyBlock() {
     auto* cm = engine->getChunkManager();
     if (!cm) return;
 
-    auto result = rayCastFromCamera(5.0f, *cm);
+    auto result = target.block;
 
     // 未命中或目标切换：ABORT 旧 + START 新
     if (!result.hit ||

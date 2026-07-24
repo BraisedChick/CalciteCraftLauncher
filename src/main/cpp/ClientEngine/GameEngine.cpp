@@ -9,6 +9,7 @@
 #include "MinecraftVersion.h"
 #include "CameraController.h"
 #include "Collision.h"
+#include "Raycast.h"
 
 // ProtocolCraft 头文件
 #include "protocolCraft/BinaryReadWrite.hpp"
@@ -96,6 +97,8 @@ GameEngine::GameEngine(ClientEngine* client)
       m_entityManager(std::make_unique<EntityManager>()),
       m_collision(std::make_unique<Collision>()),
       m_light(std::make_unique<Light>()) {
+    // 射线检测器：注入 this，运行时惰性获取 chunkManager/entityManager 等
+    m_raycast = std::make_unique<Raycast>(this);
 }
 
 GameEngine::~GameEngine() {
