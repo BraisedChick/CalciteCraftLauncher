@@ -19,10 +19,10 @@
 #include "gui/GameUI.h"
 #include "MusicManager.h"
 #include "imgui.h"
-#include "gui/ScreenManager.h"
-#include "gui/TitleScreen.h"
 #include "gui/ConnectingScreen.h"
 #include "JniBridge.h"
+#include "gui/ScreenManager.h"
+#include "gui/TitleScreen.h"
 
 #define JNI_LOG_TAG "JNI"
 #define JNI_LOGI(...) __android_log_print(ANDROID_LOG_INFO, JNI_LOG_TAG, __VA_ARGS__)
@@ -33,7 +33,7 @@ static bool g_useVulkan = false;
 static bool g_initialized = false;
 static bool g_rendererTypeSet = false;  // 标记是否已设置渲染器类型
 static std::atomic<bool> g_rendering(false);
-static std::atomic<bool> g_renderThreadIdle(false);  // 渲染线程已进入非游戏分支（安全删除引擎）
+std::atomic<bool> g_renderThreadIdle(false);  // 渲染线程已进入非游戏分支（安全删除引擎）
 
 static std::thread g_renderThread;
 
@@ -143,10 +143,10 @@ static void renderLoop() {
         {
             static bool lastWantTextInput = false;
             bool wantText = GameUI::getInstance().wantsTextInput();
-            
+
             if (wantText != lastWantTextInput) {
                 lastWantTextInput = wantText;
-                
+
                 if (JniBridge::getJvm() && JniBridge::getActivity()) {
                     JNIEnv* env;
                     bool attached = false;
@@ -173,8 +173,8 @@ static void renderLoop() {
 
         // 音乐管理器每帧驱动
         {
-            auto& music = MusicManager::getInstance();
-            if (music.isInitialized()) {
+            auto* music = ClientEngine::getInstance() ? ClientEngine::getInstance()->getMusicManager() : nullptr;
+            if (music && music->isInitialized()) {
                 // 根据 UI 状态同步音乐场景
                 UIState uiState = GameUI::getInstance().getState();
                 MusicScene targetScene;
@@ -183,10 +183,10 @@ static void renderLoop() {
                 } else {
                     targetScene = MusicScene::MENU;
                 }
-                if (music.getScene() != targetScene) {
-                    music.setScene(targetScene);
+                if (music->getScene() != targetScene) {
+                    music->setScene(targetScene);
                 }
-                music.tick();
+                music->tick();
             }
         }
     }
@@ -198,168 +198,40 @@ Java_com_calcite_MainActivity_initRenderer(
 
     JNI_LOGI("=== initRenderer called ===");
 
-    // 保存 JavaVM 和 Activity 引用（用于回调控制 UI）
+    // 1. 保存 JavaVM 和 Activity 引用
     JavaVM* jvm;
     env->GetJavaVM(&jvm);
     JniBridge::init(jvm, env->NewGlobalRef(thiz));
 
-    // 确保 ClientEngine 全局单例存在（BlockRegistry/TextureAtlas 等全局资源由它持有）
+    // 2. 创建 ClientEngine
     if (!ClientEngine::getInstance()) {
         new ClientEngine();
-        JNI_LOGI("ClientEngine created early for global resource ownership");
+        JNI_LOGI("ClientEngine created");
     }
+    auto* client = ClientEngine::getInstance();
 
-    // 加载 BlockRegistry（全局只加载一次，必须在渲染器初始化之前）
-    ClientEngine::getInstance()->loadBlockRegistry();
-
-    if (!surface) {
-        JNI_LOGE("Surface is null!");
-        return;
-    }
-
+    // 3. 初始化渲染器（内部完成 loadBlockRegistry + GLRenderer 创建）
     ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
     if (!window) {
-        JNI_LOGE("Failed to get ANativeWindow from surface");
+        JNI_LOGE("Failed to get ANativeWindow");
         return;
     }
-
-    int32_t width = ANativeWindow_getWidth(window);
-    int32_t height = ANativeWindow_getHeight(window);
-
-    JNI_LOGI("Window size: %dx%d", width, height);
-
-    // 如果没有设置渲染器类型，默认使用 OpenGL ES
-    if (!g_rendererTypeSet) {
-        g_useVulkan = false;
-        JNI_LOGI("No renderer type set, defaulting to OpenGL ES");
+    if (!client->initializeRenderer(window)) {
+        JNI_LOGE("Failed to initialize renderer");
+        ANativeWindow_release(window);
+        return;
     }
-
-    if (g_useVulkan) {
-        // 使用 Vulkan
-        JNI_LOGI("Initializing Vulkan renderer...");
-        g_vulkanRenderer = new VulkanRenderer();
-
-        if (!g_vulkanRenderer->initialize(window, width, height)) {
-            JNI_LOGE("Failed to initialize Vulkan renderer");
-            delete g_vulkanRenderer;
-            g_vulkanRenderer = nullptr;
-            ANativeWindow_release(window);
-            return;
-        }
-
-        JNI_LOGI("Vulkan renderer initialized successfully");
-    } else {
-        // 使用 OpenGL ES
-        JNI_LOGI("Initializing OpenGL ES renderer...");
-        auto glRenderer = std::make_unique<GLRenderer>();
-
-        if (!glRenderer->initialize(window)) {
-            JNI_LOGE("Failed to initialize OpenGL renderer");
-            ANativeWindow_release(window);
-            return;
-        }
-
-        // 初始化成功，交给 ClientEngine 持有
-        ClientEngine::getInstance()->setRenderer(std::move(glRenderer));
-        JNI_LOGI("OpenGL ES renderer initialized successfully");
-    }
-
-    // 设置 ImGui 连接回调（在任意渲染器初始化后）
-    {
-        auto* activeRenderer = ClientEngine::getInstance() ? ClientEngine::getInstance()->getRenderer() : nullptr;
-        if (activeRenderer) {
-        GameUI::getInstance().setConnectCallback([](const std::string& ip, int port) {
-            JNI_LOGI("UI Connect: %s:%d user=%s", ip.c_str(), port, ClientEngine::getUsername().c_str());
-            std::thread([ip, port]() {
-                auto* client = ClientEngine::getInstance();
-
-                // 销毁旧会话（如果有）
-                client->destroyGame();
-
-                // 创建新会话
-                auto* game = client->createGame();
-
-                // 传递正版认证信息给会话引擎
-                if (ClientEngine::isPremiumPending()) {
-                    game->setAuthInfo(
-                        ClientEngine::getPendingAccessToken(),
-                        ClientEngine::getPendingPlayerUuid(),
-                        ClientEngine::getPendingTokenType());
-                }
-
-                // 加载语言文件
-                {
-                    std::string langJson = TextureLoader::readTextFromZip("lang/zh_cn.json");
-                    if (!langJson.empty()) {
-                        game->loadLanguage(langJson);
-                    }
-                }
-
-                // 应用已加载的设置到渲染器
-                if (client->getRenderer()) {
-                    auto& ui = GameUI::getInstance();
-                    client->getRenderer()->setFov(ui.getOptionsFov());
-                    client->getRenderer()->setRenderDistance(ui.getRenderDistance());
-                    client->getRenderer()->setMipmapLevel(ui.getMipmapLevel());
-                    client->getRenderer()->setMaxFps(ui.getMaxFps());
-                }
-
-                // start() 会阻塞直到断开连接，所以先切换到 IN_GAME
-                GameUI::getInstance().setState(UIState::IN_GAME);
-                GameUI::getInstance().clearChatMessages();
-
-                game->start(ip, port);
-
-                // 断开连接后回到主菜单
-                JNI_LOGI("Disconnected, returning to title screen");
-
-                // 1. 先切状态 → 渲染线程下一帧自动进入安全分支（不访问引擎）
-                auto& ui = GameUI::getInstance();
-                ui.setState(UIState::MAIN_MENU);
-
-                // 2. 等渲染线程确认已进入非游戏分支
-                while (!g_renderThreadIdle.load(std::memory_order_acquire)) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                }
-                JNI_LOGI("Render thread in safe branch, cleaning up game engine");
-
-                // 3. 清除单例中指向会话内部对象的裸指针
-                // Collision 由 GameEngine 持有，析构时自动清理
-                // Light 由 GameEngine 持有，析构时自动清理
-
-                if (client->getRenderer()) {
-                    client->getRenderer()->clearChunks();
-                }
-
-                // 4. 销毁会话引擎（ClientEngine 保持存活）
-                client->destroyGame();
-                JNI_LOGI("Game engine destroyed safely");
-
-                // 5. 更新 UI
-                ui.setGameMenuOpen(false);
-                ui.setDeathScreenActive(false);
-                ui.setOptionsOpen(false);
-                ui.setInventoryOpen(false);
-                ScreenManager::getInstance().setScreen(std::make_unique<TitleScreen>());
-            }).detach();
-        });
-        }
-    }
-
-    g_initialized = true;
     ANativeWindow_release(window);
 
-    // 初始化音乐管理器
-    MusicManager::getInstance().init();
+    // 4. 设置 UI 回调（连接、退出等）
+    client->setupUICallbacks();
 
+    // 5. 启动渲染线程（g_rendering 等全局变量暂留，第二步迁移）
     JNI_LOGI("Starting render thread");
     g_rendering = true;
     g_renderThread = std::thread(renderLoop);
-
-    // 等待一小段时间确保线程启动
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    JNI_LOGI("Render thread started");
     JNI_LOGI("=== initRenderer completed ===");
 }
 
@@ -422,9 +294,6 @@ Java_com_calcite_MainActivity_cleanupRenderer(
     JniBridge::cleanup(env);
 
     g_initialized = false;
-
-    // 关闭音乐管理器
-    MusicManager::getInstance().shutdown();
 
     JNI_LOGI("Cleanup completed");
 }

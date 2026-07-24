@@ -855,7 +855,9 @@ void GameUI::performLeftClick() {
                 // 播放破坏音效
                 {
                     std::string cat = getBlockSoundCategory(state);
-                    MusicManager::getInstance().playOneShot("dig/" + cat + "1");
+                    if (auto* mm = ClientEngine::getInstance() ? ClientEngine::getInstance()->getMusicManager() : nullptr) {
+                        mm->playOneShot("dig/" + cat + "1");
+                    }
                 }
                 engine->sendBlockBreakFinish(result.blockX, result.blockY, result.blockZ, result.hitFace);
                 destroyDelay = 5;
@@ -1008,7 +1010,9 @@ void GameUI::continueDestroyBlock() {
         // 播放破坏音效
         {
             std::string cat = getBlockSoundCategory(state);
-            MusicManager::getInstance().playOneShot("dig/" + cat + "1");
+            if (auto* mm = ClientEngine::getInstance() ? ClientEngine::getInstance()->getMusicManager() : nullptr) {
+                mm->playOneShot("dig/" + cat + "1");
+            }
         }
         engine->sendBlockBreakFinish(digBlockX, digBlockY, digBlockZ, digFace);
         digging = false;

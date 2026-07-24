@@ -18,11 +18,13 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
-MusicManager& MusicManager::getInstance() {
-    static MusicManager instance;
-    return instance;
+MusicManager::MusicManager() {
+    // 空构造，所有初始化在 init() 中完成
 }
 
+MusicManager::~MusicManager() {
+    // 空析构，所有清理在 shutdown() 中完成
+}
 MusicManager::SceneConfig MusicManager::getConfig(MusicScene scene) {
     switch (scene) {
         case MusicScene::MENU:     return {1.0f, 30.0f, true};

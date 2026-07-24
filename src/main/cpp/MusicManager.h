@@ -16,7 +16,8 @@ enum class MusicScene {
 
 class MusicManager {
 public:
-    static MusicManager& getInstance();
+    MusicManager();   // 公开构造
+    ~MusicManager();  // 公开析构
     bool init();
     void shutdown();
     void tick();
@@ -29,9 +30,6 @@ public:
     bool isInitialized() const { return initialized; }
 
 private:
-    MusicManager() = default;
-    ~MusicManager() = default;
-
     struct SceneConfig {
         float minDelaySec;
         float maxDelaySec;

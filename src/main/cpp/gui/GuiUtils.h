@@ -3,6 +3,7 @@
 #include "imgui.h"
 #include "ResourcepackManager.h"
 #include "MusicManager.h"
+#include "ClientEngine/ClientEngine.h"
 #include <string>
 #include <cstdint>
 
@@ -167,7 +168,9 @@ inline bool McButton(const char* label, ImVec2 size, bool enabled = true) {
 
     // 点击时播放音效
     if (clicked) {
-        MusicManager::getInstance().playClickSound();
+        if (auto* mm = ClientEngine::getInstance() ? ClientEngine::getInstance()->getMusicManager() : nullptr) {
+            mm->playClickSound();
+        }
     }
 
     return clicked;

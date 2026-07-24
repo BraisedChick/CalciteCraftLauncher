@@ -3,12 +3,14 @@
 #include <memory>
 #include <jni.h>
 
+struct ANativeWindow;  // 前向声明，避免引入 android/native_window.h
+
 class GLRenderer;
 class GameEngine;
 class EntityRenderer;
 class TextureAtlas;
 class BlockRegistry;
-
+class MusicManager;
 // 全局引擎（单例）：App 启动 → App 退出
 // 持有渲染器、全局 UI/音频资源、当前会话（GameEngine）
 class ClientEngine {
@@ -18,17 +20,21 @@ public:
 
     static ClientEngine* getInstance() { return instance; }
 
-    // 玩家用户名（JNI 层写入，连接时读取）
+    // ===== 初始化 =====
+    // 由 JNI 层在 Surface 准备好后调用，创建渲染器
+    bool initializeRenderer(ANativeWindow* window);
+
+    // ===== 玩家用户名（JNI 层写入，连接时读取） =====
     static void setUsername(const std::string& name) { s_username = name; }
     static const std::string& getUsername() { return s_username; }
 
-    // 暂存正版认证信息（JNI 层写入，连接回调读取）
+    // ===== 暂存正版认证信息（JNI 层写入，连接回调读取） =====
     static void setPendingAuth(const std::string& accessToken, const std::string& uuid, const std::string& tokenType);
     static bool isPremiumPending();
     static const std::string& getPendingAccessToken();
     static const std::string& getPendingPlayerUuid();
     static const std::string& getPendingTokenType();
-
+    void setupUICallbacks();
     // ===== 渲染器管理 =====
     void setRenderer(std::unique_ptr<GLRenderer> renderer);
     std::unique_ptr<GLRenderer> releaseRenderer();
@@ -45,12 +51,12 @@ public:
     /// 从 ZIP 加载 blocks.json + items.json（幂等，多次调用只加载一次）
     void loadBlockRegistry();
 
+    // ===== 背景音乐/音效（全局生命周期） =====
+    MusicManager* getMusicManager() { return m_musicManager.get(); }
+
     // ===== 会话管理 =====
-    // 创建新会话（断开旧会话后调用）
     GameEngine* createGame();
-    // 销毁当前会话
     void destroyGame();
-    // 获取当前会话（可能为 nullptr）
     GameEngine* getGame() { return m_gameEngine.get(); }
 
 private:
@@ -59,10 +65,9 @@ private:
     std::unique_ptr<TextureAtlas> m_textureAtlas;
     std::unique_ptr<BlockRegistry> m_blockRegistry;
     std::unique_ptr<GameEngine> m_gameEngine;
-
+    std::unique_ptr<MusicManager> m_musicManager;
     static ClientEngine* instance;
 
-    // 暂存的正版认证信息
     static std::string s_pendingAccessToken;
     static std::string s_pendingPlayerUuid;
     static std::string s_pendingTokenType;
