@@ -806,78 +806,6 @@ void GameUI::performBlockPlacement() {
 
 // ===== 挖掘逻辑（对标原版 MultiPlayerGameMode）=====
 
-RaycastResult GameUI::getTargetBlock() const {
-    auto& cam = CameraController::getInstance();
-    glm::vec3 playerPos = cam.getPosition();
-    float pitch = cam.getPitch(), yaw = cam.getYaw();
-    glm::vec3 dir;
-    dir.x = -std::sin(yaw) * std::cos(pitch);
-    dir.y = -std::sin(pitch);
-    dir.z = std::cos(yaw) * std::cos(pitch);
-    glm::vec3 eyePos = playerPos + glm::vec3(0.0f, 1.62f, 0.0f);
-    auto* engine = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
-    if (!engine) return {};
-    auto* cm = engine->getChunkManager();
-    if (!cm) return {};
-    return rayCast(eyePos, dir, 5.0f, *cm);
-}
-
-int GameUI::getTargetEntity(float reachDistance) const {
-    auto& cam = CameraController::getInstance();
-    glm::vec3 playerPos = cam.getPosition();
-    float pitch = cam.getPitch(), yaw = cam.getYaw();
-    glm::vec3 dir;
-    dir.x = -std::sin(yaw) * std::cos(pitch);
-    dir.y = -std::sin(pitch);
-    dir.z = std::cos(yaw) * std::cos(pitch);
-    glm::vec3 eyePos = playerPos + glm::vec3(0.0f, 1.62f, 0.0f);
-
-    auto* gameForEnt = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
-    if (!gameForEnt) return -1;
-    auto entities = gameForEnt->getEntityManager()->getAllEntities();
-    int bestEntityId = -1;
-    float bestDist = reachDistance + 1.0f;
-
-    // 跳过自身玩家（entityId == local player）
-    int localPlayerId = -1;
-    {
-        Entity localPlayer;
-        if (gameForEnt->getEntityManager()->getEntity(gameForEnt->getPlayerId(), localPlayer))
-            localPlayerId = localPlayer.entityId;
-    }
-
-    for (const auto& entity : entities) {
-        if (entity.removed || entity.entityId == localPlayerId) continue;
-        // 跳过不可攻击的实体（掉落物、经验球等）
-        if (entity.type == EntityType::ITEM ||
-            entity.type == EntityType::EXPERIENCE_ORB ||
-            entity.type == EntityType::AREA_EFFECT_CLOUD) continue;
-
-        // 用插值位置
-        float ex = (float)(entity.prevX + (entity.x - entity.prevX) * 0.0f);
-        float ey = (float)(entity.prevY + (entity.y - entity.prevY) * 0.0f);
-        float ez = (float)(entity.prevZ + (entity.z - entity.prevZ) * 0.0f);
-
-        // 指向实体的向量
-        glm::vec3 toEntity(ex - eyePos.x, ey - eyePos.y, ez - eyePos.z);
-        float dist = glm::length(toEntity);
-        if (dist > reachDistance || dist < 0.1f) continue;
-
-        glm::vec3 toEntityNorm = toEntity / dist;
-
-        // 角度检测：准星与实体的夹角余弦值
-        float dot = glm::dot(dir, toEntityNorm);
-        // 实体大致在准星方向 ±30° 范围内（cos30° ≈ 0.866）
-        if (dot < 0.866f) continue;
-
-        if (dist < bestDist) {
-            bestDist = dist;
-            bestEntityId = entity.entityId;
-        }
-    }
-    return bestEntityId;
-}
-
 // 根据方块名称映射到音效类别（对应 sounds 目录下的 step/ dig/ 子目录）
 static std::string getBlockSoundCategory(uint32_t blockState) {
     std::string name = ClientEngine::getInstance()->getBlockRegistry()->getBlockName(blockState);
@@ -960,7 +888,7 @@ void GameUI::performBlockBreak() {
 
     // 优先检测准星下的实体
     float reach = (engine->getGameMode() == 1) ? 6.0f : 3.0f;
-    int targetEntity = getTargetEntity(reach);
+    int targetEntity = rayCastEntity(reach, *engine->getEntityManager(), engine->getPlayerId());
     if (targetEntity >= 0) {
         engine->sendEntityAttack(targetEntity);
         destroyDelay = 5; // 攻击后冷却（防止攻击过快）
@@ -968,7 +896,9 @@ void GameUI::performBlockBreak() {
     }
 
     int gameMode = engine->getGameMode();
-    auto result = getTargetBlock();
+    auto* cm = engine->getChunkManager();
+    if (!cm) return;
+    auto result = rayCastFromCamera(5.0f, *cm);
     if (!result.hit) return;
 
     // 创造模式：瞬时破坏 + 5刻冷却
@@ -993,7 +923,6 @@ void GameUI::performBlockBreak() {
     destroyAccumulator = 0.0f;
 
     // 查询方块硬度，瞬时破坏（hardness=0 或空气）
-    auto* cm = engine->getChunkManager();
     if (cm) {
         auto chunk = cm->getChunk(result.blockX >> 4, result.blockZ >> 4);
         if (chunk) {
@@ -1097,7 +1026,7 @@ void GameUI::continueDestroyBlock() {
 
     // 每帧也检测实体，如果准星对准了实体则优先攻击
     float reach = (engine->getGameMode() == 1) ? 6.0f : 3.0f;
-    int targetEntity = getTargetEntity(reach);
+    int targetEntity = rayCastEntity(reach, *engine->getEntityManager(), engine->getPlayerId());
     if (targetEntity >= 0) {
         engine->sendEntityAttack(targetEntity);
         destroyDelay = 5;
@@ -1113,7 +1042,7 @@ void GameUI::continueDestroyBlock() {
     auto* cm = engine->getChunkManager();
     if (!cm) return;
 
-    auto result = getTargetBlock();
+    auto result = rayCastFromCamera(5.0f, *cm);
 
     // 未命中或目标切换：ABORT 旧 + START 新
     if (!result.hit ||

@@ -211,8 +211,6 @@ private:
     void performBlockBreak();
     void continueDestroyBlock();
     void stopDestroyBlock();
-    RaycastResult getTargetBlock() const;
-    int getTargetEntity(float reachDistance) const;
     bool isInJoystickArea(float x, float y) const;
     bool isInUpButtonArea(float x, float y) const;
     bool isInDownButtonArea(float x, float y) const;

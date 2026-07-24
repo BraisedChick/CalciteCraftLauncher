@@ -4,6 +4,8 @@
 #include "ClientEngine/ClientEngine.h"
 #include "ClientEngine/GameEngine.h"
 #include "Collision.h"
+#include "CameraController.h"
+#include "EntityManager.h"
 #include <cmath>
 #include <algorithm>
 
@@ -188,4 +190,56 @@ RaycastResult rayCast(glm::vec3 origin, glm::vec3 direction,
     }
 
     return result;
+}
+
+// 计算摄像机眼睛位置和朝向向量
+static void getCameraEyeRay(glm::vec3& eyePos, glm::vec3& dir) {
+    auto& cam = CameraController::getInstance();
+    eyePos = cam.getPosition() + glm::vec3(0.0f, 1.62f, 0.0f);
+    float pitch = cam.getPitch(), yaw = cam.getYaw();
+    dir.x = -std::sin(yaw) * std::cos(pitch);
+    dir.y = -std::sin(pitch);
+    dir.z = std::cos(yaw) * std::cos(pitch);
+}
+
+RaycastResult rayCastFromCamera(float maxDist, const ChunkManager& chunkManager) {
+    glm::vec3 eyePos, dir;
+    getCameraEyeRay(eyePos, dir);
+    return rayCast(eyePos, dir, maxDist, chunkManager);
+}
+
+int rayCastEntity(float maxDist, const EntityManager& entityManager, int excludeEntityId) {
+    glm::vec3 eyePos, dir;
+    getCameraEyeRay(eyePos, dir);
+
+    auto entities = entityManager.getAllEntities();
+    int bestId = -1;
+    float bestDist = maxDist + 1.0f;
+
+    for (const auto& entity : entities) {
+        if (entity.removed || entity.entityId == excludeEntityId) continue;
+        // 跳过不可攻击的实体（掉落物、经验球等）
+        if (entity.type == EntityType::ITEM ||
+            entity.type == EntityType::EXPERIENCE_ORB ||
+            entity.type == EntityType::AREA_EFFECT_CLOUD) continue;
+
+        // 用插值位置
+        float ex = (float)(entity.prevX + (entity.x - entity.prevX) * 0.0f);
+        float ey = (float)(entity.prevY + (entity.y - entity.prevY) * 0.0f);
+        float ez = (float)(entity.prevZ + (entity.z - entity.prevZ) * 0.0f);
+
+        glm::vec3 toEntity(ex - eyePos.x, ey - eyePos.y, ez - eyePos.z);
+        float dist = glm::length(toEntity);
+        if (dist > maxDist || dist < 0.1f) continue;
+
+        glm::vec3 toEntityNorm = toEntity / dist;
+        // 实体大致在准星方向 ±30° 范围内（cos30° ≈ 0.866）
+        if (glm::dot(dir, toEntityNorm) < 0.866f) continue;
+
+        if (dist < bestDist) {
+            bestDist = dist;
+            bestId = entity.entityId;
+        }
+    }
+    return bestId;
 }
