@@ -363,26 +363,6 @@ Java_com_calcite_MainActivity_initRenderer(
     JNI_LOGI("=== initRenderer completed ===");
 }
 
-extern "C" JNIEXPORT void JNICALL
-Java_com_calcite_MainActivity_renderFrame(
-        JNIEnv* env, jobject thiz) {
-
-    if (!g_initialized || g_rendering) {
-        // C++ 渲染线程已在运行，避免双重渲染冲突
-        return;
-    }
-
-    // 从 CameraController 获取摄像机数据
-    auto pos = CameraController::getInstance().getSmoothPosition();
-    float pitch = CameraController::getInstance().getPitch();
-    float yaw = CameraController::getInstance().getYaw();
-
-    if (g_useVulkan && g_vulkanRenderer) {
-        g_vulkanRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
-    } else if (ClientEngine::getInstance() && ClientEngine::getInstance()->getRenderer()) {
-        ClientEngine::getInstance()->getRenderer()->render(pos.x, pos.y, pos.z, pitch, yaw);
-    }
-}
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_calcite_MainActivity_cleanupRenderer(
@@ -489,15 +469,6 @@ Java_com_calcite_MainActivity_onSurfaceRecreated(
     ANativeWindow_release(window);
 }
 
-extern "C" JNIEXPORT void JNICALL
-Java_com_calcite_MainActivity_updateCameraAngle(
-        JNIEnv* env, jobject thiz,
-        jfloat pitchDelta, jfloat yawDelta) {
-
-    // 更新 CameraController 的旋转（相对变化量）
-    CameraController::getInstance().updateRotation(pitchDelta, yawDelta);
-}
-
 // ===== 新的输入控制接口 =====
 
 extern "C" JNIEXPORT void JNICALL
@@ -509,16 +480,6 @@ Java_com_calcite_MainActivity_setKeyState(
     if (game && game->getCollision()) game->getCollision()->setKeyState((int)key, (bool)pressed);
 }
 
-extern "C" JNIEXPORT void JNICALL
-Java_com_calcite_MainActivity_setCameraPosition(
-        JNIEnv* env, jobject thiz,
-        jfloat x, jfloat y, jfloat z,
-        jfloat pitch, jfloat yaw) {
-
-    // 设置初始位置（只在初始化时调用一次）
-    CameraController::getInstance().setPosition(x, y, z);
-    CameraController::getInstance().setRotation(pitch, yaw);
-}
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_calcite_MainActivity_setAssetManager(
@@ -681,14 +642,6 @@ Java_com_calcite_MainActivity_onBackPressedNative(
     }
     // MAIN_MENU 或 CONNECTING 时，不处理（让系统默认行为退出）
     return JNI_FALSE;
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_calcite_MainActivity_isUIDisplayed(
-        JNIEnv* env,
-        jobject thiz) {
-
-    return GameUI::getInstance().getState() != UIState::IN_GAME ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL

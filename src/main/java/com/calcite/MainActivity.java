@@ -356,7 +356,6 @@ public class MainActivity extends Activity {
     private native void setUsername(String username);
     private native void setAuthInfo(String accessToken, String uuid, String tokenType);
     private native void onTouchEventImGui(int pointerId, float x, float y, int action);
-    private native boolean isUIDisplayed();
     private native boolean onBackPressedNative();
     native void addImGuiCharacter(int c);
     private native void setKeyState(int key, boolean pressed);
