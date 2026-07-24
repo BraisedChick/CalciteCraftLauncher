@@ -87,6 +87,7 @@ set(APP_SOURCES
     gui/DeathScreen.cpp
     gui/InventoryScreen.cpp
     gui/PauseScreen.cpp
+    gui/ChatScreen.cpp
     ResourcepackManager.cpp
     PlayerInventory.cpp
     Raycast.cpp

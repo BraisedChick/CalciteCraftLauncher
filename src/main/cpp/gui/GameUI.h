@@ -5,8 +5,11 @@
 #include <deque>
 #include <vector>
 #include <mutex>
+#include <memory>
 #include <GLES3/gl3.h>
 #include "Raycast.h"
+
+class ChatScreen;
 
 enum class UIState {
     MAIN_MENU,
@@ -152,17 +155,11 @@ public:
         return stage;
     }
 
-    // 聊天系统
-    struct ChatEntry {
-        std::string text;
-        unsigned int color = 0xFFFFFFFF;  // RGBA
-    };
+    // 聊天系统（逻辑已分离至 ChatScreen，这里仅保留对外转发接口）
     void addChatMessage(const std::string& msg, unsigned int color = 0xFFFFFFFF);
-    void clearChatMessages() { chatMessages.clear(); }
+    void clearChatMessages();
     void openChat();
-    void sendChatMessage();
-    bool isChatOpen() const { return chatOpen; }
-    const std::deque<ChatEntry>& getChatMessages() const { return chatMessages; }
+    bool isChatOpen() const;
 
     // 键盘显示回调（由 native-lib 设置，直接 JNI 调用 Java）
     using ShowKeyboardCallback = std::function<void(bool)>;
@@ -182,7 +179,7 @@ public:
 
 private:
     GameUI() = default;
-    ~GameUI() = default;
+    ~GameUI();
 
     void updateOverlays();
     void processTouchEvents();
@@ -281,12 +278,8 @@ private:
     // 背包界面
     bool inventoryOpen = false;
 
-    // 聊天状态
-    bool chatOpen = false;
-    char chatInput[256] = {};
-    std::deque<ChatEntry> chatMessages;
-    void* chatFontPtr = nullptr;
-    double chatLastMsgTime = 0.0;
+    // 聊天界面（消息显示 + 输入框，逻辑见 ChatScreen）
+    std::unique_ptr<ChatScreen> m_chat;
     ShowKeyboardCallback showKeyboardCallback;
 
     // 容器状态（由 OpenScreen 包设置）

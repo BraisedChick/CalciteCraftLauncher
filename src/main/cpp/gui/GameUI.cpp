@@ -37,6 +37,7 @@
 #include "DeathScreen.h"
 #include "InventoryScreen.h"
 #include "PauseScreen.h"
+#include "ChatScreen.h"
 
 #define LOG_TAG "GameUI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -65,6 +66,9 @@ GameUI& GameUI::getInstance() {
     static GameUI instance;
     return instance;
 }
+
+// ChatScreen 为不完全类型，析构函数定义在此（ChatScreen.h 已 include）
+GameUI::~GameUI() = default;
 
 bool GameUI::init() {
     if (initialized) return true;
@@ -123,7 +127,13 @@ bool GameUI::init() {
         font = io.Fonts->AddFontDefault();
         LOGE("No CJK font found, Chinese text may display as boxes");
     }
-    chatFontPtr = font;
+    // 创建聊天界面并注入依赖（字体 + 发送回调）
+    m_chat = std::make_unique<ChatScreen>();
+    m_chat->setFont(font);
+    m_chat->setSendCallback([](const std::string& msg) {
+        auto* engine = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+        if (engine) engine->sendChatMessage(msg);
+    });
 
     io.FontGlobalScale = 2.0f;
     ImGuiStyle& style = ImGui::GetStyle();
@@ -326,96 +336,9 @@ void GameUI::render() {
     updateOverlays();
     ScreenManager::getInstance().render(0, 0);
 
-    // ===== 聊天系统渲染 =====
-    if (currentState == UIState::IN_GAME && !chatMessages.empty()) {
-        // 5 秒无新消息自动隐藏
-        double elapsed = ImGui::GetTime() - chatLastMsgTime;
-        bool showChat = chatOpen || elapsed < 5.0;
-        if (showChat) {
-            // 淡出效果：最后 0.5 秒渐变透明
-            float alpha = 1.0f;
-            if (!chatOpen && elapsed > 4.5f) {
-                alpha = (5.0f - (float)elapsed) / 0.5f;
-                if (alpha < 0.0f) alpha = 0.0f;
-            }
-
-            ImGuiIO& io = ImGui::GetIO();
-            float chatW = io.DisplaySize.x * 0.4f;
-            float chatH = io.DisplaySize.y * 0.35f;
-            float chatX = 10.0f;
-            float chatY = io.DisplaySize.y - chatH - io.DisplaySize.y * 0.15f;
-
-            // 聊天消息背景
-            int bgAlpha = (int)(120 * alpha);
-            ImGui::GetBackgroundDrawList()->AddRectFilled(
-                ImVec2(chatX, chatY),
-                ImVec2(chatX + chatW, chatY + chatH),
-                IM_COL32(0, 0, 0, bgAlpha), 4.0f);
-
-            // 显示最近的 20 条消息
-            ImGui::SetNextWindowPos(ImVec2(chatX + 4, chatY + 4));
-            ImGui::Begin("##ChatDisplay", nullptr,
-                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoInputs |
-                ImGuiWindowFlags_NoBackground);
-
-            int start = std::max(0, (int)chatMessages.size() - 20);
-            if (chatFontPtr) ImGui::PushFont((ImFont*)chatFontPtr);
-            for (int i = start; i < (int)chatMessages.size(); i++) {
-                const auto& entry = chatMessages[i];
-                ImVec4 col(
-                    ((entry.color >> 0) & 0xFF) / 255.0f,
-                    ((entry.color >> 8) & 0xFF) / 255.0f,
-                    ((entry.color >> 16) & 0xFF) / 255.0f,
-                    ((entry.color >> 24) & 0xFF) / 255.0f * alpha
-                );
-                ImGui::TextColored(col, "%s", entry.text.c_str());
-            }
-            if (chatFontPtr) ImGui::PopFont();
-            ImGui::SetWindowSize(ImVec2(chatW - 8, chatH - 8));
-            ImGui::End();
-        }
-    }
-
-    // 聊天输入框（T 键触发）
-    if (chatOpen) {
-        ImGuiIO& io = ImGui::GetIO();
-        float inputW = io.DisplaySize.x * 0.8f;
-        float inputX = (io.DisplaySize.x - inputW) * 0.5f;
-        float inputY = io.DisplaySize.y * 0.1f;
-
-        ImGui::SetNextWindowPos(ImVec2(inputX, inputY));
-        ImGui::SetNextWindowSize(ImVec2(inputW, 60.0f));
-        ImGui::Begin("##ChatInput", nullptr,
-            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-            ImGuiWindowFlags_NoBringToFrontOnFocus);
-
-        ImGui::PushItemWidth(-1);
-        if (chatFontPtr) ImGui::PushFont((ImFont*)chatFontPtr);
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.08f, 0.08f, 0.12f, 0.85f));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-
-        // InputText with Enter handler
-        ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue;
-
-        if (ImGui::InputText("##ChatMsg", chatInput, 256, flags)) {
-            sendChatMessage();
-        }
-
-        ImGui::PopStyleColor(2);
-        if (chatFontPtr) ImGui::PopFont();
-        ImGui::PopItemWidth();
-
-        // 点击输入框外部关闭聊天（有活动项时不关闭，如正在编辑输入框）
-        if (!ImGui::IsAnyItemActive() &&
-            !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow) &&
-            ImGui::IsMouseClicked(0)) {
-            chatOpen = false;
-        }
-
-        ImGui::End();
+    // ===== 聊天界面（消息显示 + 输入框，逻辑见 ChatScreen）=====
+    if (currentState == UIState::IN_GAME && m_chat) {
+        m_chat->render();
     }
 
     ImGui::Render();
@@ -569,7 +492,7 @@ bool GameUI::isRoleTaken(TouchPoint::Role role) const {
 
 void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
     // 聊天打开时，所有触摸直接路由给 ImGui（点击输入框才能聚焦）
-    if (chatOpen) {
+    if (m_chat && m_chat->isOpen()) {
         queueTouchEvent(x, y, action);
         return;
     }
@@ -1200,35 +1123,21 @@ int GameUI::hotbarSlotAt(float x, float y) const {
     return slot;
 }
 
-// ===== 聊天系统 =====
+// ===== 聊天系统（转发到 ChatScreen）=====
 
 void GameUI::addChatMessage(const std::string& msg, unsigned int color) {
-    chatMessages.push_back({msg, color});
-    if (chatMessages.size() > 100) {
-        chatMessages.pop_front();
-    }
-    chatLastMsgTime = ImGui::GetTime();
+    if (m_chat) m_chat->addMessage(msg, color);
+}
+
+void GameUI::clearChatMessages() {
+    if (m_chat) m_chat->clear();
 }
 
 void GameUI::openChat() {
-    if (chatOpen) {
-        chatOpen = false;
-    } else {
-        chatOpen = true;
-        memset(chatInput, 0, sizeof(chatInput));
-    }
+    if (m_chat) m_chat->toggle();
 }
 
-void GameUI::sendChatMessage() {
-    if (chatInput[0] == '\0') {
-        chatOpen = false;
-        return;
-    }
-    auto* engine = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
-    if (engine) {
-        engine->sendChatMessage(std::string(chatInput));
-    }
-    chatOpen = false;
-    chatInput[0] = '\0';
+bool GameUI::isChatOpen() const {
+    return m_chat && m_chat->isOpen();
 }
 
