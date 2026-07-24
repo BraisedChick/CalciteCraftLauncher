@@ -618,11 +618,11 @@ void GameUI::onTouchEvent(int pointerId, float x, float y, int action) {
         } else if (!isRoleTaken(TouchPoint::ATTACK_BUTTON) && isInAttackButtonArea(x, y)) {
             pt->role = TouchPoint::ATTACK_BUTTON;
             buttons.attackPressed = true;
-            performBlockBreak();
+            performLeftClick();
         } else if (!isRoleTaken(TouchPoint::PLACE_BUTTON) && isInPlaceButtonArea(x, y)) {
             pt->role = TouchPoint::PLACE_BUTTON;
             buttons.placePressed = true;
-            performBlockPlacement();
+            performRightClick();
         } else if (!isRoleTaken(TouchPoint::CHAT_BUTTON) && isInChatButtonArea(x, y)) {
             pt->role = TouchPoint::CHAT_BUTTON;
             openChat();
@@ -728,7 +728,7 @@ void GameUI::handleJoystickTouch(int pointerId, float x, float y, int action) {
     }
 }
 
-void GameUI::performBlockPlacement() {
+void GameUI::performRightClick() {
     auto* gameForInv = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
     if (!gameForInv) return;
     auto& inv = *gameForInv->getInventory();
@@ -875,7 +875,7 @@ static std::string getBlockSoundCategory(uint32_t blockState) {
 }
 
 // 首次按下攻击按钮时调用
-void GameUI::performBlockBreak() {
+void GameUI::performLeftClick() {
     auto* engine = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
     if (!engine) return;
     auto* raycast = engine->getRaycast();
@@ -1047,7 +1047,7 @@ void GameUI::continueDestroyBlock() {
             digging = false;
         }
         if (result.hit) {
-            performBlockBreak();
+            performLeftClick();
         }
         return;
     }

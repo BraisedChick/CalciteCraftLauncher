@@ -207,8 +207,8 @@ private:
 
     void handleJoystickTouch(int pointerId, float x, float y, int action);
     void handleCameraTouch(int pointerId, float x, float y, int action);
-    void performBlockPlacement();
-    void performBlockBreak();
+    void performRightClick();
+    void performLeftClick();
     void continueDestroyBlock();
     void stopDestroyBlock();
     bool isInJoystickArea(float x, float y) const;
