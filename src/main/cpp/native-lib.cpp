@@ -173,8 +173,8 @@ static void renderLoop() {
 
         // 音乐管理器每帧驱动
         {
-            auto* music = ClientEngine::getInstance() ? ClientEngine::getInstance()->getMusicManager() : nullptr;
-            if (music && music->isInitialized()) {
+            auto* music = ClientEngine::getInstance()->getMusicManager();
+            if (music->isInitialized()) {
                 // 根据 UI 状态同步音乐场景
                 UIState uiState = GameUI::getInstance().getState();
                 MusicScene targetScene;

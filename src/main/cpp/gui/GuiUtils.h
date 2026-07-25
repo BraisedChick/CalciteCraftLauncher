@@ -168,9 +168,7 @@ inline bool McButton(const char* label, ImVec2 size, bool enabled = true) {
 
     // 点击时播放音效
     if (clicked) {
-        if (auto* mm = ClientEngine::getInstance() ? ClientEngine::getInstance()->getMusicManager() : nullptr) {
-            mm->playClickSound();
-        }
+        ClientEngine::getInstance()->getMusicManager()->playClickSound();
     }
 
     return clicked;
