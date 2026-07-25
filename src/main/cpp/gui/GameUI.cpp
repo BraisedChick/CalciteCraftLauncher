@@ -14,6 +14,7 @@
 #include <GLES3/gl3.h>
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
+#include "imgui_impl_vulkan.h"
 #include "CameraController.h"
 #include "EntityManager.h"
 #include "Collision.h"
@@ -147,9 +148,12 @@ bool GameUI::init() {
     style.Colors[ImGuiCol_FrameBg] = ImVec4(0.12f, 0.12f, 0.16f, 1.0f);
     style.Colors[ImGuiCol_Text] = ImVec4(0.95f, 0.95f, 0.95f, 1.0f);
 
-    if (!ImGui_ImplOpenGL3_Init("#version 300 es")) {
-        LOGE("Failed to initialize ImGui OpenGL3 backend");
-        return false;
+    // Vulkan 后端由 VulkanRenderer::initImGui() 在本函数返回后完成 ImGui_ImplVulkan_Init
+    if (!vulkanBackend) {
+        if (!ImGui_ImplOpenGL3_Init("#version 300 es")) {
+            LOGE("Failed to initialize ImGui OpenGL3 backend");
+            return false;
+        }
     }
 
     initialized = true;
@@ -255,7 +259,11 @@ void GameUI::shutdown() {
     if (!initialized) return;
     LOGI("Shutting down ImGui...");
     saveSettings();
-    ImGui_ImplOpenGL3_Shutdown();
+    if (vulkanBackend) {
+        ImGui_ImplVulkan_Shutdown();
+    } else {
+        ImGui_ImplOpenGL3_Shutdown();
+    }
     ImGui::DestroyContext();
     initialized = false;
 }
@@ -304,7 +312,11 @@ void GameUI::render() {
     if (!initialized) return;
     processTouchEvents();
 
-    ImGui_ImplOpenGL3_NewFrame();
+    if (vulkanBackend) {
+        ImGui_ImplVulkan_NewFrame();
+    } else {
+        ImGui_ImplOpenGL3_NewFrame();
+    }
     ImGui::NewFrame();
 
     if (currentState == UIState::IN_GAME) {
@@ -342,7 +354,10 @@ void GameUI::render() {
     }
 
     ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    // Vulkan 模式：draw data 由 VulkanRenderer 在命令缓冲中提交
+    if (!vulkanBackend) {
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    }
 }
 
 void GameUI::updateOverlays() {

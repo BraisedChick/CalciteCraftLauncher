@@ -4,6 +4,7 @@
 #include "ResourcepackManager.h"
 #include "MusicManager.h"
 #include "ClientEngine/ClientEngine.h"
+#include "GameUI.h"
 #include <string>
 #include <cstdint>
 
@@ -94,6 +95,11 @@ inline float drawMcText(float x, float y, const std::string& text, ImU32 default
 
 // 按钮纹理即时获取（不缓存 GL ID，由 ResourcepackManager 统一管理缓存）
 inline void ensureWidgetTextures(GLuint& button, GLuint& buttonHighlighted, GLuint& buttonDisabled) {
+    // Vulkan 后端暂无 GL 纹理，按钮回退纯色绘制（第一步）
+    if (GameUI::getInstance().isVulkanBackend()) {
+        button = buttonHighlighted = buttonDisabled = 0;
+        return;
+    }
     auto& rm = ResourcepackManager::getInstance();
     button = rm.getGuiTexture("sprites/widget/button");
     buttonHighlighted = rm.getGuiTexture("sprites/widget/button_highlighted");
@@ -154,10 +160,19 @@ inline bool McButton(const char* label, ImVec2 size, bool enabled = true) {
         textColor = IM_COL32(224, 224, 224, 255);
     }
 
-    // 九宫格绘制纹理（200x20, 3px border）
+    // 九宫格绘制纹理（200x20, 3px border）；纹理不可用时纯色矩形回退
     ImVec2 pos = ImGui::GetItemRectMin();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    drawNineSlice(dl, tex, pos, size, 200.0f, 20.0f, 3.0f);
+    if (tex != 0) {
+        drawNineSlice(dl, tex, pos, size, 200.0f, 20.0f, 3.0f);
+    } else {
+        ImU32 bg;
+        if (!enabled) bg = IM_COL32(40, 40, 40, 255);
+        else if (ImGui::IsItemActive() || ImGui::IsItemHovered()) bg = IM_COL32(90, 90, 120, 255);
+        else bg = IM_COL32(60, 60, 60, 255);
+        dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), bg);
+        dl->AddRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), IM_COL32(0, 0, 0, 200));
+    }
 
     // 居中文字 + 黑色阴影
     ImVec2 textSize = ImGui::CalcTextSize(label);

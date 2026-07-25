@@ -73,8 +73,8 @@ void MultiplayerScreen::renderServerList() {
         ImGui::SetCursorPos(ImVec2(w * 0.5f - 120.0f, listHeight * 0.4f));
         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "暂无保存的服务器");
     } else {
-        // 懒加载默认服务器图标
-        if (defaultServerIconTexID == 0) {
+        // 懒加载默认服务器图标（Vulkan 后端暂不支持 GL 纹理）
+        if (defaultServerIconTexID == 0 && !GameUI::getInstance().isVulkanBackend()) {
             TextureData tex = TextureLoader::loadPNG("misc/unknown_server.png");
             if (tex.data && tex.width > 0 && tex.height > 0) {
                 glGenTextures(1, &defaultServerIconTexID);
@@ -86,8 +86,8 @@ void MultiplayerScreen::renderServerList() {
             }
         }
 
-        // 懒加载延迟信号图标
-        if (pingTex[0] == 0) {
+        // 懒加载延迟信号图标（Vulkan 后端暂不支持 GL 纹理）
+        if (pingTex[0] == 0 && !GameUI::getInstance().isVulkanBackend()) {
             auto loadPingTex = [](GLuint& texID, const char* path) {
                 TextureData tex = TextureLoader::loadPNG(path);
                 if (tex.data && tex.width > 0 && tex.height > 0) {
@@ -121,8 +121,9 @@ void MultiplayerScreen::renderServerList() {
 
                 bool isSelected = (selectedServer == (int)i);
 
-                // 懒上传服务器图标纹理
-                if (!servers[i].faviconPngData.empty() && servers[i].iconTextureID == 0) {
+                // 懒上传服务器图标纹理（Vulkan 后端暂不支持 GL 纹理）
+                if (!servers[i].faviconPngData.empty() && servers[i].iconTextureID == 0 &&
+                    !GameUI::getInstance().isVulkanBackend()) {
                     int iw, ih, ich;
                     uint8_t* pixels = stbi_load_from_memory(
                         servers[i].faviconPngData.data(), (int)servers[i].faviconPngData.size(),

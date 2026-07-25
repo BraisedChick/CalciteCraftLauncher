@@ -25,8 +25,8 @@ void TitleScreen::render(int mouseX, int mouseY) {
                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
                  ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground);
 
-    // 标题图片（懒加载 minecraft.png）
-    if (titleTextureID == 0) {
+    // 标题图片（懒加载 minecraft.png；Vulkan 后端暂不支持 GL 纹理，走文字回退）
+    if (titleTextureID == 0 && !GameUI::getInstance().isVulkanBackend()) {
         TextureData tex = TextureLoader::loadPNG("gui/title/minecraft.png");
         if (tex.data && tex.width > 0 && tex.height > 0) {
             glGenTextures(1, &titleTextureID);
@@ -40,7 +40,7 @@ void TitleScreen::render(int mouseX, int mouseY) {
     }
 
     // 副标题图片（懒加载 edition.png）
-    if (editionTextureID == 0) {
+    if (editionTextureID == 0 && !GameUI::getInstance().isVulkanBackend()) {
         TextureData tex = TextureLoader::loadPNG("gui/title/edition.png");
         if (tex.data && tex.width > 0 && tex.height > 0) {
             glGenTextures(1, &editionTextureID);

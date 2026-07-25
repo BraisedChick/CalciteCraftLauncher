@@ -3,8 +3,12 @@
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
+#include <chrono>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include "imgui.h"
+#include "imgui_impl_vulkan.h"
+#include "gui/GameUI.h"
 
 #define LOG_TAG "VulkanRenderer"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -180,6 +184,15 @@ bool VulkanRenderer::createDepthResources() {
 }
 
 void VulkanRenderer::cleanup() {
+    // 先等待 GPU 空闲，再销毁 ImGui 后端（必须在 device 销毁之前）
+    if (device != VK_NULL_HANDLE) {
+        vkDeviceWaitIdle(device);
+    }
+    if (imguiInitialized) {
+        GameUI::getInstance().shutdown();  // 内部调用 ImGui_ImplVulkan_Shutdown
+        imguiInitialized = false;
+    }
+
     cleanupSwapchain();
 
     if (uniformBuffer != VK_NULL_HANDLE) {
@@ -304,10 +317,79 @@ void VulkanRenderer::recreateSwapchain(int width, int height) {
     createCommandBuffers();
 }
 
+// 切屏回来后重建 Surface + Swapchain（旧 Surface 已失效）
+bool VulkanRenderer::recreateSurface(ANativeWindow* window, int width, int height) {
+    if (device == VK_NULL_HANDLE || instance == VK_NULL_HANDLE) return false;
+    vkDeviceWaitIdle(device);
+
+    cleanupSwapchain();
+
+    if (surface != VK_NULL_HANDLE) {
+        vkDestroySurfaceKHR(instance, surface, nullptr);
+        surface = VK_NULL_HANDLE;
+    }
+    if (!createSurface(window)) return false;
+
+    screenWidth = width;
+    screenHeight = height;
+
+    if (!createSwapchain(width, height)) return false;
+    if (!createImageViews()) return false;
+    if (!createDepthResources()) return false;
+    if (!createRenderPass()) return false;
+    if (!createGraphicsPipeline()) return false;
+    if (!createFramebuffers()) return false;
+    if (!createCommandBuffers()) return false;
+
+    surfaceValid = true;
+    LOGI("Vulkan surface recreated: %dx%d", width, height);
+    return true;
+}
+
+// ImGui Vulkan 后端接入：先初始化 GameUI（字体/样式/回调），再初始化 Vulkan 后端
+bool VulkanRenderer::initImGui() {
+    if (imguiInitialized) return true;
+
+    GameUI::getInstance().setVulkanBackend(true);
+    if (!GameUI::getInstance().init()) {
+        LOGE("Failed to init GameUI for Vulkan backend");
+        return false;
+    }
+
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2((float)swapchainExtent.width, (float)swapchainExtent.height);
+
+    ImGui_ImplVulkan_InitInfo initInfo{};
+    initInfo.ApiVersion = VK_API_VERSION_1_0;
+    initInfo.Instance = instance;
+    initInfo.PhysicalDevice = physicalDevice;
+    initInfo.Device = device;
+    initInfo.QueueFamily = graphicsQueueFamily;
+    initInfo.Queue = graphicsQueue;
+    initInfo.DescriptorPoolSize = 64;  // 后端自建描述符池
+    initInfo.MinImageCount = swapchainMinImageCount;
+    initInfo.ImageCount = (uint32_t)swapchainImages.size();
+    initInfo.PipelineInfoMain.RenderPass = renderPass;
+    initInfo.PipelineInfoMain.Subpass = 0;
+    initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+
+    if (!ImGui_ImplVulkan_Init(&initInfo)) {
+        LOGE("Failed to initialize ImGui Vulkan backend");
+        return false;
+    }
+
+    imguiInitialized = true;
+    LOGI("ImGui Vulkan backend initialized");
+    return true;
+}
+
 void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
                             float pitch, float yaw) {
     static int frameCount = 0;
     frameCount++;
+
+    // Surface 已失效（切屏）：跳过渲染防止崩溃
+    if (!surfaceValid) return;
 
     // 每帧更新 uniform buffer
     updateUniformBuffer(cameraX, cameraY, cameraZ, pitch, yaw);
@@ -354,6 +436,22 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
     vkResetFences(device, 1, &inFlightFence);
     vkResetCommandBuffer(commandBuffers[imageIndex], 0);
 
+    // 主界面模式：非游戏状态下构建 ImGui 绘制数据（命令录制前）
+    bool menuMode = imguiInitialized &&
+                    GameUI::getInstance().getState() != UIState::IN_GAME;
+    if (menuMode) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.DisplaySize = ImVec2((float)swapchainExtent.width, (float)swapchainExtent.height);
+        // 真实帧间隔（菜单动画/双击判定依赖）
+        static auto lastFrameTime = std::chrono::high_resolution_clock::now();
+        auto now = std::chrono::high_resolution_clock::now();
+        float dt = std::chrono::duration<float>(now - lastFrameTime).count();
+        lastFrameTime = now;
+        io.DeltaTime = dt > 0.0001f ? dt : 0.0001f;
+
+        GameUI::getInstance().render();  // Vulkan 模式下仅构建 draw data，不提交
+    }
+
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 
@@ -389,30 +487,35 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
 
     vkCmdBeginRenderPass(commandBuffers[imageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    vkCmdBindPipeline(commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+    if (menuMode) {
+        // 主界面：清屏色背景 + ImGui（全景背景留待第二步）
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffers[imageIndex]);
+    } else {
+        vkCmdBindPipeline(commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-    VkViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = (float)swapchainExtent.width;
-    viewport.height = (float)swapchainExtent.height;
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(commandBuffers[imageIndex], 0, 1, &viewport);
+        VkViewport viewport{};
+        viewport.x = 0.0f;
+        viewport.y = 0.0f;
+        viewport.width = (float)swapchainExtent.width;
+        viewport.height = (float)swapchainExtent.height;
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+        vkCmdSetViewport(commandBuffers[imageIndex], 0, 1, &viewport);
 
-    VkRect2D scissor{};
-    scissor.offset = {0, 0};
-    scissor.extent = swapchainExtent;
-    vkCmdSetScissor(commandBuffers[imageIndex], 0, 1, &scissor);
+        VkRect2D scissor{};
+        scissor.offset = {0, 0};
+        scissor.extent = swapchainExtent;
+        vkCmdSetScissor(commandBuffers[imageIndex], 0, 1, &scissor);
 
-    VkBuffer vertexBuffers[] = {vertexBuffer};
-    VkDeviceSize offsets[] = {0};
-    vkCmdBindVertexBuffers(commandBuffers[imageIndex], 0, 1, vertexBuffers, offsets);
-    vkCmdBindIndexBuffer(commandBuffers[imageIndex], indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-    vkCmdBindDescriptorSets(commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                           pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
+        VkBuffer vertexBuffers[] = {vertexBuffer};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(commandBuffers[imageIndex], 0, 1, vertexBuffers, offsets);
+        vkCmdBindIndexBuffer(commandBuffers[imageIndex], indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdBindDescriptorSets(commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                               pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
 
-    vkCmdDrawIndexed(commandBuffers[imageIndex], indexCount, 1, 0, 0, 0);
+        vkCmdDrawIndexed(commandBuffers[imageIndex], indexCount, 1, 0, 0, 0);
+    }
 
     vkCmdEndRenderPass(commandBuffers[imageIndex]);
     vkEndCommandBuffer(commandBuffers[imageIndex]);
@@ -679,6 +782,7 @@ bool VulkanRenderer::createLogicalDevice() {
 
     vkGetDeviceQueue(device, graphicsFamily, 0, &graphicsQueue);
     vkGetDeviceQueue(device, presentFamily, 0, &presentQueue);
+    graphicsQueueFamily = (uint32_t)graphicsFamily;  // 供命令池/ImGui 后端使用
 
     LOGI("Logical device created");
     return true;
@@ -740,10 +844,23 @@ bool VulkanRenderer::createSwapchain(int width, int height) {
         extent.height = height;
     }
 
+    // Android 预旋转：声明 IDENTITY 让合成器负责旋转（与 GL 路径行为一致）。
+    // 若直接传 currentTransform（如 ROTATE_90）则相当于声明内容已自行预旋转，
+    // 而我们按横屏坐标直接绘制，会导致画面以竖屏姿态显示。
+    VkSurfaceTransformFlagBitsKHR preTransform;
+    if (capabilities.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) {
+        preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+    } else {
+        preTransform = capabilities.currentTransform;
+    }
+    LOGI("Swapchain preTransform: %d (currentTransform: %d)",
+         preTransform, capabilities.currentTransform);
+
     uint32_t imageCount = capabilities.minImageCount + 1;
     if (capabilities.maxImageCount > 0 && imageCount > capabilities.maxImageCount) {
         imageCount = capabilities.maxImageCount;
     }
+    swapchainMinImageCount = imageCount;  // 供 ImGui 后端使用（>= 2）
 
     VkSwapchainCreateInfoKHR createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
@@ -755,7 +872,7 @@ bool VulkanRenderer::createSwapchain(int width, int height) {
     createInfo.imageArrayLayers = 1;
     createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    createInfo.preTransform = capabilities.currentTransform;
+    createInfo.preTransform = preTransform;
     createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     createInfo.presentMode = presentMode;
     createInfo.clipped = VK_TRUE;
@@ -1078,7 +1195,7 @@ bool VulkanRenderer::createCommandPool() {
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 
-    uint32_t queueFamilyIndex = 0;
+    uint32_t queueFamilyIndex = graphicsQueueFamily;
     poolInfo.queueFamilyIndex = queueFamilyIndex;
 
     if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {

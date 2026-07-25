@@ -23,6 +23,13 @@ public:
     void updateVertexBuffer(const std::vector<Vertex>& vertices);
     void recreateSwapchain(int width, int height);
 
+    // ImGui Vulkan 后端接入（主界面渲染，第一步）
+    bool initImGui();
+
+    // 切屏后 Surface 释放/重建（防止向失效 Surface 提交）
+    void invalidateSurface() { surfaceValid = false; }
+    bool recreateSurface(ANativeWindow* window, int width, int height);
+
 private:
     struct SwapchainSupportDetails {
         VkSurfaceCapabilitiesKHR capabilities;
@@ -68,6 +75,7 @@ private:
     VkDevice device;
     VkQueue graphicsQueue;
     VkQueue presentQueue;
+    uint32_t graphicsQueueFamily = 0;
 
     // Swapchain
     VkSwapchainKHR swapchain;
@@ -75,6 +83,7 @@ private:
     VkFormat swapchainImageFormat;
     VkExtent2D swapchainExtent;
     std::vector<VkImageView> swapchainImageViews;
+    uint32_t swapchainMinImageCount = 2;
 
     // Depth buffer
     VkImage depthImage;
@@ -120,4 +129,8 @@ private:
 
     int screenWidth = 0;
     int screenHeight = 0;
+
+    // ImGui 状态
+    bool imguiInitialized = false;
+    bool surfaceValid = true;
 };

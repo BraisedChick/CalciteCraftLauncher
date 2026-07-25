@@ -910,19 +910,10 @@ public class LauncherActivity extends Activity {
 
     private void fillRendererPage() {
         RadioGroup rgRenderer = pageRenderer.findViewById(R.id.rgRenderer);
-        RadioButton rbOpenGL = pageRenderer.findViewById(R.id.rbOpenGL);
         RadioButton rbVulkan = pageRenderer.findViewById(R.id.rbVulkan);
         MioButton btnSave = pageRenderer.findViewById(R.id.btnSaveRenderer);
 
         rgRenderer.check(useVulkan ? R.id.rbVulkan : R.id.rbOpenGL);
-
-        rbVulkan.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            if (isChecked) {
-                Toast.makeText(this, "Vulkan 渲染器暂未实现，将使用 OpenGL ES",
-                    Toast.LENGTH_LONG).show();
-                rbOpenGL.setChecked(true);
-            }
-        });
 
         btnSave.setOnClickListener(v -> {
             useVulkan = rbVulkan.isChecked();

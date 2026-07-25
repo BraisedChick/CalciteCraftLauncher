@@ -45,8 +45,6 @@
                 android:layout_weight="1"
                 android:text="Vulkan"
                 android:textColor="#ffffff"
-                android:enabled="false"
-                android:alpha="0.5"
                 android:padding="8dp" />
         </RadioGroup>
 

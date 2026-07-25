@@ -52,6 +52,9 @@ public class MainActivity extends Activity {
         return bytes;
     }
 
+    // 渲染器选择（由启动器通过 Intent 传入，true 使用 Vulkan）
+    private boolean useVulkan = false;
+
     private RendererSurfaceView rendererSurfaceView;
     private boolean libraryLoaded = false;
     private Process logcatProcess;
@@ -88,13 +91,15 @@ public class MainActivity extends Activity {
         String accessToken = intent.getStringExtra("access_token");
         String uuid = intent.getStringExtra("uuid");
         String tokenType = intent.getStringExtra("token_type");
+        useVulkan = intent.getBooleanExtra("use_vulkan", false);
         loadLibraryForProtocol(protocolVersion);
 
         // 启动 logcat 重定向到本地文件（捕获所有 C++/Java 日志）
         startLogcatCapture();
 
         android.util.Log.i("MainActivity", "========================================");
-        android.util.Log.i("MainActivity", "onCreate started, protocol=" + protocolVersion);
+        android.util.Log.i("MainActivity", "onCreate started, protocol=" + protocolVersion
+                + ", renderer=" + (useVulkan ? "Vulkan" : "OpenGL ES"));
         android.util.Log.i("MainActivity", "========================================");
 
         // 强制横屏
@@ -437,6 +442,7 @@ public class MainActivity extends Activity {
 
     public void onVulkanSurfaceCreated(android.view.Surface surface) {
         try {
+            setRendererType(useVulkan);
             initRenderer(surface);
         } catch (UnsatisfiedLinkError e) {
             android.util.Log.e("MainActivity", "UnsatisfiedLinkError in initRenderer", e);

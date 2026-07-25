@@ -55,6 +55,10 @@ public:
 
     bool isInitialized() const { return initialized; }
 
+    // 渲染后端（false=OpenGL ES，true=Vulkan），需在 init() 之前设置
+    void setVulkanBackend(bool v) { vulkanBackend = v; }
+    bool isVulkanBackend() const { return vulkanBackend; }
+
     // 游戏内菜单
     void setGameMenuOpen(bool open) { gameMenuOpen = open; }
     bool isGameMenuOpen() const { return gameMenuOpen; }
@@ -226,6 +230,7 @@ private:
     std::string connectingAddress;
 
     bool initialized = false;
+    bool vulkanBackend = false;
     GLuint panoramaTextureID = 0;
 
     struct TouchEvent {

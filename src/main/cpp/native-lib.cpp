@@ -216,7 +216,23 @@ Java_com_calcite_MainActivity_initRenderer(
         JNI_LOGE("Failed to get ANativeWindow");
         return;
     }
-    if (!client->initializeRenderer(window)) {
+    if (g_useVulkan) {
+        // Vulkan 路径（第一步：仅渲染主界面 ImGui）
+        int w = ANativeWindow_getWidth(window);
+        int h = ANativeWindow_getHeight(window);
+        g_vulkanRenderer = new VulkanRenderer();
+        if (!g_vulkanRenderer->initialize(window, w, h)) {
+            JNI_LOGE("Failed to initialize Vulkan renderer");
+            delete g_vulkanRenderer;
+            g_vulkanRenderer = nullptr;
+            ANativeWindow_release(window);
+            return;
+        }
+        if (!g_vulkanRenderer->initImGui()) {
+            JNI_LOGE("Failed to initialize ImGui Vulkan backend");
+        }
+        JNI_LOGI("Vulkan renderer initialized: %dx%d", w, h);
+    } else if (!client->initializeRenderer(window)) {
         JNI_LOGE("Failed to initialize renderer");
         ANativeWindow_release(window);
         return;
@@ -311,6 +327,10 @@ Java_com_calcite_MainActivity_onSurfaceReleased(
             renderer->requestSurfaceRelease();
         }
     }
+    // Vulkan 模式：标记 Surface 失效，渲染线程跳过提交
+    if (g_vulkanRenderer) {
+        g_vulkanRenderer->invalidateSurface();
+    }
     // 渲染线程继续运行，render() 内部检测到 Surface 无效会跳过
 }
 
@@ -332,6 +352,15 @@ Java_com_calcite_MainActivity_onSurfaceRecreated(
             renderer->requestSurfaceRecreate(window);  // 所有权转移，渲染线程处理完负责 release
             return;
         }
+    }
+
+    // Vulkan 模式：直接重建 Surface + Swapchain（渲染线程此时因 surfaceValid=false 空转）
+    if (g_vulkanRenderer) {
+        int w = ANativeWindow_getWidth(window);
+        int h = ANativeWindow_getHeight(window);
+        g_vulkanRenderer->recreateSurface(window, w, h);
+        ANativeWindow_release(window);
+        return;
     }
 
     // 没有 renderer 时直接释放，避免泄露
