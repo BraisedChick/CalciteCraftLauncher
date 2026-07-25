@@ -231,7 +231,7 @@ AESEncrypter::~AESEncrypter() = default;
 
 // ============================================================
 // Init: 用共享密钥初始化 AES-128-CFB8
-// 与 Botcraft/OpenSSL 行为一致：key = sharedSecret, IV = sharedSecret
+// 与OpenSSL 行为一致：key = sharedSecret, IV = sharedSecret
 // ============================================================
 void AESEncrypter::Init(const std::vector<unsigned char>& sharedSecret) {
     if (sharedSecret.size() != 16) {
@@ -249,7 +249,7 @@ void AESEncrypter::Init(const std::vector<unsigned char>& sharedSecret) {
     }
 
     initialized = true;
-    LOGI("AESEncrypter: AES-128-CFB8 initialized (pure C++, no OpenSSL)");
+    LOGI("AESEncrypter: AES-128-CFB8 initialized ");
 }
 
 // ============================================================
