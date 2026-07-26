@@ -1,9 +1,11 @@
 #pragma once
 
 #include "imgui.h"
+#include "imgui_impl_vulkan.h"
 #include "ResourcepackManager.h"
 #include "MusicManager.h"
 #include "ClientEngine/ClientEngine.h"
+#include "Renderer/VulkanRenderer.h"
 #include "GameUI.h"
 #include <string>
 #include <cstdint>
@@ -93,29 +95,41 @@ inline float drawMcText(float x, float y, const std::string& text, ImU32 default
 
 // ===== MC 风格九宫格按钮 =====
 
-// 按钮纹理即时获取（不缓存 GL ID，由 ResourcepackManager 统一管理缓存）
-inline void ensureWidgetTextures(GLuint& button, GLuint& buttonHighlighted, GLuint& buttonDisabled) {
-    // Vulkan 后端暂无 GL 纹理，按钮回退纯色绘制（第一步）
+// 按钮纹理即时获取（不缓存 ID，GL 由 ResourcepackManager、Vulkan 由 VulkanRenderer 统一管理缓存）
+// GL 后端：ImTextureID = GL 纹理 ID；Vulkan 后端：ImTextureID = ImGui_ImplVulkan_AddTexture 返回的 VkDescriptorSet
+inline void ensureWidgetTextures(ImTextureID& button, ImTextureID& buttonHighlighted, ImTextureID& buttonDisabled) {
     if (GameUI::getInstance().isVulkanBackend()) {
-        button = buttonHighlighted = buttonDisabled = 0;
+        auto* vk = ClientEngine::getInstance() ? ClientEngine::getInstance()->getVulkanRenderer() : nullptr;
+        if (!vk) {
+            button = buttonHighlighted = buttonDisabled = 0;
+            return;
+        }
+        button = (ImTextureID)(intptr_t)vk->getGuiTexture("sprites/widget/button");
+        buttonHighlighted = (ImTextureID)(intptr_t)vk->getGuiTexture("sprites/widget/button_highlighted");
+        buttonDisabled = (ImTextureID)(intptr_t)vk->getGuiTexture("sprites/widget/button_disabled");
         return;
     }
     auto& rm = ResourcepackManager::getInstance();
-    button = rm.getGuiTexture("sprites/widget/button");
-    buttonHighlighted = rm.getGuiTexture("sprites/widget/button_highlighted");
-    buttonDisabled = rm.getGuiTexture("sprites/widget/button_disabled");
+    button = (ImTextureID)(intptr_t)rm.getGuiTexture("sprites/widget/button");
+    buttonHighlighted = (ImTextureID)(intptr_t)rm.getGuiTexture("sprites/widget/button_highlighted");
+    buttonDisabled = (ImTextureID)(intptr_t)rm.getGuiTexture("sprites/widget/button_disabled");
 }
 
 // 九宫格绘制（MC .mcmeta nine_slice 规范）
 // texW/texH = 纹理像素尺寸，border = 边框像素宽度
-inline void drawNineSlice(ImDrawList* dl, GLuint tex,
+inline void drawNineSlice(ImDrawList* dl, ImTextureID tex,
     ImVec2 pos, ImVec2 size,
     float texW, float texH, float border)
 {
     if (tex == 0) return;
-    dl->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
-        glBindSampler(0, 0);
-    }, nullptr);
+    // 像素风纹理需 NEAREST 采样：GL 解绑 sampler 回退纹理自身参数，Vulkan 切后端内置 Nearest sampler
+    if (GameUI::getInstance().isVulkanBackend()) {
+        dl->AddCallback(ImGui_ImplVulkan_DrawCallback_SetSamplerNearest, nullptr);
+    } else {
+        dl->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
+            glBindSampler(0, 0);
+        }, nullptr);
+    }
 
     float u[4] = { 0, border / texW, (texW - border) / texW, 1.0f };
     float v[4] = { 0, border / texH, (texH - border) / texH, 1.0f };
@@ -124,17 +138,22 @@ inline void drawNineSlice(ImDrawList* dl, GLuint tex,
 
     for (int r = 0; r < 3; r++) {
         for (int c = 0; c < 3; c++) {
-            dl->AddImage((ImTextureID)(intptr_t)tex,
+            dl->AddImage(tex,
                 ImVec2(sx[c], sy[r]), ImVec2(sx[c + 1], sy[r + 1]),
                 ImVec2(u[c], v[r]), ImVec2(u[c + 1], v[r + 1]));
         }
+    }
+
+    // Vulkan 后端恢复默认 Linear（字体等后续绘制依赖）
+    if (GameUI::getInstance().isVulkanBackend()) {
+        dl->AddCallback(ImGui_ImplVulkan_DrawCallback_SetSamplerLinear, nullptr);
     }
 }
 
 // MC 风格按钮：九宫格纹理 + 居中文字 + 黑色阴影
 // 返回 true 当按钮被点击（与 ImGui::Button 相同语义）
 inline bool McButton(const char* label, ImVec2 size, bool enabled = true) {
-    GLuint btn, btnHl, btnDis;
+    ImTextureID btn, btnHl, btnDis;
     ensureWidgetTextures(btn, btnHl, btnDis);
 
     // 不可见按钮做点击/悬停检测
@@ -144,7 +163,7 @@ inline bool McButton(const char* label, ImVec2 size, bool enabled = true) {
     if (!enabled) ImGui::EndDisabled();
 
     // 根据状态选择纹理
-    GLuint tex;
+    ImTextureID tex;
     ImU32 textColor;
     if (!enabled) {
         tex = btnDis;
