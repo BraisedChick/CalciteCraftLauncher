@@ -203,10 +203,6 @@ private:
 
     // 视锥体平面（6 个，格式为 Ax+By+Cz+D=0）
     glm::vec4 frustumPlanes[6];
-    void rebuildMesh();
-    void addBlockToMesh(std::vector<Vertex>& vertices,
-                       std::vector<uint32_t>& indices,
-                       float x, float y, float z);
 
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLContext context = EGL_NO_CONTEXT;

@@ -1121,58 +1121,6 @@ void GLRenderer::processCompletedWork() {
     }
 }
 
-void GLRenderer::addBlockToMesh(std::vector<Vertex>& vertices,
-                                std::vector<uint32_t>& indices,
-                                float x, float y, float z) {
-    uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
-
-    // 前面 (z+)
-    vertices.push_back({{x, y, z + 1.0f}, {0.0f, 0.0f}});
-    vertices.push_back({{x + 1.0f, y, z + 1.0f}, {1.0f, 0.0f}});
-    vertices.push_back({{x + 1.0f, y + 1.0f, z + 1.0f}, {1.0f, 1.0f}});
-    vertices.push_back({{x, y + 1.0f, z + 1.0f}, {0.0f, 1.0f}});
-
-    // 后面 (z-)
-    vertices.push_back({{x + 1.0f, y, z}, {0.0f, 0.0f}});
-    vertices.push_back({{x, y, z}, {1.0f, 0.0f}});
-    vertices.push_back({{x, y + 1.0f, z}, {1.0f, 1.0f}});
-    vertices.push_back({{x + 1.0f, y + 1.0f, z}, {0.0f, 1.0f}});
-
-    // 上面 (y+)
-    vertices.push_back({{x, y + 1.0f, z + 1.0f}, {0.0f, 0.0f}});
-    vertices.push_back({{x + 1.0f, y + 1.0f, z + 1.0f}, {1.0f, 0.0f}});
-    vertices.push_back({{x + 1.0f, y + 1.0f, z}, {1.0f, 1.0f}});
-    vertices.push_back({{x, y + 1.0f, z}, {0.0f, 1.0f}});
-
-    // 下面 (y-)
-    vertices.push_back({{x, y, z}, {0.0f, 0.0f}});
-    vertices.push_back({{x + 1.0f, y, z}, {1.0f, 0.0f}});
-    vertices.push_back({{x + 1.0f, y, z + 1.0f}, {1.0f, 1.0f}});
-    vertices.push_back({{x, y, z + 1.0f}, {0.0f, 1.0f}});
-
-    // 右面 (x+)
-    vertices.push_back({{x + 1.0f, y, z + 1.0f}, {0.0f, 0.0f}});
-    vertices.push_back({{x + 1.0f, y, z}, {1.0f, 0.0f}});
-    vertices.push_back({{x + 1.0f, y + 1.0f, z}, {1.0f, 1.0f}});
-    vertices.push_back({{x + 1.0f, y + 1.0f, z + 1.0f}, {0.0f, 1.0f}});
-
-    // 左面 (x-)
-    vertices.push_back({{x, y, z}, {0.0f, 0.0f}});
-    vertices.push_back({{x, y, z + 1.0f}, {1.0f, 0.0f}});
-    vertices.push_back({{x, y + 1.0f, z + 1.0f}, {1.0f, 1.0f}});
-    vertices.push_back({{x, y + 1.0f, z}, {0.0f, 1.0f}});
-
-    for (int face = 0; face < 6; face++) {
-        uint32_t offset = baseIndex + face * 4;
-        indices.push_back(offset);
-        indices.push_back(offset + 1);
-        indices.push_back(offset + 2);
-        indices.push_back(offset);
-        indices.push_back(offset + 2);
-        indices.push_back(offset + 3);
-    }
-}
-
 void GLRenderer::updateCamera(float cx, float cy, float cz, float pitch, float yaw) {
 
     // 1. 加眼睛高度偏移（玩家脚部 → 眼睛，原版 1.62 格）
