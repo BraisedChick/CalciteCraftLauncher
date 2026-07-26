@@ -18,6 +18,14 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
+// 两段式销毁：uninit 内部会关闭设备流并 join 后台音频线程，之后释放内存才安全
+void MaEngineDeleter::operator()(ma_engine* engine) const noexcept {
+    if (engine) {
+        ma_engine_uninit(engine);
+        delete engine;
+    }
+}
+
 MusicManager::MusicManager() {
     // 空构造，所有初始化在 init() 中完成
 }
@@ -43,6 +51,7 @@ float MusicManager::randomDelay(float minSec, float maxSec) const {
 
 bool MusicManager::init() {
     if (initialized) return true;
+    // init 成功前不交给 unique_ptr：失败时引擎未初始化，删除器里的 uninit 不可调用
     auto* eng = new ma_engine();
     ma_engine_config config = ma_engine_config_init();
     config.channels = 2;
@@ -50,7 +59,7 @@ bool MusicManager::init() {
     if (ma_engine_init(&config, eng) != MA_SUCCESS) {
         LOGE("Failed to init miniaudio engine"); delete eng; return false;
     }
-    engine = eng;
+    engine.reset(eng);
     rng.seed((unsigned)std::chrono::steady_clock::now().time_since_epoch().count());
     nextSongDelay = STARTING_DELAY;
     initialized = true;
@@ -64,11 +73,7 @@ void MusicManager::shutdown() {
     initialized = false;
     LOGI("MusicManager shutdown...");
     stopPlaying();
-    if (engine) {
-        ma_engine_uninit(static_cast<ma_engine*>(engine));
-        delete static_cast<ma_engine*>(engine);
-        engine = nullptr;
-    }
+    engine.reset();  // 删除器负责 uninit + 释放
     for (auto& os : activeOneShots) {
         if (os.sound) delete static_cast<ma_sound*>(os.sound);
         if (os.buffer) delete static_cast<ma_audio_buffer*>(os.buffer);
@@ -139,7 +144,7 @@ void MusicManager::setScene(MusicScene scene) {
 
 void MusicManager::setVolume(float volume) {
     musicVolume = std::max(0.0f, std::min(1.0f, volume));
-    if (engine) ma_engine_set_volume(static_cast<ma_engine*>(engine), musicVolume);
+    if (engine) ma_engine_set_volume(engine.get(), musicVolume);
 }
 
 std::string MusicManager::extractOggToTemp(const std::string& resourcePath) {
@@ -173,7 +178,7 @@ void MusicManager::startPlaying(const std::string& resourcePath) {
     }
 
     auto* snd = new ma_sound();
-    if (ma_sound_init_from_data_source(static_cast<ma_engine*>(engine), (ma_data_source*)ds, 0, nullptr, snd) != MA_SUCCESS) {
+    if (ma_sound_init_from_data_source(engine.get(), (ma_data_source*)ds, 0, nullptr, snd) != MA_SUCCESS) {
         LOGE("ma_sound_init_from_data_source failed for %s", filePath.c_str());
         ma_data_source_uninit((ma_data_source*)ds); ov_clear(&ds->vf); delete ds; delete snd;
         return;
@@ -251,7 +256,7 @@ void MusicManager::playClickSound() {
     auto* buf = new ma_audio_buffer();
     if (ma_audio_buffer_init_copy(&cfg, buf) != MA_SUCCESS) { delete buf; return; }
     auto* snd = new ma_sound();
-    if (ma_sound_init_from_data_source(static_cast<ma_engine*>(engine), buf, 0, nullptr, snd) != MA_SUCCESS) {
+    if (ma_sound_init_from_data_source(engine.get(), buf, 0, nullptr, snd) != MA_SUCCESS) {
         ma_audio_buffer_uninit(buf); delete buf; delete snd; return;
     }
     ma_sound_set_volume(snd, 0.25f);
@@ -282,7 +287,7 @@ void MusicManager::playOneShot(const std::string& resourcePath) {
     auto* abuf = new ma_audio_buffer();
     if (ma_audio_buffer_init_copy(&cfg, abuf) != MA_SUCCESS) { delete abuf; return; }
     auto* snd = new ma_sound();
-    if (ma_sound_init_from_data_source(static_cast<ma_engine*>(engine), abuf, 0, nullptr, snd) != MA_SUCCESS) {
+    if (ma_sound_init_from_data_source(engine.get(), abuf, 0, nullptr, snd) != MA_SUCCESS) {
         ma_audio_buffer_uninit(abuf); delete abuf; delete snd; return;
     }
     ma_sound_set_volume(snd, 1.0f);

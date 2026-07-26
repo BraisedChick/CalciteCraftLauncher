@@ -4,8 +4,17 @@
 #include <vector>
 #include <random>
 #include <chrono>
+#include <memory>
 
 #include "MinivorbisDataSource.h"
+
+// miniaudio 完整定义仅在 .cpp 中随实现宏引入，此处前置声明供智能指针使用
+struct ma_engine;
+
+// ma_engine 专用删除器：先 ma_engine_uninit（同步停音频线程）再释放内存，定义在 .cpp
+struct MaEngineDeleter {
+    void operator()(ma_engine* engine) const noexcept;
+};
 
 enum class MusicScene {
     MENU,
@@ -48,7 +57,7 @@ private:
     MinivorbisDataSource* currentDataSource = nullptr;
 
     bool initialized = false;
-    void* engine = nullptr;
+    std::unique_ptr<ma_engine, MaEngineDeleter> engine;
     void* currentSound = nullptr;
     void* audioBuffer = nullptr;
     short* pcmData = nullptr;
