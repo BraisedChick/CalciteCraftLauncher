@@ -10,6 +10,11 @@
 #include "CommonTypes.h"
 #include "PanoramaView.h"
 
+// VMA 句柄前置声明（完整定义在 VulkanRenderer.cpp 随 VMA_IMPLEMENTATION 展开，
+// 与 vk_mem_alloc.h 内部的 VK_DEFINE_HANDLE 重复 typedef 同一类型，合法）
+VK_DEFINE_HANDLE(VmaAllocator)
+VK_DEFINE_HANDLE(VmaAllocation)
+
 class VulkanRenderer {
 public:
     VulkanRenderer();
@@ -68,7 +73,7 @@ private:
     // GUI 纹理上传（staging buffer → VkImage → SHADER_READ_ONLY）
     struct GuiTexture {
         VkImage image = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VmaAllocation memory = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE;
         VkDescriptorSet descriptorSet = VK_NULL_HANDLE;  // ImGui_ImplVulkan_AddTexture 返回
     };
@@ -83,16 +88,16 @@ private:
 
     std::vector<char> readFile(const std::string& filename);
     VkShaderModule createShaderModule(const std::vector<char>& code);
-    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+    bool createAllocator();
     VkFormat findDepthFormat();
     VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
     uint32_t findGraphicsQueueFamily();
 
-    // 通用资源辅助（GUI 纹理与全景共用的创建/上传样板）
+    // 通用资源辅助（GUI 纹理与全景共用的创建/上传样板，内存统一由 VMA 分配）
     bool createHostBuffer(VkBufferUsageFlags usage, const void* src, VkDeviceSize size,
-                          VkBuffer& outBuf, VkDeviceMemory& outMem);
+                          VkBuffer& outBuf, VmaAllocation& outAlloc);
     bool createDeviceImage(uint32_t width, uint32_t height, uint32_t layers,
-                           VkImageCreateFlags flags, VkImage& outImage, VkDeviceMemory& outMem);
+                           VkImageCreateFlags flags, VkImage& outImage, VmaAllocation& outAlloc);
     bool createRgbaImageView(VkImage image, VkImageViewType type, uint32_t layers, VkImageView& outView);
     VkCommandBuffer beginOneTimeCommands();
     void endOneTimeCommands(VkCommandBuffer cmd);
@@ -110,6 +115,9 @@ private:
     VkQueue presentQueue;
     uint32_t graphicsQueueFamily = 0;
 
+    // VMA 分配器（所有 buffer/image 内存经由它分配，大块预分配 + 子分配）
+    VmaAllocator allocator = VK_NULL_HANDLE;
+
     // Swapchain
     VkSwapchainKHR swapchain;
     std::vector<VkImage> swapchainImages;
@@ -120,7 +128,7 @@ private:
 
     // Depth buffer
     VkImage depthImage;
-    VkDeviceMemory depthImageMemory;
+    VmaAllocation depthImageMemory;
     VkImageView depthImageView;
 
     // Pipeline
@@ -138,17 +146,17 @@ private:
 
     // Vertex buffer
     VkBuffer vertexBuffer;
-    VkDeviceMemory vertexBufferMemory;
+    VmaAllocation vertexBufferMemory;
     uint32_t vertexCount = 0;
 
     // Index buffer
     VkBuffer indexBuffer;
-    VkDeviceMemory indexBufferMemory;
+    VmaAllocation indexBufferMemory;
     uint32_t indexCount = 0;
 
     // Uniform buffer
     VkBuffer uniformBuffer;
-    VkDeviceMemory uniformBufferMemory;
+    VmaAllocation uniformBufferMemory;
     void* uniformBufferMapped;
 
     // Descriptor sets
@@ -172,13 +180,13 @@ private:
     bool panoramaInitAttempted = false;
     bool panoramaReady = false;
     VkImage panoramaImage = VK_NULL_HANDLE;
-    VkDeviceMemory panoramaImageMemory = VK_NULL_HANDLE;
+    VmaAllocation panoramaImageMemory = VK_NULL_HANDLE;
     VkImageView panoramaImageView = VK_NULL_HANDLE;      // VK_IMAGE_VIEW_TYPE_CUBE
     VkSampler panoramaSampler = VK_NULL_HANDLE;
     VkBuffer panoramaVertexBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory panoramaVertexMemory = VK_NULL_HANDLE;
+    VmaAllocation panoramaVertexMemory = VK_NULL_HANDLE;
     VkBuffer panoramaIndexBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory panoramaIndexMemory = VK_NULL_HANDLE;
+    VmaAllocation panoramaIndexMemory = VK_NULL_HANDLE;
     uint32_t panoramaIndexCount = 0;
     VkDescriptorSetLayout panoramaSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool panoramaDescriptorPool = VK_NULL_HANDLE;

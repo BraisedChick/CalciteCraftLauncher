@@ -11,6 +11,14 @@
 #include "gui/GameUI.h"
 #include "TextureLoader.h"
 
+// VMA 实现（全项目唯一展开点）：直链 libvulkan 故用静态函数；
+// 实例是 Vulkan 1.0，锁定函数集避免引用旧设备不存在的 1.1+ 入口
+#define VMA_IMPLEMENTATION
+#define VMA_STATIC_VULKAN_FUNCTIONS 1
+#define VMA_DYNAMIC_VULKAN_FUNCTIONS 0
+#define VMA_VULKAN_VERSION 1000000
+#include "3rdparty/vk_mem_alloc.h"
+
 #define LOG_TAG "VulkanRenderer"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -59,6 +67,7 @@ bool VulkanRenderer::initialize(ANativeWindow* window, int width, int height) {
     if (!createSurface(window)) return false;
     if (!selectPhysicalDevice()) return false;
     if (!createLogicalDevice()) return false;
+    if (!createAllocator()) return false;
     if (!createSwapchain(width, height)) return false;
     if (!createImageViews()) return false;
     if (!createRenderPass()) return false;
@@ -142,26 +151,12 @@ bool VulkanRenderer::createDepthResources() {
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    if (vkCreateImage(device, &imageInfo, nullptr, &depthImage) != VK_SUCCESS) {
+    VmaAllocationCreateInfo vmaInfo{};
+    vmaInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    if (vmaCreateImage(allocator, &imageInfo, &vmaInfo, &depthImage, &depthImageMemory, nullptr) != VK_SUCCESS) {
         LOGE("Failed to create depth image");
         return false;
     }
-
-    VkMemoryRequirements memRequirements;
-    vkGetImageMemoryRequirements(device, depthImage, &memRequirements);
-
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
-                                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &depthImageMemory) != VK_SUCCESS) {
-        LOGE("Failed to allocate depth image memory");
-        return false;
-    }
-
-    vkBindImageMemory(device, depthImage, depthImageMemory, 0);
 
     // 创建深度视图
     VkImageViewCreateInfo viewInfo{};
@@ -200,21 +195,23 @@ void VulkanRenderer::cleanup() {
     cleanupSwapchain();
 
     if (uniformBuffer != VK_NULL_HANDLE) {
-        vkDestroyBuffer(device, uniformBuffer, nullptr);
+        vmaDestroyBuffer(allocator, uniformBuffer, uniformBufferMemory);
         uniformBuffer = VK_NULL_HANDLE;
-    }
-    if (uniformBufferMemory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, uniformBufferMemory, nullptr);
         uniformBufferMemory = VK_NULL_HANDLE;
+        uniformBufferMapped = nullptr;
     }
 
     if (vertexBuffer != VK_NULL_HANDLE) {
-        vkDestroyBuffer(device, vertexBuffer, nullptr);
+        vmaDestroyBuffer(allocator, vertexBuffer, vertexBufferMemory);
         vertexBuffer = VK_NULL_HANDLE;
-    }
-    if (vertexBufferMemory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, vertexBufferMemory, nullptr);
         vertexBufferMemory = VK_NULL_HANDLE;
+    }
+
+    // 修复存量泄漏：旧代码从未释放过 indexBuffer
+    if (indexBuffer != VK_NULL_HANDLE) {
+        vmaDestroyBuffer(allocator, indexBuffer, indexBufferMemory);
+        indexBuffer = VK_NULL_HANDLE;
+        indexBufferMemory = VK_NULL_HANDLE;
     }
 
     if (descriptorSetLayout != VK_NULL_HANDLE) {
@@ -243,6 +240,12 @@ void VulkanRenderer::cleanup() {
     if (inFlightFence != VK_NULL_HANDLE) {
         vkDestroyFence(device, inFlightFence, nullptr);
         inFlightFence = VK_NULL_HANDLE;
+    }
+
+    // 所有 VMA 分配已释放，销毁分配器（必须在 device 之前；若有泄漏 VMA 会断言/报告）
+    if (allocator != VK_NULL_HANDLE) {
+        vmaDestroyAllocator(allocator);
+        allocator = VK_NULL_HANDLE;
     }
 
     if (device != VK_NULL_HANDLE) {
@@ -278,12 +281,8 @@ void VulkanRenderer::cleanupSwapchain() {
     }
 
     if (depthImage != VK_NULL_HANDLE) {
-        vkDestroyImage(device, depthImage, nullptr);
+        vmaDestroyImage(allocator, depthImage, depthImageMemory);
         depthImage = VK_NULL_HANDLE;
-    }
-
-    if (depthImageMemory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, depthImageMemory, nullptr);
         depthImageMemory = VK_NULL_HANDLE;
     }
 
@@ -393,39 +392,32 @@ bool VulkanRenderer::initImGui() {
 // ============================================================
 
 bool VulkanRenderer::createHostBuffer(VkBufferUsageFlags usage, const void* src, VkDeviceSize size,
-                                      VkBuffer& outBuf, VkDeviceMemory& outMem) {
+                                      VkBuffer& outBuf, VmaAllocation& outAlloc) {
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = size;
     bufferInfo.usage = usage;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (vkCreateBuffer(device, &bufferInfo, nullptr, &outBuf) != VK_SUCCESS) return false;
 
-    VkMemoryRequirements memReq;
-    vkGetBufferMemoryRequirements(device, outBuf, &memReq);
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memReq.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &outMem) != VK_SUCCESS) {
-        vkDestroyBuffer(device, outBuf, nullptr);
-        outBuf = VK_NULL_HANDLE;
+    VmaAllocationCreateInfo vmaInfo{};
+    vmaInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    vmaInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+    if (vmaCreateBuffer(allocator, &bufferInfo, &vmaInfo, &outBuf, &outAlloc, nullptr) != VK_SUCCESS) {
         return false;
     }
-    vkBindBufferMemory(device, outBuf, outMem, 0);
 
-    if (src) {
-        void* data;
-        vkMapMemory(device, outMem, 0, size, 0, &data);
-        memcpy(data, src, (size_t)size);
-        vkUnmapMemory(device, outMem);
+    // map + memcpy + flush 一步到位（coherent 内存上 flush 为空操作）
+    if (src && vmaCopyMemoryToAllocation(allocator, src, outAlloc, 0, size) != VK_SUCCESS) {
+        vmaDestroyBuffer(allocator, outBuf, outAlloc);
+        outBuf = VK_NULL_HANDLE;
+        outAlloc = VK_NULL_HANDLE;
+        return false;
     }
     return true;
 }
 
 bool VulkanRenderer::createDeviceImage(uint32_t width, uint32_t height, uint32_t layers,
-                                       VkImageCreateFlags flags, VkImage& outImage, VkDeviceMemory& outMem) {
+                                       VkImageCreateFlags flags, VkImage& outImage, VmaAllocation& outAlloc) {
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.flags = flags;
@@ -439,21 +431,11 @@ bool VulkanRenderer::createDeviceImage(uint32_t width, uint32_t height, uint32_t
     imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (vkCreateImage(device, &imageInfo, nullptr, &outImage) != VK_SUCCESS) return false;
 
-    VkMemoryRequirements memReq;
-    vkGetImageMemoryRequirements(device, outImage, &memReq);
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memReq.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &outMem) != VK_SUCCESS) {
-        vkDestroyImage(device, outImage, nullptr);
-        outImage = VK_NULL_HANDLE;
-        return false;
-    }
-    vkBindImageMemory(device, outImage, outMem, 0);
-    return true;
+    // 无 host 访问需求，AUTO 自动选 DEVICE_LOCAL
+    VmaAllocationCreateInfo vmaInfo{};
+    vmaInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    return vmaCreateImage(allocator, &imageInfo, &vmaInfo, &outImage, &outAlloc, nullptr) == VK_SUCCESS;
 }
 
 bool VulkanRenderer::createRgbaImageView(VkImage image, VkImageViewType type, uint32_t layers, VkImageView& outView) {
@@ -498,7 +480,7 @@ bool VulkanRenderer::uploadPixelsToImage(const uint8_t* pixels, uint32_t width, 
                                          uint32_t layers, VkImage image) {
     VkDeviceSize layerBytes = (VkDeviceSize)width * height * 4;
     VkBuffer stagingBuffer;
-    VkDeviceMemory stagingMemory;
+    VmaAllocation stagingMemory;
     if (!createHostBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, pixels, layerBytes * layers,
                           stagingBuffer, stagingMemory)) {
         return false;
@@ -538,8 +520,7 @@ bool VulkanRenderer::uploadPixelsToImage(const uint8_t* pixels, uint32_t width, 
 
     endOneTimeCommands(cmd);
 
-    vkDestroyBuffer(device, stagingBuffer, nullptr);
-    vkFreeMemory(device, stagingMemory, nullptr);
+    vmaDestroyBuffer(allocator, stagingBuffer, stagingMemory);
     return true;
 }
 
@@ -581,8 +562,7 @@ bool VulkanRenderer::uploadGuiTexture(const uint8_t* pixels, int width, int heig
     if (!createDeviceImage((uint32_t)width, (uint32_t)height, 1, 0, out.image, out.memory)) return false;
     if (!uploadPixelsToImage(pixels, (uint32_t)width, (uint32_t)height, 1, out.image) ||
         !createRgbaImageView(out.image, VK_IMAGE_VIEW_TYPE_2D, 1, out.view)) {
-        vkDestroyImage(device, out.image, nullptr);
-        vkFreeMemory(device, out.memory, nullptr);
+        vmaDestroyImage(allocator, out.image, out.memory);
         out.image = VK_NULL_HANDLE;
         out.memory = VK_NULL_HANDLE;
         return false;
@@ -594,8 +574,7 @@ void VulkanRenderer::destroyGuiTextures() {
     for (auto& [path, gt] : guiTextureCache) {
         if (gt.descriptorSet != VK_NULL_HANDLE) ImGui_ImplVulkan_RemoveTexture(gt.descriptorSet);
         if (gt.view != VK_NULL_HANDLE) vkDestroyImageView(device, gt.view, nullptr);
-        if (gt.image != VK_NULL_HANDLE) vkDestroyImage(device, gt.image, nullptr);
-        if (gt.memory != VK_NULL_HANDLE) vkFreeMemory(device, gt.memory, nullptr);
+        if (gt.image != VK_NULL_HANDLE) vmaDestroyImage(allocator, gt.image, gt.memory);
     }
     guiTextureCache.clear();
 }
@@ -887,14 +866,11 @@ void VulkanRenderer::destroyPanoramaResources() {
     if (panoramaDescriptorPool != VK_NULL_HANDLE)  { vkDestroyDescriptorPool(device, panoramaDescriptorPool, nullptr); panoramaDescriptorPool = VK_NULL_HANDLE; }
     panoramaDescriptorSet = VK_NULL_HANDLE;  // 随池销毁
     if (panoramaSetLayout != VK_NULL_HANDLE)       { vkDestroyDescriptorSetLayout(device, panoramaSetLayout, nullptr); panoramaSetLayout = VK_NULL_HANDLE; }
-    if (panoramaVertexBuffer != VK_NULL_HANDLE)    { vkDestroyBuffer(device, panoramaVertexBuffer, nullptr); panoramaVertexBuffer = VK_NULL_HANDLE; }
-    if (panoramaVertexMemory != VK_NULL_HANDLE)    { vkFreeMemory(device, panoramaVertexMemory, nullptr); panoramaVertexMemory = VK_NULL_HANDLE; }
-    if (panoramaIndexBuffer != VK_NULL_HANDLE)     { vkDestroyBuffer(device, panoramaIndexBuffer, nullptr); panoramaIndexBuffer = VK_NULL_HANDLE; }
-    if (panoramaIndexMemory != VK_NULL_HANDLE)     { vkFreeMemory(device, panoramaIndexMemory, nullptr); panoramaIndexMemory = VK_NULL_HANDLE; }
+    if (panoramaVertexBuffer != VK_NULL_HANDLE)    { vmaDestroyBuffer(allocator, panoramaVertexBuffer, panoramaVertexMemory); panoramaVertexBuffer = VK_NULL_HANDLE; panoramaVertexMemory = VK_NULL_HANDLE; }
+    if (panoramaIndexBuffer != VK_NULL_HANDLE)     { vmaDestroyBuffer(allocator, panoramaIndexBuffer, panoramaIndexMemory); panoramaIndexBuffer = VK_NULL_HANDLE; panoramaIndexMemory = VK_NULL_HANDLE; }
     if (panoramaSampler != VK_NULL_HANDLE)         { vkDestroySampler(device, panoramaSampler, nullptr); panoramaSampler = VK_NULL_HANDLE; }
     if (panoramaImageView != VK_NULL_HANDLE)       { vkDestroyImageView(device, panoramaImageView, nullptr); panoramaImageView = VK_NULL_HANDLE; }
-    if (panoramaImage != VK_NULL_HANDLE)           { vkDestroyImage(device, panoramaImage, nullptr); panoramaImage = VK_NULL_HANDLE; }
-    if (panoramaImageMemory != VK_NULL_HANDLE)     { vkFreeMemory(device, panoramaImageMemory, nullptr); panoramaImageMemory = VK_NULL_HANDLE; }
+    if (panoramaImage != VK_NULL_HANDLE)           { vmaDestroyImage(allocator, panoramaImage, panoramaImageMemory); panoramaImage = VK_NULL_HANDLE; panoramaImageMemory = VK_NULL_HANDLE; }
     panoramaReady = false;
 }
 
@@ -1107,17 +1083,16 @@ void VulkanRenderer::updateUniformBuffer(float cameraX, float cameraY, float cam
     memcpy(ubo.proj, &proj[0][0], sizeof(float) * 16);
 
     memcpy(uniformBufferMapped, &ubo, sizeof(ubo));
+    // 非 coherent 内存兑底（coherent 上为空操作）
+    vmaFlushAllocation(allocator, uniformBufferMemory, 0, sizeof(ubo));
 }
 
 void VulkanRenderer::updateVertexBuffer(const std::vector<Vertex>& vertices) {
     vkDeviceWaitIdle(device);
 
     if (vertexBuffer != VK_NULL_HANDLE) {
-        vkDestroyBuffer(device, vertexBuffer, nullptr);
+        vmaDestroyBuffer(allocator, vertexBuffer, vertexBufferMemory);
         vertexBuffer = VK_NULL_HANDLE;
-    }
-    if (vertexBufferMemory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, vertexBufferMemory, nullptr);
         vertexBufferMemory = VK_NULL_HANDLE;
     }
 
@@ -1160,18 +1135,19 @@ VkShaderModule VulkanRenderer::createShaderModule(const std::vector<char>& code)
     return shaderModule;
 }
 
-uint32_t VulkanRenderer::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
-    VkPhysicalDeviceMemoryProperties memProperties;
-    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
-
-    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-        if ((typeFilter & (1 << i)) &&
-            (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
-            return i;
-        }
+// VMA 分配器：接管全部 vkAllocateMemory/findMemoryType 样板，大块预分配避免碰 maxMemoryAllocationCount 上限
+bool VulkanRenderer::createAllocator() {
+    VmaAllocatorCreateInfo info{};
+    info.vulkanApiVersion = VK_API_VERSION_1_0;
+    info.physicalDevice = physicalDevice;
+    info.device = device;
+    info.instance = instance;
+    if (vmaCreateAllocator(&info, &allocator) != VK_SUCCESS) {
+        LOGE("Failed to create VMA allocator");
+        return false;
     }
-
-    throw std::runtime_error("failed to find suitable memory type!");
+    LOGI("VMA allocator created");
+    return true;
 }
 
 bool VulkanRenderer::checkValidationLayerSupport() {
@@ -1734,98 +1710,37 @@ bool VulkanRenderer::createVertexBuffer(const std::vector<Vertex>& vertices) {
     VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
     vertexCount = static_cast<uint32_t>(vertices.size());
 
+    // staging：VMA 一步完成创建+上传
     VkBuffer stagingBuffer;
-    VkDeviceMemory stagingBufferMemory;
-
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = bufferSize;
-    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    if (vkCreateBuffer(device, &bufferInfo, nullptr, &stagingBuffer) != VK_SUCCESS) {
+    VmaAllocation stagingAllocation;
+    if (!createHostBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vertices.data(), bufferSize,
+                          stagingBuffer, stagingAllocation)) {
         LOGE("Failed to create staging buffer");
         return false;
     }
 
-    VkMemoryRequirements memRequirements;
-    vkGetBufferMemoryRequirements(device, stagingBuffer, &memRequirements);
-
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
-                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &stagingBufferMemory) != VK_SUCCESS) {
-        LOGE("Failed to allocate staging buffer memory");
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        return false;
-    }
-
-    vkBindBufferMemory(device, stagingBuffer, stagingBufferMemory, 0);
-
-    void* data;
-    vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-    memcpy(data, vertices.data(), (size_t)bufferSize);
-    vkUnmapMemory(device, stagingBufferMemory);
-
+    // 目标 buffer：AUTO 且无 host 访问标志 → VMA 自动选 DEVICE_LOCAL
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = bufferSize;
     bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    if (vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VmaAllocationCreateInfo vmaInfo{};
+    vmaInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    if (vmaCreateBuffer(allocator, &bufferInfo, &vmaInfo, &vertexBuffer, &vertexBufferMemory, nullptr) != VK_SUCCESS) {
         LOGE("Failed to create vertex buffer");
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
+        vmaDestroyBuffer(allocator, stagingBuffer, stagingAllocation);
         return false;
     }
 
-    vkGetBufferMemoryRequirements(device, vertexBuffer, &memRequirements);
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
-                                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
-        LOGE("Failed to allocate vertex buffer memory");
-        vkDestroyBuffer(device, vertexBuffer, nullptr);
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
-        return false;
-    }
-
-    vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
-
-    VkCommandBufferAllocateInfo cmdAllocInfo{};
-    cmdAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cmdAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmdAllocInfo.commandPool = commandPool;
-    cmdAllocInfo.commandBufferCount = 1;
-
-    VkCommandBuffer commandBuffer;
-    vkAllocateCommandBuffers(device, &cmdAllocInfo, &commandBuffer);
-
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-    vkBeginCommandBuffer(commandBuffer, &beginInfo);
-
+    VkCommandBuffer cmd = beginOneTimeCommands();
     VkBufferCopy copyRegion{};
     copyRegion.size = bufferSize;
-    vkCmdCopyBuffer(commandBuffer, stagingBuffer, vertexBuffer, 1, &copyRegion);
+    vkCmdCopyBuffer(cmd, stagingBuffer, vertexBuffer, 1, &copyRegion);
+    endOneTimeCommands(cmd);
 
-    vkEndCommandBuffer(commandBuffer);
-
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
-
-    vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(graphicsQueue);
-
-    vkDestroyBuffer(device, stagingBuffer, nullptr);
-    vkFreeMemory(device, stagingBufferMemory, nullptr);
-    vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+    vmaDestroyBuffer(allocator, stagingBuffer, stagingAllocation);
 
     LOGI("Vertex buffer created with %u vertices", vertexCount);
     return true;
@@ -1835,98 +1750,37 @@ bool VulkanRenderer::createIndexBuffer(const std::vector<uint32_t>& indices) {
     VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
     indexCount = static_cast<uint32_t>(indices.size());
 
+    // staging：VMA 一步完成创建+上传
     VkBuffer stagingBuffer;
-    VkDeviceMemory stagingBufferMemory;
-
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = bufferSize;
-    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    if (vkCreateBuffer(device, &bufferInfo, nullptr, &stagingBuffer) != VK_SUCCESS) {
+    VmaAllocation stagingAllocation;
+    if (!createHostBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, indices.data(), bufferSize,
+                          stagingBuffer, stagingAllocation)) {
         LOGE("Failed to create staging buffer");
         return false;
     }
 
-    VkMemoryRequirements memRequirements;
-    vkGetBufferMemoryRequirements(device, stagingBuffer, &memRequirements);
-
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
-                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &stagingBufferMemory) != VK_SUCCESS) {
-        LOGE("Failed to allocate staging buffer memory");
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        return false;
-    }
-
-    vkBindBufferMemory(device, stagingBuffer, stagingBufferMemory, 0);
-
-    void* data;
-    vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-    memcpy(data, indices.data(), (size_t)bufferSize);
-    vkUnmapMemory(device, stagingBufferMemory);
-
+    // 目标 buffer：AUTO 且无 host 访问标志 → VMA 自动选 DEVICE_LOCAL
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = bufferSize;
     bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
-    if (vkCreateBuffer(device, &bufferInfo, nullptr, &indexBuffer) != VK_SUCCESS) {
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VmaAllocationCreateInfo vmaInfo{};
+    vmaInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    if (vmaCreateBuffer(allocator, &bufferInfo, &vmaInfo, &indexBuffer, &indexBufferMemory, nullptr) != VK_SUCCESS) {
         LOGE("Failed to create index buffer");
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
+        vmaDestroyBuffer(allocator, stagingBuffer, stagingAllocation);
         return false;
     }
 
-    vkGetBufferMemoryRequirements(device, indexBuffer, &memRequirements);
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
-                                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &indexBufferMemory) != VK_SUCCESS) {
-        LOGE("Failed to allocate index buffer memory");
-        vkDestroyBuffer(device, indexBuffer, nullptr);
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
-        return false;
-    }
-
-    vkBindBufferMemory(device, indexBuffer, indexBufferMemory, 0);
-
-    VkCommandBufferAllocateInfo cmdAllocInfo{};
-    cmdAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cmdAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmdAllocInfo.commandPool = commandPool;
-    cmdAllocInfo.commandBufferCount = 1;
-
-    VkCommandBuffer commandBuffer;
-    vkAllocateCommandBuffers(device, &cmdAllocInfo, &commandBuffer);
-
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-    vkBeginCommandBuffer(commandBuffer, &beginInfo);
-
+    VkCommandBuffer cmd = beginOneTimeCommands();
     VkBufferCopy copyRegion{};
     copyRegion.size = bufferSize;
-    vkCmdCopyBuffer(commandBuffer, stagingBuffer, indexBuffer, 1, &copyRegion);
+    vkCmdCopyBuffer(cmd, stagingBuffer, indexBuffer, 1, &copyRegion);
+    endOneTimeCommands(cmd);
 
-    vkEndCommandBuffer(commandBuffer);
-
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
-
-    vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(graphicsQueue);
-
-    vkDestroyBuffer(device, stagingBuffer, nullptr);
-    vkFreeMemory(device, stagingBufferMemory, nullptr);
-    vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+    vmaDestroyBuffer(allocator, stagingBuffer, stagingAllocation);
 
     LOGI("Index buffer created with %u indices", indexCount);
     return true;
@@ -1941,28 +1795,18 @@ bool VulkanRenderer::createUniformBuffer() {
     bufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    if (vkCreateBuffer(device, &bufferInfo, nullptr, &uniformBuffer) != VK_SUCCESS) {
+    // MAPPED_BIT：VMA 负责持久映射，映射指针从 VmaAllocationInfo 取，替代手动 vkMapMemory
+    VmaAllocationCreateInfo vmaInfo{};
+    vmaInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    vmaInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                    VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+    VmaAllocationInfo allocResult{};
+    if (vmaCreateBuffer(allocator, &bufferInfo, &vmaInfo, &uniformBuffer, &uniformBufferMemory, &allocResult) != VK_SUCCESS) {
         LOGE("Failed to create uniform buffer");
         return false;
     }
-
-    VkMemoryRequirements memRequirements;
-    vkGetBufferMemoryRequirements(device, uniformBuffer, &memRequirements);
-
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
-                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &uniformBufferMemory) != VK_SUCCESS) {
-        LOGE("Failed to allocate uniform buffer memory");
-        return false;
-    }
-
-    vkBindBufferMemory(device, uniformBuffer, uniformBufferMemory, 0);
-    vkMapMemory(device, uniformBufferMemory, 0, bufferSize, 0, &uniformBufferMapped);
+    uniformBufferMapped = allocResult.pMappedData;
 
     LOGI("Uniform buffer created");
     return true;
