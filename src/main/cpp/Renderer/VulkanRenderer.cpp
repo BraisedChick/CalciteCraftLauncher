@@ -10,6 +10,7 @@
 #include "imgui_impl_vulkan.h"
 #include "gui/GameUI.h"
 #include "TextureLoader.h"
+#include "Camera.h"
 
 // VMA 实现（全项目唯一展开点）：直链 libvulkan 故用静态函数；
 // 实例是 Vulkan 1.0，锁定函数集避免引用旧设备不存在的 1.1+ 入口
@@ -1072,21 +1073,13 @@ void VulkanRenderer::updateUniformBuffer(float cameraX, float cameraY, float cam
     glm::mat4 model(1.0f);
     memcpy(ubo.model, &model[0][0], sizeof(float) * 16);
 
-    // 视图矩阵（使用 GLM）
-    glm::vec3 eye(cameraX, cameraY, cameraZ);
-    glm::vec3 front(
-        -sinf(yaw) * cosf(pitch),
-        -sinf(pitch),
-        cosf(yaw) * cosf(pitch)
-    );
-    glm::vec3 up(0.0f, 1.0f, 0.0f);
-    glm::mat4 view = glm::lookAt(eye, eye + front, up);
+    // 视图矩阵（Camera 统一数学，与 GL 后端一致：含眼睛高度 1.62 与俯仰角限制）
+    glm::mat4 view = Camera::computeViewMatrix(cameraX, cameraY, cameraZ, pitch, yaw);
     memcpy(ubo.view, &view[0][0], sizeof(float) * 16);
 
     // 透视投影矩阵（Vulkan 坐标系：Y 轴向下，Z 轴 [0, 1]）
     float aspect = (float)swapchainExtent.width / (float)swapchainExtent.height;
-    float fov = 70.0f * 3.14159f / 180.0f;
-    glm::mat4 proj = glm::perspective(fov, aspect, 0.1f, 100.0f);
+    glm::mat4 proj = Camera::computeProjectionMatrix(70.0f, aspect, 0.1f, 100.0f);
     proj[1][1] *= -1.0f;  // 翻转 Y 轴（Vulkan NDC Y 轴向下）
     memcpy(ubo.proj, &proj[0][0], sizeof(float) * 16);
 
