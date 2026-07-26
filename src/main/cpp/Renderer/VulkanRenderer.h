@@ -8,6 +8,7 @@
 #include <android/native_window.h>
 #include <android/asset_manager.h>
 #include "CommonTypes.h"
+#include "PanoramaView.h"
 
 class VulkanRenderer {
 public:
@@ -75,12 +76,28 @@ private:
     void destroyGuiTextures();
     std::unordered_map<std::string, GuiTexture> guiTextureCache;
 
+    // 主界面旋转全景背景（像素/几何/MVP 由 PanoramaView 提供，这里只管 Vulkan 资源与绘制）
+    bool initPanorama();
+    void renderPanorama(VkCommandBuffer cmd);
+    void destroyPanoramaResources();
+
     std::vector<char> readFile(const std::string& filename);
     VkShaderModule createShaderModule(const std::vector<char>& code);
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
     VkFormat findDepthFormat();
     VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
     uint32_t findGraphicsQueueFamily();
+
+    // 通用资源辅助（GUI 纹理与全景共用的创建/上传样板）
+    bool createHostBuffer(VkBufferUsageFlags usage, const void* src, VkDeviceSize size,
+                          VkBuffer& outBuf, VkDeviceMemory& outMem);
+    bool createDeviceImage(uint32_t width, uint32_t height, uint32_t layers,
+                           VkImageCreateFlags flags, VkImage& outImage, VkDeviceMemory& outMem);
+    bool createRgbaImageView(VkImage image, VkImageViewType type, uint32_t layers, VkImageView& outView);
+    VkCommandBuffer beginOneTimeCommands();
+    void endOneTimeCommands(VkCommandBuffer cmd);
+    bool uploadPixelsToImage(const uint8_t* pixels, uint32_t width, uint32_t height,
+                             uint32_t layers, VkImage image);
 
     static const int MAX_FRAMES_IN_FLIGHT = 1;
 
@@ -149,4 +166,23 @@ private:
     // ImGui 状态
     bool imguiInitialized = false;
     bool surfaceValid = true;
+
+    // 全景背景资源（cubemap + 独立管线，仅菜单模式使用）
+    PanoramaView panoramaView;
+    bool panoramaInitAttempted = false;
+    bool panoramaReady = false;
+    VkImage panoramaImage = VK_NULL_HANDLE;
+    VkDeviceMemory panoramaImageMemory = VK_NULL_HANDLE;
+    VkImageView panoramaImageView = VK_NULL_HANDLE;      // VK_IMAGE_VIEW_TYPE_CUBE
+    VkSampler panoramaSampler = VK_NULL_HANDLE;
+    VkBuffer panoramaVertexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory panoramaVertexMemory = VK_NULL_HANDLE;
+    VkBuffer panoramaIndexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory panoramaIndexMemory = VK_NULL_HANDLE;
+    uint32_t panoramaIndexCount = 0;
+    VkDescriptorSetLayout panoramaSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool panoramaDescriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSet panoramaDescriptorSet = VK_NULL_HANDLE;
+    VkPipelineLayout panoramaPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline panoramaPipeline = VK_NULL_HANDLE;
 };

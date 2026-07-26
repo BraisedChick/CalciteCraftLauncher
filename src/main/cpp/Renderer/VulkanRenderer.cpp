@@ -191,6 +191,7 @@ void VulkanRenderer::cleanup() {
     }
     // GUI 纹理引用了 ImGui 后端描述符池，必须先于 ImGui_ImplVulkan_Shutdown 释放
     destroyGuiTextures();
+    destroyPanoramaResources();
     if (imguiInitialized) {
         GameUI::getInstance().shutdown();  // 内部调用 ImGui_ImplVulkan_Shutdown
         imguiInitialized = false;
@@ -387,6 +388,162 @@ bool VulkanRenderer::initImGui() {
 }
 
 // ============================================================
+// 通用资源辅助：buffer/image 创建、一次性命令、staging 像素上传
+// （GUI 纹理与全景 cubemap 共用，收敛重复样板）
+// ============================================================
+
+bool VulkanRenderer::createHostBuffer(VkBufferUsageFlags usage, const void* src, VkDeviceSize size,
+                                      VkBuffer& outBuf, VkDeviceMemory& outMem) {
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device, &bufferInfo, nullptr, &outBuf) != VK_SUCCESS) return false;
+
+    VkMemoryRequirements memReq;
+    vkGetBufferMemoryRequirements(device, outBuf, &memReq);
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReq.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &outMem) != VK_SUCCESS) {
+        vkDestroyBuffer(device, outBuf, nullptr);
+        outBuf = VK_NULL_HANDLE;
+        return false;
+    }
+    vkBindBufferMemory(device, outBuf, outMem, 0);
+
+    if (src) {
+        void* data;
+        vkMapMemory(device, outMem, 0, size, 0, &data);
+        memcpy(data, src, (size_t)size);
+        vkUnmapMemory(device, outMem);
+    }
+    return true;
+}
+
+bool VulkanRenderer::createDeviceImage(uint32_t width, uint32_t height, uint32_t layers,
+                                       VkImageCreateFlags flags, VkImage& outImage, VkDeviceMemory& outMem) {
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.flags = flags;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent = { width, height, 1 };
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = layers;
+    imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateImage(device, &imageInfo, nullptr, &outImage) != VK_SUCCESS) return false;
+
+    VkMemoryRequirements memReq;
+    vkGetImageMemoryRequirements(device, outImage, &memReq);
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReq.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &outMem) != VK_SUCCESS) {
+        vkDestroyImage(device, outImage, nullptr);
+        outImage = VK_NULL_HANDLE;
+        return false;
+    }
+    vkBindImageMemory(device, outImage, outMem, 0);
+    return true;
+}
+
+bool VulkanRenderer::createRgbaImageView(VkImage image, VkImageViewType type, uint32_t layers, VkImageView& outView) {
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = image;
+    viewInfo.viewType = type;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers };
+    return vkCreateImageView(device, &viewInfo, nullptr, &outView) == VK_SUCCESS;
+}
+
+VkCommandBuffer VulkanRenderer::beginOneTimeCommands() {
+    VkCommandBufferAllocateInfo cbAlloc{};
+    cbAlloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cbAlloc.commandPool = commandPool;
+    cbAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cbAlloc.commandBufferCount = 1;
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(device, &cbAlloc, &cmd);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &beginInfo);
+    return cmd;
+}
+
+void VulkanRenderer::endOneTimeCommands(VkCommandBuffer cmd) {
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+    vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(graphicsQueue);
+    vkFreeCommandBuffers(device, commandPool, 1, &cmd);
+}
+
+// staging 上传 RGBA 像素（各层等尺寸、连续排列）到 image，完成后转 SHADER_READ_ONLY
+bool VulkanRenderer::uploadPixelsToImage(const uint8_t* pixels, uint32_t width, uint32_t height,
+                                         uint32_t layers, VkImage image) {
+    VkDeviceSize layerBytes = (VkDeviceSize)width * height * 4;
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingMemory;
+    if (!createHostBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, pixels, layerBytes * layers,
+                          stagingBuffer, stagingMemory)) {
+        return false;
+    }
+
+    VkCommandBuffer cmd = beginOneTimeCommands();
+
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers };
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    std::vector<VkBufferImageCopy> regions(layers);
+    for (uint32_t i = 0; i < layers; i++) {
+        regions[i] = {};
+        regions[i].bufferOffset = layerBytes * i;
+        regions[i].imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, i, 1 };
+        regions[i].imageExtent = { width, height, 1 };
+    }
+    vkCmdCopyBufferToImage(cmd, stagingBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           layers, regions.data());
+
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    endOneTimeCommands(cmd);
+
+    vkDestroyBuffer(device, stagingBuffer, nullptr);
+    vkFreeMemory(device, stagingMemory, nullptr);
+    return true;
+}
+
+// ============================================================
 // GUI 纹理（主界面按钮等 ImGui 用图）
 // 像素解码复用 TextureLoader（图形 API 无关），这里只做 Vulkan 上传与 ImGui 注册
 // ============================================================
@@ -421,127 +578,9 @@ VkDescriptorSet VulkanRenderer::getGuiTexture(const std::string& path) {
 }
 
 bool VulkanRenderer::uploadGuiTexture(const uint8_t* pixels, int width, int height, GuiTexture& out) {
-    VkDeviceSize imageSize = (VkDeviceSize)width * height * 4;
-
-    // 1. staging buffer
-    VkBuffer stagingBuffer;
-    VkDeviceMemory stagingMemory;
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = imageSize;
-    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (vkCreateBuffer(device, &bufferInfo, nullptr, &stagingBuffer) != VK_SUCCESS) return false;
-
-    VkMemoryRequirements memReq;
-    vkGetBufferMemoryRequirements(device, stagingBuffer, &memReq);
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memReq.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &stagingMemory) != VK_SUCCESS) {
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        return false;
-    }
-    vkBindBufferMemory(device, stagingBuffer, stagingMemory, 0);
-
-    void* data;
-    vkMapMemory(device, stagingMemory, 0, imageSize, 0, &data);
-    memcpy(data, pixels, (size_t)imageSize);
-    vkUnmapMemory(device, stagingMemory);
-
-    // 2. VkImage
-    VkImageCreateInfo imageInfo{};
-    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.extent = { (uint32_t)width, (uint32_t)height, 1 };
-    imageInfo.mipLevels = 1;
-    imageInfo.arrayLayers = 1;
-    imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
-    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (vkCreateImage(device, &imageInfo, nullptr, &out.image) != VK_SUCCESS) {
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingMemory, nullptr);
-        return false;
-    }
-
-    vkGetImageMemoryRequirements(device, out.image, &memReq);
-    allocInfo.allocationSize = memReq.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &out.memory) != VK_SUCCESS) {
-        vkDestroyImage(device, out.image, nullptr);
-        out.image = VK_NULL_HANDLE;
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingMemory, nullptr);
-        return false;
-    }
-    vkBindImageMemory(device, out.image, out.memory, 0);
-
-    // 3. 一次性命令：layout 转换 + 拷贝 + 转 SHADER_READ_ONLY
-    VkCommandBufferAllocateInfo cbAlloc{};
-    cbAlloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cbAlloc.commandPool = commandPool;
-    cbAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cbAlloc.commandBufferCount = 1;
-    VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(device, &cbAlloc, &cmd);
-
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &beginInfo);
-
-    VkImageMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = out.image;
-    barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-    barrier.srcAccessMask = 0;
-    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    VkBufferImageCopy region{};
-    region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-    region.imageExtent = { (uint32_t)width, (uint32_t)height, 1 };
-    vkCmdCopyBufferToImage(cmd, stagingBuffer, out.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    vkEndCommandBuffer(cmd);
-
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &cmd;
-    vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(graphicsQueue);
-    vkFreeCommandBuffers(device, commandPool, 1, &cmd);
-
-    vkDestroyBuffer(device, stagingBuffer, nullptr);
-    vkFreeMemory(device, stagingMemory, nullptr);
-
-    // 4. ImageView
-    VkImageViewCreateInfo viewInfo{};
-    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewInfo.image = out.image;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
-    viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-    if (vkCreateImageView(device, &viewInfo, nullptr, &out.view) != VK_SUCCESS) {
+    if (!createDeviceImage((uint32_t)width, (uint32_t)height, 1, 0, out.image, out.memory)) return false;
+    if (!uploadPixelsToImage(pixels, (uint32_t)width, (uint32_t)height, 1, out.image) ||
+        !createRgbaImageView(out.image, VK_IMAGE_VIEW_TYPE_2D, 1, out.view)) {
         vkDestroyImage(device, out.image, nullptr);
         vkFreeMemory(device, out.memory, nullptr);
         out.image = VK_NULL_HANDLE;
@@ -559,6 +598,304 @@ void VulkanRenderer::destroyGuiTextures() {
         if (gt.memory != VK_NULL_HANDLE) vkFreeMemory(device, gt.memory, nullptr);
     }
     guiTextureCache.clear();
+}
+
+// ============================================================
+// 主界面旋转全景背景
+// 面像素/立方体几何/MVP 由 PanoramaView 提供（图形 API 无关），
+// 这里负责 cubemap 上传、独立管线与绘制（对应 GL 侧 initPanorama/renderPanoramaToFBO）
+// ============================================================
+
+bool VulkanRenderer::initPanorama() {
+    // 1. 加载 6 个面像素（已水平翻转，缺失面为占位色）
+    PanoramaView::FacePixels faces[6];
+    int loadedCount = panoramaView.loadFacePixels(faces);
+    LOGI("Panorama faces loaded (Vulkan): %d/6", loadedCount);
+
+    // cubemap 要求 6 层等尺寸：以首个成功面为准，尺寸不符的面（如占位色）最近邻重采样
+    int faceSize = 16;
+    for (int i = 0; i < 6; i++) {
+        if (faces[i].loaded) { faceSize = faces[i].width; break; }
+    }
+    VkDeviceSize faceBytes = (VkDeviceSize)faceSize * faceSize * 4;
+    std::vector<uint8_t> allPixels((size_t)faceBytes * 6);
+    for (int i = 0; i < 6; i++) {
+        uint8_t* dst = allPixels.data() + (size_t)faceBytes * i;
+        const PanoramaView::FacePixels& f = faces[i];
+        if (f.width == faceSize && f.height == faceSize) {
+            memcpy(dst, f.rgba.data(), (size_t)faceBytes);
+        } else {
+            for (int y = 0; y < faceSize; y++) {
+                int sy = y * f.height / faceSize;
+                for (int x = 0; x < faceSize; x++) {
+                    int sx = x * f.width / faceSize;
+                    memcpy(dst + ((size_t)y * faceSize + x) * 4,
+                           f.rgba.data() + ((size_t)sy * f.width + sx) * 4, 4);
+                }
+            }
+        }
+    }
+
+    // 2. cubemap 创建 + staging 上传（6 面连续，layout 转换在一次性命令内完成）+ CUBE 视图
+    if (!createDeviceImage((uint32_t)faceSize, (uint32_t)faceSize, 6, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
+                           panoramaImage, panoramaImageMemory) ||
+        !uploadPixelsToImage(allPixels.data(), (uint32_t)faceSize, (uint32_t)faceSize, 6, panoramaImage) ||
+        !createRgbaImageView(panoramaImage, VK_IMAGE_VIEW_TYPE_CUBE, 6, panoramaImageView)) {
+        destroyPanoramaResources();
+        return false;
+    }
+
+    // 3. 采样器（Linear + CLAMP_TO_EDGE）
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    if (vkCreateSampler(device, &samplerInfo, nullptr, &panoramaSampler) != VK_SUCCESS) {
+        destroyPanoramaResources();
+        return false;
+    }
+
+    // 4. 立方体顶点/索引 buffer（几何来自 PanoramaView，小数据量直接 HOST_VISIBLE）
+    size_t cubeVertFloats = 0, cubeIdxCount = 0;
+    const float* cubeVerts = PanoramaView::cubeVertices(cubeVertFloats);
+    const uint16_t* cubeIdx = PanoramaView::cubeIndices(cubeIdxCount);
+    panoramaIndexCount = (uint32_t)cubeIdxCount;
+
+    if (!createHostBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, cubeVerts,
+                          cubeVertFloats * sizeof(float), panoramaVertexBuffer, panoramaVertexMemory) ||
+        !createHostBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, cubeIdx,
+                          cubeIdxCount * sizeof(uint16_t), panoramaIndexBuffer, panoramaIndexMemory)) {
+        destroyPanoramaResources();
+        return false;
+    }
+
+    // 5. 描述符（独立小池：1 个 combined image sampler）
+    VkDescriptorSetLayoutBinding binding{};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &binding;
+    if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &panoramaSetLayout) != VK_SUCCESS) {
+        destroyPanoramaResources();
+        return false;
+    }
+
+    VkDescriptorPoolSize poolSize{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = 1;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &panoramaDescriptorPool) != VK_SUCCESS) {
+        destroyPanoramaResources();
+        return false;
+    }
+
+    VkDescriptorSetAllocateInfo dsAlloc{};
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = panoramaDescriptorPool;
+    dsAlloc.descriptorSetCount = 1;
+    dsAlloc.pSetLayouts = &panoramaSetLayout;
+    if (vkAllocateDescriptorSets(device, &dsAlloc, &panoramaDescriptorSet) != VK_SUCCESS) {
+        destroyPanoramaResources();
+        return false;
+    }
+
+    VkDescriptorImageInfo imageDescInfo{};
+    imageDescInfo.sampler = panoramaSampler;
+    imageDescInfo.imageView = panoramaImageView;
+    imageDescInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = panoramaDescriptorSet;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &imageDescInfo;
+    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+
+    // 6. 管线（push constant 传 MVP，动态 viewport/scissor，无深度读写）
+    auto vertCode = readFile("shaders/panorama_vert.spv");
+    auto fragCode = readFile("shaders/panorama_frag.spv");
+    if (vertCode.empty() || fragCode.empty()) {
+        LOGE("Panorama SPIR-V shaders missing (shaders/panorama_*.spv), fallback to clear color");
+        destroyPanoramaResources();
+        return false;
+    }
+    VkShaderModule vertModule = createShaderModule(vertCode);
+    VkShaderModule fragModule = createShaderModule(fragCode);
+    if (vertModule == VK_NULL_HANDLE || fragModule == VK_NULL_HANDLE) {
+        if (vertModule) vkDestroyShaderModule(device, vertModule, nullptr);
+        if (fragModule) vkDestroyShaderModule(device, fragModule, nullptr);
+        destroyPanoramaResources();
+        return false;
+    }
+
+    VkPushConstantRange pcRange{};
+    pcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pcRange.offset = 0;
+    pcRange.size = sizeof(glm::mat4);
+
+    VkPipelineLayoutCreateInfo plInfo{};
+    plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plInfo.setLayoutCount = 1;
+    plInfo.pSetLayouts = &panoramaSetLayout;
+    plInfo.pushConstantRangeCount = 1;
+    plInfo.pPushConstantRanges = &pcRange;
+    if (vkCreatePipelineLayout(device, &plInfo, nullptr, &panoramaPipelineLayout) != VK_SUCCESS) {
+        vkDestroyShaderModule(device, vertModule, nullptr);
+        vkDestroyShaderModule(device, fragModule, nullptr);
+        destroyPanoramaResources();
+        return false;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertModule;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragModule;
+    stages[1].pName = "main";
+
+    VkVertexInputBindingDescription bindingDesc{};
+    bindingDesc.binding = 0;
+    bindingDesc.stride = 3 * sizeof(float);
+    bindingDesc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    VkVertexInputAttributeDescription attrDesc{};
+    attrDesc.binding = 0;
+    attrDesc.location = 0;
+    attrDesc.format = VK_FORMAT_R32G32B32_SFLOAT;
+    attrDesc.offset = 0;
+    VkPipelineVertexInputStateCreateInfo vertexInput{};
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount = 1;
+    vertexInput.pVertexBindingDescriptions = &bindingDesc;
+    vertexInput.vertexAttributeDescriptionCount = 1;
+    vertexInput.pVertexAttributeDescriptions = &attrDesc;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    // 动态 viewport/scissor：swapchain 尺寸变化时无需重建管线
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+    VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 2;
+    dynamicState.pDynamicStates = dynamicStates;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;   // 相机在立方体内部，与 GL 侧一致不剔面
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    // 背景层：不读不写深度（render pass 含深度附件，状态必须提供）
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_FALSE;
+    depthStencil.depthWriteEnable = VK_FALSE;
+
+    VkPipelineColorBlendAttachmentState blendAttachment{};
+    blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                     VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    blendAttachment.blendEnable = VK_FALSE;
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &blendAttachment;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = stages;
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = panoramaPipelineLayout;
+    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.subpass = 0;
+
+    VkResult pr = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &panoramaPipeline);
+    vkDestroyShaderModule(device, vertModule, nullptr);
+    vkDestroyShaderModule(device, fragModule, nullptr);
+    if (pr != VK_SUCCESS) {
+        LOGE("Failed to create panorama pipeline");
+        destroyPanoramaResources();
+        return false;
+    }
+
+    LOGI("Panorama initialized (Vulkan): faceSize=%d, %d/6 faces", faceSize, loadedCount);
+    return true;
+}
+
+void VulkanRenderer::renderPanorama(VkCommandBuffer cmd) {
+    // 旋转动画 MVP 由 PanoramaView 计算，叠加 Vulkan clip 空间 Y 翻转修正
+    glm::mat4 mvp = panoramaView.computeMVP((int)swapchainExtent.width, (int)swapchainExtent.height);
+    glm::mat4 yFlip(1.0f);
+    yFlip[1][1] = -1.0f;
+    mvp = yFlip * mvp;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, panoramaPipeline);
+
+    VkViewport viewport{};
+    viewport.width = (float)swapchainExtent.width;
+    viewport.height = (float)swapchainExtent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    VkRect2D scissor{ {0, 0}, swapchainExtent };
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    vkCmdPushConstants(cmd, panoramaPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &mvp);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, panoramaPipelineLayout,
+                            0, 1, &panoramaDescriptorSet, 0, nullptr);
+
+    VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &panoramaVertexBuffer, &offset);
+    vkCmdBindIndexBuffer(cmd, panoramaIndexBuffer, 0, VK_INDEX_TYPE_UINT16);
+    vkCmdDrawIndexed(cmd, panoramaIndexCount, 1, 0, 0, 0);
+}
+
+void VulkanRenderer::destroyPanoramaResources() {
+    if (panoramaPipeline != VK_NULL_HANDLE)        { vkDestroyPipeline(device, panoramaPipeline, nullptr); panoramaPipeline = VK_NULL_HANDLE; }
+    if (panoramaPipelineLayout != VK_NULL_HANDLE)  { vkDestroyPipelineLayout(device, panoramaPipelineLayout, nullptr); panoramaPipelineLayout = VK_NULL_HANDLE; }
+    if (panoramaDescriptorPool != VK_NULL_HANDLE)  { vkDestroyDescriptorPool(device, panoramaDescriptorPool, nullptr); panoramaDescriptorPool = VK_NULL_HANDLE; }
+    panoramaDescriptorSet = VK_NULL_HANDLE;  // 随池销毁
+    if (panoramaSetLayout != VK_NULL_HANDLE)       { vkDestroyDescriptorSetLayout(device, panoramaSetLayout, nullptr); panoramaSetLayout = VK_NULL_HANDLE; }
+    if (panoramaVertexBuffer != VK_NULL_HANDLE)    { vkDestroyBuffer(device, panoramaVertexBuffer, nullptr); panoramaVertexBuffer = VK_NULL_HANDLE; }
+    if (panoramaVertexMemory != VK_NULL_HANDLE)    { vkFreeMemory(device, panoramaVertexMemory, nullptr); panoramaVertexMemory = VK_NULL_HANDLE; }
+    if (panoramaIndexBuffer != VK_NULL_HANDLE)     { vkDestroyBuffer(device, panoramaIndexBuffer, nullptr); panoramaIndexBuffer = VK_NULL_HANDLE; }
+    if (panoramaIndexMemory != VK_NULL_HANDLE)     { vkFreeMemory(device, panoramaIndexMemory, nullptr); panoramaIndexMemory = VK_NULL_HANDLE; }
+    if (panoramaSampler != VK_NULL_HANDLE)         { vkDestroySampler(device, panoramaSampler, nullptr); panoramaSampler = VK_NULL_HANDLE; }
+    if (panoramaImageView != VK_NULL_HANDLE)       { vkDestroyImageView(device, panoramaImageView, nullptr); panoramaImageView = VK_NULL_HANDLE; }
+    if (panoramaImage != VK_NULL_HANDLE)           { vkDestroyImage(device, panoramaImage, nullptr); panoramaImage = VK_NULL_HANDLE; }
+    if (panoramaImageMemory != VK_NULL_HANDLE)     { vkFreeMemory(device, panoramaImageMemory, nullptr); panoramaImageMemory = VK_NULL_HANDLE; }
+    panoramaReady = false;
 }
 
 void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
@@ -618,6 +955,11 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
     bool menuMode = imguiInitialized &&
                     GameUI::getInstance().getState() != UIState::IN_GAME;
     if (menuMode) {
+        // 全景资源懒初始化（一次性上传命令必须在帧命令录制之前提交）
+        if (!panoramaInitAttempted) {
+            panoramaInitAttempted = true;
+            panoramaReady = initPanorama();
+        }
         ImGuiIO& io = ImGui::GetIO();
         io.DisplaySize = ImVec2((float)swapchainExtent.width, (float)swapchainExtent.height);
         // 真实帧间隔（菜单动画/双击判定依赖）
@@ -666,7 +1008,10 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
     vkCmdBeginRenderPass(commandBuffers[imageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
     if (menuMode) {
-        // 主界面：清屏色背景 + ImGui（全景背景留待第二步）
+        // 主界面：旋转全景背景（失败时回退清屏色）+ ImGui
+        if (panoramaReady) {
+            renderPanorama(commandBuffers[imageIndex]);
+        }
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffers[imageIndex]);
     } else {
         vkCmdBindPipeline(commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
