@@ -1496,7 +1496,7 @@ public class LauncherActivity extends Activity {
         Intent intent = new Intent(this, MainActivity.class);
         intent.putExtra("username", selected.getName());
         intent.putExtra("protocol_version", protocolVersion);
-        intent.putExtra("use_vulkan", useVulkan);
+        intent.putExtra("renderer_type", useVulkan ? "vulkan" : "opengl");
         // 传递正版认证信息
         intent.putExtra("login_type", selected.getType());
         if (selected.isPremium()) {

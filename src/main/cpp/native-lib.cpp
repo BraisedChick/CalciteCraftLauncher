@@ -4,8 +4,7 @@
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
 #include <android/log.h>
-#include <thread>
-#include <atomic>
+#include <cstring>
 #include "ClientEngine/ClientEngine.h"
 #include "ClientEngine/GameEngine.h"
 #include "VulkanRenderer.h"
@@ -13,13 +12,8 @@
 #include "utils.h"
 #include "TextureLoader.h"
 #include "ResourcepackManager.h"
-#include "CameraController.h"
 #include "Collision.h"
-#include "Light.h"
 #include "gui/GameUI.h"
-#include "MusicManager.h"
-#include "imgui.h"
-#include "gui/ConnectingScreen.h"
 #include "JniBridge.h"
 #include "gui/ScreenManager.h"
 #include "gui/TitleScreen.h"
@@ -28,175 +22,13 @@
 #define JNI_LOGI(...) __android_log_print(ANDROID_LOG_INFO, JNI_LOG_TAG, __VA_ARGS__)
 #define JNI_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, JNI_LOG_TAG, __VA_ARGS__)
 
-static VulkanRenderer* g_vulkanRenderer = nullptr;
-static bool g_useVulkan = false;
 static bool g_initialized = false;
-static bool g_rendererTypeSet = false;  // 标记是否已设置渲染器类型
-static std::atomic<bool> g_rendering(false);
-std::atomic<bool> g_renderThreadIdle(false);  // 渲染线程已进入非游戏分支（安全删除引擎）
-
-static std::thread g_renderThread;
-
-static void renderLoop() {
-    JNI_LOGI("Render thread started");
-
-    // 在渲染线程中重新绑定 EGL context
-    auto* renderLoopRenderer = ClientEngine::getInstance() ? ClientEngine::getInstance()->getRenderer() : nullptr;
-    if (renderLoopRenderer) {
-        renderLoopRenderer->makeCurrent();
-    }
-
-    int frameCount = 0;
-    auto lastTime = std::chrono::high_resolution_clock::now();
-
-    while (g_rendering) {
-        frameCount++;
-
-        // 计算 delta time
-        auto currentTime = std::chrono::high_resolution_clock::now();
-        float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
-        lastTime = currentTime;
-
-        bool inGame = (GameUI::getInstance().getState() == UIState::IN_GAME);
-
-        if (inGame) {
-            g_renderThreadIdle.store(false, std::memory_order_release);
-
-            // 确保 PlayerController 和 Light 持有 ChunkManager 引用
-            auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
-            if (game) {
-                auto* cm = game->getChunkManager();
-                if (cm) {
-                    if (!game->getCollision()->hasChunkManager()) {
-                        game->getCollision()->setChunkManager(cm);
-                        JNI_LOGI("PlayerController: ChunkManager acquired from engine");
-                    }
-                    game->getLight()->setChunkManager(cm);
-                }
-            }
-
-            // 背包/菜单/死亡界面打开时，重置移动输入但不中断物理（玩家仍受重力下落）
-            if (game && GameUI::getInstance().isInGameUIActive()) {
-                game->getCollision()->resetMovement();
-            }
-
-            // 更新玩家物理（传入视角方向计算移动）
-            float camPitch = CameraController::getInstance().getPitch();
-            float camYaw = CameraController::getInstance().getYaw();
-            glm::vec3 physPos;
-            bool onGround = false;
-            game->getCollision()->update(deltaTime, camPitch, camYaw, &physPos, &onGround);
-
-            // 发送玩家移动数据包到服务器（使用精确物理位置，已原子读取，无竞态）
-            if (game) {
-                float curPitch = CameraController::getInstance().getPitch();
-                float curYaw = CameraController::getInstance().getYaw();
-                game->sendPlayerMovement(physPos.x, physPos.y, physPos.z, curYaw, curPitch, onGround);
-            }
-
-            if (frameCount <= 5 || frameCount % 60 == 0) {
-                JNI_LOGI("Rendering frame %d", frameCount);
-            }
-
-            // 从 CameraController 获取摄像机数据
-            auto pos = CameraController::getInstance().getSmoothPosition();
-            float pitch = CameraController::getInstance().getPitch();
-            float yaw = CameraController::getInstance().getYaw();
-
-            if (ClientEngine::getInstance() && ClientEngine::getInstance()->getRenderer()) {
-                auto* renderer = ClientEngine::getInstance()->getRenderer();
-                // 检查是否有已完成的光照重算，标记邻近 chunk
-                {
-                    int lx, ly, lz;
-                    if (game->getLight()->pollCompletedLightRecalc(&lx, &ly, &lz)) {
-                        int cx = lx >> 4;
-                        int cz = lz >> 4;
-                        for (int dx = -2; dx <= 2; dx++) {
-                            for (int dz = -2; dz <= 2; dz++) {
-                                renderer->markChunkForUpdate(cx + dx, cz + dz);
-                            }
-                        }
-                    }
-                }
-
-                renderer->render(pos.x, pos.y, pos.z, pitch, yaw);
-            } else if (g_useVulkan && g_vulkanRenderer) {
-                g_vulkanRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
-            }
-        } else {
-            // 非游戏状态：不访问任何引擎资源，GLRenderer::render() 内部渲染全景+ImGui
-            g_renderThreadIdle.store(true, std::memory_order_release);
-
-            auto pos = CameraController::getInstance().getSmoothPosition();
-            float pitch = CameraController::getInstance().getPitch();
-            float yaw = CameraController::getInstance().getYaw();
-
-            auto* activeRenderer = ClientEngine::getInstance() ? ClientEngine::getInstance()->getRenderer() : nullptr;
-            if (activeRenderer) {
-                activeRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
-            } else if (g_useVulkan && g_vulkanRenderer) {
-                g_vulkanRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
-            }
-        }
-
-        // 每帧检查 ImGui 是否需要键盘输入（所有渲染路径通用）
-        {
-            static bool lastWantTextInput = false;
-            bool wantText = GameUI::getInstance().wantsTextInput();
-
-            if (wantText != lastWantTextInput) {
-                lastWantTextInput = wantText;
-
-                if (JniBridge::getJvm() && JniBridge::getActivity()) {
-                    JNIEnv* env;
-                    bool attached = false;
-                    int ger = JniBridge::getJvm()->GetEnv((void**)&env, JNI_VERSION_1_6);
-                    if (ger == JNI_EDETACHED) {
-                        if (JniBridge::getJvm()->AttachCurrentThread(&env, nullptr) == JNI_OK) attached = true;
-                    } else if (ger == JNI_OK) {
-                        // already attached
-                    } else {
-                        env = nullptr;
-                    }
-                    if (env) {
-                        jclass clazz = env->GetObjectClass(JniBridge::getActivity());
-                        jmethodID method = env->GetMethodID(clazz, "showKeyboardImGui", "(Z)V");
-                        if (method) {
-                            env->CallVoidMethod(JniBridge::getActivity(), method, wantText);
-                        }
-                        env->DeleteLocalRef(clazz);
-                        if (attached) JniBridge::detachCurrentThread();
-                    }
-                }
-            }
-        }
-
-        // 音乐管理器每帧驱动
-        {
-            auto* music = ClientEngine::getInstance()->getMusicManager();
-            if (music->isInitialized()) {
-                // 根据 UI 状态同步音乐场景
-                UIState uiState = GameUI::getInstance().getState();
-                MusicScene targetScene;
-                if (uiState == UIState::IN_GAME) {
-                    targetScene = MusicScene::GAME; // TODO: 创造模式判断
-                } else {
-                    targetScene = MusicScene::MENU;
-                }
-                if (music->getScene() != targetScene) {
-                    music->setScene(targetScene);
-                }
-                music->tick();
-            }
-        }
-    }
-}
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_calcite_MainActivity_initRenderer(
+Java_com_calcite_MainActivity_initClient(
         JNIEnv* env, jobject thiz, jobject surface) {
 
-    JNI_LOGI("=== initRenderer called ===");
+    JNI_LOGI("=== initClient called ===");
 
     // 1. 保存 JavaVM 和 Activity 引用
     JavaVM* jvm;
@@ -210,29 +42,13 @@ Java_com_calcite_MainActivity_initRenderer(
     }
     auto* client = ClientEngine::getInstance();
 
-    // 3. 初始化渲染器（内部完成 loadBlockRegistry + GLRenderer 创建）
+    // 3. 初始化渲染器（内部根据渲染器类型创建 GL/Vulkan，GL 路径含 loadBlockRegistry）
     ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
     if (!window) {
         JNI_LOGE("Failed to get ANativeWindow");
         return;
     }
-    if (g_useVulkan) {
-        // Vulkan 路径（第一步：仅渲染主界面 ImGui）
-        int w = ANativeWindow_getWidth(window);
-        int h = ANativeWindow_getHeight(window);
-        g_vulkanRenderer = new VulkanRenderer();
-        if (!g_vulkanRenderer->initialize(window, w, h)) {
-            JNI_LOGE("Failed to initialize Vulkan renderer");
-            delete g_vulkanRenderer;
-            g_vulkanRenderer = nullptr;
-            ANativeWindow_release(window);
-            return;
-        }
-        if (!g_vulkanRenderer->initImGui()) {
-            JNI_LOGE("Failed to initialize ImGui Vulkan backend");
-        }
-        JNI_LOGI("Vulkan renderer initialized: %dx%d", w, h);
-    } else if (!client->initializeRenderer(window)) {
+    if (!client->initializeRenderer(window)) {
         JNI_LOGE("Failed to initialize renderer");
         ANativeWindow_release(window);
         return;
@@ -242,13 +58,10 @@ Java_com_calcite_MainActivity_initRenderer(
     // 4. 设置 UI 回调（连接、退出等）
     client->setupUICallbacks();
 
-    // 5. 启动渲染线程（g_rendering 等全局变量暂留，第二步迁移）
-    JNI_LOGI("Starting render thread");
-    g_rendering = true;
-    g_renderThread = std::thread(renderLoop);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // 5. 启动渲染线程（由 ClientEngine 管理生命周期）
+    client->startRenderThread();
 
-    JNI_LOGI("=== initRenderer completed ===");
+    JNI_LOGI("=== initClient completed ===");
 }
 
 
@@ -260,13 +73,8 @@ Java_com_calcite_MainActivity_cleanupRenderer(
     JNI_LOGI("=== cleanupRenderer called ===");
 
     // 1. 先停渲染线程（确保 EGL context 不再被使用）
-    if (g_rendering) {
-        g_rendering = false;
-        if (g_renderThread.joinable()) {
-            JNI_LOGI("Waiting for render thread to finish");
-            g_renderThread.join();
-            JNI_LOGI("Render thread joined");
-        }
+    if (ClientEngine::getInstance()) {
+        ClientEngine::getInstance()->stopRenderThread();
     }
 
     // 2. 使 EGL context 在当前线程活跃，才能安全删除 GL 资源
@@ -296,13 +104,7 @@ Java_com_calcite_MainActivity_cleanupRenderer(
     // 3. 清除 GL 纹理缓存（现在 context 是当前的，glDeleteTextures 有效）
     ResourcepackManager::getInstance().clear();
 
-    // 4. 删除渲染器（内部 cleanup 会销毁 EGL context）
-    if (g_vulkanRenderer) {
-        delete g_vulkanRenderer;
-        g_vulkanRenderer = nullptr;
-    }
-
-    // 删除 ClientEngine（内部会销毁渲染器和会话）
+    // 4. 删除 ClientEngine（内部会销毁 GL/Vulkan 渲染器和会话）
     if (ClientEngine::getInstance()) {
         delete ClientEngine::getInstance();
     }
@@ -326,10 +128,10 @@ Java_com_calcite_MainActivity_onSurfaceReleased(
         if (renderer) {
             renderer->requestSurfaceRelease();
         }
-    }
-    // Vulkan 模式：标记 Surface 失效，渲染线程跳过提交
-    if (g_vulkanRenderer) {
-        g_vulkanRenderer->invalidateSurface();
+        // Vulkan 模式：标记 Surface 失效，渲染线程跳过提交
+        if (auto* vkRenderer = client->getVulkanRenderer()) {
+            vkRenderer->invalidateSurface();
+        }
     }
     // 渲染线程继续运行，render() 内部检测到 Surface 无效会跳过
 }
@@ -352,15 +154,15 @@ Java_com_calcite_MainActivity_onSurfaceRecreated(
             renderer->requestSurfaceRecreate(window);  // 所有权转移，渲染线程处理完负责 release
             return;
         }
-    }
 
-    // Vulkan 模式：直接重建 Surface + Swapchain（渲染线程此时因 surfaceValid=false 空转）
-    if (g_vulkanRenderer) {
-        int w = ANativeWindow_getWidth(window);
-        int h = ANativeWindow_getHeight(window);
-        g_vulkanRenderer->recreateSurface(window, w, h);
-        ANativeWindow_release(window);
-        return;
+        // Vulkan 模式：直接重建 Surface + Swapchain（渲染线程此时因 surfaceValid=false 空转）
+        if (auto* vkRenderer = client->getVulkanRenderer()) {
+            int w = ANativeWindow_getWidth(window);
+            int h = ANativeWindow_getHeight(window);
+            vkRenderer->recreateSurface(window, w, h);
+            ANativeWindow_release(window);
+            return;
+        }
     }
 
     // 没有 renderer 时直接释放，避免泄露
@@ -419,11 +221,12 @@ Java_com_calcite_MainActivity_resizeRenderer(
     JNI_LOGI("Resizing renderer to %dx%d", width, height);
 
     GLRenderer* glRenderer = ClientEngine::getInstance() ? ClientEngine::getInstance()->getRenderer() : nullptr;
+    VulkanRenderer* vkRenderer = ClientEngine::getInstance() ? ClientEngine::getInstance()->getVulkanRenderer() : nullptr;
 
     if (glRenderer) {
         glRenderer->recreateSurface(width, height);
-    } else if (g_vulkanRenderer) {
-        g_vulkanRenderer->recreateSwapchain(width, height);
+    } else if (vkRenderer) {
+        vkRenderer->recreateSwapchain(width, height);
     }
 }
 
@@ -431,11 +234,17 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_calcite_MainActivity_setRendererType(
         JNIEnv* env,
         jobject thiz,
-        jboolean useVulkan) {
+        jstring rendererType) {
 
-    g_useVulkan = (bool)useVulkan;
-    g_rendererTypeSet = true;
-    JNI_LOGI("Renderer type set to: %s", useVulkan ? "Vulkan" : "OpenGL ES");
+    const char* type = env->GetStringUTFChars(rendererType, nullptr);
+    if (strcmp(type, "vulkan") == 0) {
+        ClientEngine::setRendererType(ClientEngine::RendererType::Vulkan);
+    } else {
+        // 未知值回退 OpenGL ES，保证总能启动
+        ClientEngine::setRendererType(ClientEngine::RendererType::OpenGL);
+    }
+    JNI_LOGI("Renderer type set to: %s", type);
+    env->ReleaseStringUTFChars(rendererType, type);
 }
 
 extern "C" JNIEXPORT void JNICALL

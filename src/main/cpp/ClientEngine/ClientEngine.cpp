@@ -1,22 +1,28 @@
 #include "ClientEngine.h"
 #include "GameEngine.h"
 #include "GLRenderer.h"
+#include "VulkanRenderer.h"
 #include "EntityRenderer.h"
 #include "TextureAtlas.h"
 #include "BlockRegistry.h"
 #include "TextureLoader.h"
 #include "utils.h"
+#include "CameraController.h"
+#include "Collision.h"
+#include "Light.h"
+#include "JniBridge.h"
 #include <android/native_window.h>
+#include "gui/GameUI.h"
 #include "gui/ScreenManager.h"
 #include "gui/TitleScreen.h"
 #include <atomic>
 #include "MusicManager.h"
-extern std::atomic<bool> g_renderThreadIdle;
 ClientEngine* ClientEngine::instance = nullptr;
 std::string ClientEngine::s_pendingAccessToken;
 std::string ClientEngine::s_pendingPlayerUuid;
 std::string ClientEngine::s_pendingTokenType;
 std::string ClientEngine::s_username = "Player";
+ClientEngine::RendererType ClientEngine::s_rendererType = ClientEngine::RendererType::OpenGL;
 
 ClientEngine::ClientEngine() {
     instance = this;
@@ -28,6 +34,8 @@ ClientEngine::ClientEngine() {
 }
 
 ClientEngine::~ClientEngine() {
+    // 防御：若渲染线程仍在运行，先停止（幂等，正常流程由 cleanupRenderer 提前调用）
+    stopRenderThread();
     m_musicManager.reset();
     m_gameEngine.reset();
     m_entityRenderer->clearTextureCache();
@@ -84,9 +92,8 @@ void ClientEngine::setupUICallbacks() {
             auto& ui = GameUI::getInstance();
             ui.setState(UIState::MAIN_MENU);
 
-            // 等待渲染线程进入安全分支（需要访问全局变量，暂时保留）
-            // 后续第二步迁移渲染线程时，通过 ClientEngine 方法等待
-            while (!g_renderThreadIdle.load(std::memory_order_acquire)) {
+            // 等待渲染线程进入安全分支
+            while (!client->isRenderThreadIdle()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
             LOGI("Render thread in safe branch, cleaning up game engine");
@@ -119,6 +126,23 @@ bool ClientEngine::initializeRenderer(ANativeWindow* window) {
         return false;
     }
 
+    // Vulkan 路径（第一步：仅渲染主界面 ImGui）
+    if (s_rendererType == RendererType::Vulkan) {
+        int w = ANativeWindow_getWidth(window);
+        int h = ANativeWindow_getHeight(window);
+        auto vkRenderer = std::make_unique<VulkanRenderer>();
+        if (!vkRenderer->initialize(window, w, h)) {
+            LOGE("Failed to initialize Vulkan renderer");
+            return false;
+        }
+        if (!vkRenderer->initImGui()) {
+            LOGE("Failed to initialize ImGui Vulkan backend");
+        }
+        m_vulkanRenderer = std::move(vkRenderer);
+        LOGI("Vulkan renderer initialized: %dx%d", w, h);
+        return true;
+    }
+
     // 加载 BlockRegistry（必须在渲染器初始化之前）
     loadBlockRegistry();
 
@@ -132,6 +156,178 @@ bool ClientEngine::initializeRenderer(ANativeWindow* window) {
     setRenderer(std::move(glRenderer));
     LOGI("OpenGL ES renderer initialized successfully");
     return true;
+}
+
+// ===== 渲染线程 =====
+void ClientEngine::startRenderThread() {
+    if (m_rendering.load()) return;
+    LOGI("Starting render thread");
+    m_rendering = true;
+    m_renderThread = std::thread(&ClientEngine::renderLoop, this);
+    // 给渲染线程留出绑定 EGL context 的时间
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
+void ClientEngine::stopRenderThread() {
+    if (m_rendering.exchange(false)) {
+        if (m_renderThread.joinable()) {
+            LOGI("Waiting for render thread to finish");
+            m_renderThread.join();
+            LOGI("Render thread joined");
+        }
+    }
+}
+
+void ClientEngine::renderLoop() {
+    LOGI("Render thread started");
+
+    // 在渲染线程中重新绑定 EGL context
+    if (getRenderer()) {
+        getRenderer()->makeCurrent();
+    }
+
+    int frameCount = 0;
+    auto lastTime = std::chrono::high_resolution_clock::now();
+
+    while (m_rendering) {
+        frameCount++;
+
+        // 计算 delta time
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
+        lastTime = currentTime;
+
+        bool inGame = (GameUI::getInstance().getState() == UIState::IN_GAME);
+
+        if (inGame) {
+            m_renderThreadIdle.store(false, std::memory_order_release);
+
+            // 确保 PlayerController 和 Light 持有 ChunkManager 引用
+            auto* game = getGame();
+            if (game) {
+                auto* cm = game->getChunkManager();
+                if (cm) {
+                    if (!game->getCollision()->hasChunkManager()) {
+                        game->getCollision()->setChunkManager(cm);
+                        LOGI("PlayerController: ChunkManager acquired from engine");
+                    }
+                    game->getLight()->setChunkManager(cm);
+                }
+            }
+
+            // 背包/菜单/死亡界面打开时，重置移动输入但不中断物理（玩家仍受重力下落）
+            if (game && GameUI::getInstance().isInGameUIActive()) {
+                game->getCollision()->resetMovement();
+            }
+
+            // 更新玩家物理（传入视角方向计算移动）
+            float camPitch = CameraController::getInstance().getPitch();
+            float camYaw = CameraController::getInstance().getYaw();
+            glm::vec3 physPos;
+            bool onGround = false;
+            game->getCollision()->update(deltaTime, camPitch, camYaw, &physPos, &onGround);
+
+            // 发送玩家移动数据包到服务器（使用精确物理位置，已原子读取，无竞态）
+            if (game) {
+                float curPitch = CameraController::getInstance().getPitch();
+                float curYaw = CameraController::getInstance().getYaw();
+                game->sendPlayerMovement(physPos.x, physPos.y, physPos.z, curYaw, curPitch, onGround);
+            }
+
+            if (frameCount <= 5 || frameCount % 60 == 0) {
+                LOGI("Rendering frame %d", frameCount);
+            }
+
+            // 从 CameraController 获取摄像机数据
+            auto pos = CameraController::getInstance().getSmoothPosition();
+            float pitch = CameraController::getInstance().getPitch();
+            float yaw = CameraController::getInstance().getYaw();
+
+            if (auto* renderer = getRenderer()) {
+                // 检查是否有已完成的光照重算，标记邻近 chunk
+                {
+                    int lx, ly, lz;
+                    if (game->getLight()->pollCompletedLightRecalc(&lx, &ly, &lz)) {
+                        int cx = lx >> 4;
+                        int cz = lz >> 4;
+                        for (int dx = -2; dx <= 2; dx++) {
+                            for (int dz = -2; dz <= 2; dz++) {
+                                renderer->markChunkForUpdate(cx + dx, cz + dz);
+                            }
+                        }
+                    }
+                }
+
+                renderer->render(pos.x, pos.y, pos.z, pitch, yaw);
+            } else if (auto* vkRenderer = getVulkanRenderer()) {
+                vkRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
+            }
+        } else {
+            // 非游戏状态：不访问任何引擎资源，GLRenderer::render() 内部渲染全景+ImGui
+            m_renderThreadIdle.store(true, std::memory_order_release);
+
+            auto pos = CameraController::getInstance().getSmoothPosition();
+            float pitch = CameraController::getInstance().getPitch();
+            float yaw = CameraController::getInstance().getYaw();
+
+            if (auto* activeRenderer = getRenderer()) {
+                activeRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
+            } else if (auto* vkRenderer = getVulkanRenderer()) {
+                vkRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);
+            }
+        }
+
+        // 每帧检查 ImGui 是否需要键盘输入（所有渲染路径通用）
+        {
+            static bool lastWantTextInput = false;
+            bool wantText = GameUI::getInstance().wantsTextInput();
+
+            if (wantText != lastWantTextInput) {
+                lastWantTextInput = wantText;
+
+                if (JniBridge::getJvm() && JniBridge::getActivity()) {
+                    JNIEnv* env;
+                    bool attached = false;
+                    int ger = JniBridge::getJvm()->GetEnv((void**)&env, JNI_VERSION_1_6);
+                    if (ger == JNI_EDETACHED) {
+                        if (JniBridge::getJvm()->AttachCurrentThread(&env, nullptr) == JNI_OK) attached = true;
+                    } else if (ger == JNI_OK) {
+                        // already attached
+                    } else {
+                        env = nullptr;
+                    }
+                    if (env) {
+                        jclass clazz = env->GetObjectClass(JniBridge::getActivity());
+                        jmethodID method = env->GetMethodID(clazz, "showKeyboardImGui", "(Z)V");
+                        if (method) {
+                            env->CallVoidMethod(JniBridge::getActivity(), method, wantText);
+                        }
+                        env->DeleteLocalRef(clazz);
+                        if (attached) JniBridge::detachCurrentThread();
+                    }
+                }
+            }
+        }
+
+        // 音乐管理器每帧驱动
+        {
+            auto* music = getMusicManager();
+            if (music->isInitialized()) {
+                // 根据 UI 状态同步音乐场景
+                UIState uiState = GameUI::getInstance().getState();
+                MusicScene targetScene;
+                if (uiState == UIState::IN_GAME) {
+                    targetScene = MusicScene::GAME; // TODO: 创造模式判断
+                } else {
+                    targetScene = MusicScene::MENU;
+                }
+                if (music->getScene() != targetScene) {
+                    music->setScene(targetScene);
+                }
+                music->tick();
+            }
+        }
+    }
 }
 
 void ClientEngine::setRenderer(std::unique_ptr<GLRenderer> renderer) {

@@ -52,8 +52,8 @@ public class MainActivity extends Activity {
         return bytes;
     }
 
-    // 渲染器选择（由启动器通过 Intent 传入，true 使用 Vulkan）
-    private boolean useVulkan = false;
+    // 渲染器类型（由启动器通过 Intent 传入，"opengl" 或 "vulkan"）
+    private String rendererType = "opengl";
 
     private RendererSurfaceView rendererSurfaceView;
     private boolean libraryLoaded = false;
@@ -91,7 +91,8 @@ public class MainActivity extends Activity {
         String accessToken = intent.getStringExtra("access_token");
         String uuid = intent.getStringExtra("uuid");
         String tokenType = intent.getStringExtra("token_type");
-        useVulkan = intent.getBooleanExtra("use_vulkan", false);
+        rendererType = intent.getStringExtra("renderer_type");
+        if (rendererType == null || rendererType.isEmpty()) rendererType = "opengl";
         loadLibraryForProtocol(protocolVersion);
 
         // 启动 logcat 重定向到本地文件（捕获所有 C++/Java 日志）
@@ -99,7 +100,7 @@ public class MainActivity extends Activity {
 
         android.util.Log.i("MainActivity", "========================================");
         android.util.Log.i("MainActivity", "onCreate started, protocol=" + protocolVersion
-                + ", renderer=" + (useVulkan ? "Vulkan" : "OpenGL ES"));
+                + ", renderer=" + rendererType);
         android.util.Log.i("MainActivity", "========================================");
 
         // 强制横屏
@@ -119,7 +120,7 @@ public class MainActivity extends Activity {
         enableImmersiveMode();
 
         // 在 SurfaceView 创建前设置 AssetManager 和 ZIP 路径
-        // 否则 initRenderer 触发时资源还没准备好
+        // 否则 initClient 触发时资源还没准备好
         setAssetManager(getAssets());
 
         // 根据协议版本选择对应的资源包
@@ -213,7 +214,7 @@ public class MainActivity extends Activity {
             }
         });
 
-        android.util.Log.i("MainActivity", "onCreate completed, surface view will trigger initRenderer");
+        android.util.Log.i("MainActivity", "onCreate completed, surface view will trigger initClient");
     }
 
     @Override
@@ -352,12 +353,12 @@ public class MainActivity extends Activity {
     }
 
     // ===== Native 方法 =====
-    private native void initRenderer(android.view.Surface surface);
+    private native void initClient(android.view.Surface surface);
     private native void cleanupRenderer();
     private native void setAssetManager(AssetManager assetManager);
     private native void setTextureZipPath(String zipPath);
     private native void resizeRenderer(int width, int height);
-    private native void setRendererType(boolean useVulkan);
+    private native void setRendererType(String rendererType);
     private native void setUsername(String username);
     private native void setAuthInfo(String accessToken, String uuid, String tokenType);
     private native void onTouchEventImGui(int pointerId, float x, float y, int action);
@@ -442,12 +443,12 @@ public class MainActivity extends Activity {
 
     public void onVulkanSurfaceCreated(android.view.Surface surface) {
         try {
-            setRendererType(useVulkan);
-            initRenderer(surface);
+            setRendererType(rendererType);
+            initClient(surface);
         } catch (UnsatisfiedLinkError e) {
-            android.util.Log.e("MainActivity", "UnsatisfiedLinkError in initRenderer", e);
+            android.util.Log.e("MainActivity", "UnsatisfiedLinkError in initClient", e);
         } catch (Exception e) {
-            android.util.Log.e("MainActivity", "Exception in initRenderer", e);
+            android.util.Log.e("MainActivity", "Exception in initClient", e);
         }
     }
 

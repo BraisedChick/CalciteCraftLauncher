@@ -1,11 +1,14 @@
 #pragma once
 #include <string>
 #include <memory>
+#include <thread>
+#include <atomic>
 #include <jni.h>
 
 struct ANativeWindow;  // 前向声明，避免引入 android/native_window.h
 
 class GLRenderer;
+class VulkanRenderer;
 class GameEngine;
 class EntityRenderer;
 class TextureAtlas;
@@ -15,14 +18,29 @@ class MusicManager;
 // 持有渲染器、全局 UI/音频资源、当前会话（GameEngine）
 class ClientEngine {
 public:
+    // 渲染后端类型（Java 层传入 "opengl"/"vulkan" 字符串，JNI 层转换为枚举）
+    enum class RendererType { OpenGL, Vulkan };
+
     ClientEngine();
     ~ClientEngine();
 
     static ClientEngine* getInstance() { return instance; }
 
     // ===== 初始化 =====
-    // 由 JNI 层在 Surface 准备好后调用，创建渲染器
+    // 由 JNI 层在 Surface 准备好后调用，根据渲染器类型创建 GL/Vulkan 渲染器
     bool initializeRenderer(ANativeWindow* window);
+
+    // ===== 渲染器类型（JNI 层在 initializeRenderer 之前写入） =====
+    static void setRendererType(RendererType type) { s_rendererType = type; }
+    static RendererType getRendererType() { return s_rendererType; }
+
+    // ===== 渲染线程管理 =====
+    // 启动渲染线程（initializeRenderer 成功后调用）
+    void startRenderThread();
+    // 停止并 join 渲染线程（销毁引擎前调用，幂等）
+    void stopRenderThread();
+    // 渲染线程已进入非游戏分支（安全销毁会话）
+    bool isRenderThreadIdle() const { return m_renderThreadIdle.load(std::memory_order_acquire); }
 
     // ===== 玩家用户名（JNI 层写入，连接时读取） =====
     static void setUsername(const std::string& name) { s_username = name; }
@@ -39,6 +57,9 @@ public:
     void setRenderer(std::unique_ptr<GLRenderer> renderer);
     std::unique_ptr<GLRenderer> releaseRenderer();
     GLRenderer* getRenderer() { return m_renderer.get(); }
+
+    // ===== Vulkan 渲染器（与 GLRenderer 互斥，第一步仅渲染主界面） =====
+    VulkanRenderer* getVulkanRenderer() { return m_vulkanRenderer.get(); }
 
     // ===== 实体渲染器（OpenGL 组件，全局生命周期） =====
     EntityRenderer* getEntityRenderer() { return m_entityRenderer.get(); }
@@ -60,7 +81,11 @@ public:
     GameEngine* getGame() { return m_gameEngine.get(); }
 
 private:
+    // 渲染线程主循环（在 m_renderThread 中运行）
+    void renderLoop();
+
     std::unique_ptr<GLRenderer> m_renderer;
+    std::unique_ptr<VulkanRenderer> m_vulkanRenderer;
     std::unique_ptr<EntityRenderer> m_entityRenderer;
     std::unique_ptr<TextureAtlas> m_textureAtlas;
     std::unique_ptr<BlockRegistry> m_blockRegistry;
@@ -68,9 +93,14 @@ private:
     std::unique_ptr<MusicManager> m_musicManager;
     static ClientEngine* instance;
 
+    std::thread m_renderThread;
+    std::atomic<bool> m_rendering{false};
+    std::atomic<bool> m_renderThreadIdle{false};
+
     static std::string s_pendingAccessToken;
     static std::string s_pendingPlayerUuid;
     static std::string s_pendingTokenType;
     static std::string s_username;
+    static RendererType s_rendererType;
     bool m_blockRegistryLoaded = false;
 };
