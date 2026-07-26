@@ -11,6 +11,7 @@
 #include "gui/GameUI.h"
 #include "TextureLoader.h"
 #include "Camera.h"
+#include "stb_image.h"
 
 // VMA 实现（全项目唯一展开点）：直链 libvulkan 故用静态函数；
 // 实例是 Vulkan 1.0，锁定函数集避免引用旧设备不存在的 1.1+ 入口
@@ -531,7 +532,11 @@ bool VulkanRenderer::uploadPixelsToImage(const uint8_t* pixels, uint32_t width, 
 // ============================================================
 
 VkDescriptorSet VulkanRenderer::getGuiTexture(const std::string& path, int* outWidth, int* outHeight) {
-    auto it = guiTextureCache.find(path);
+    return getAssetTexture("gui/" + path + ".png", outWidth, outHeight);
+}
+
+VkDescriptorSet VulkanRenderer::getAssetTexture(const std::string& assetPath, int* outWidth, int* outHeight) {
+    auto it = guiTextureCache.find(assetPath);
     if (it != guiTextureCache.end()) {
         if (outWidth) *outWidth = it->second.width;
         if (outHeight) *outHeight = it->second.height;
@@ -541,18 +546,17 @@ VkDescriptorSet VulkanRenderer::getGuiTexture(const std::string& path, int* outW
     // AddTexture 依赖 ImGui Vulkan 后端的描述符池
     if (!imguiInitialized) return VK_NULL_HANDLE;
 
-    std::string fullPath = "gui/" + path + ".png";
-    TextureData tex = TextureLoader::loadImage(fullPath);
+    TextureData tex = TextureLoader::loadImage(assetPath);
     if (!tex.data || tex.width <= 0 || tex.height <= 0) {
-        LOGE("Failed to load GUI texture: %s", fullPath.c_str());
-        guiTextureCache[path] = GuiTexture{};  // 缓存失败，避免每帧重试
+        LOGE("Failed to load GUI texture: %s", assetPath.c_str());
+        guiTextureCache[assetPath] = GuiTexture{};  // 缓存失败，避免每帧重试
         return VK_NULL_HANDLE;
     }
 
     GuiTexture gt;
     if (!uploadGuiTexture(tex.data, tex.width, tex.height, gt)) {
-        LOGE("Failed to upload GUI texture: %s", fullPath.c_str());
-        guiTextureCache[path] = GuiTexture{};
+        LOGE("Failed to upload GUI texture: %s", assetPath.c_str());
+        guiTextureCache[assetPath] = GuiTexture{};
         return VK_NULL_HANDLE;
     }
     gt.width = tex.width;
@@ -560,10 +564,41 @@ VkDescriptorSet VulkanRenderer::getGuiTexture(const std::string& path, int* outW
 
     // 注册给 ImGui：VkDescriptorSet 即 ImTextureID
     gt.descriptorSet = ImGui_ImplVulkan_AddTexture(gt.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    guiTextureCache[path] = gt;
-    LOGI("GUI texture loaded (Vulkan): %s (%dx%d)", fullPath.c_str(), tex.width, tex.height);
+    guiTextureCache[assetPath] = gt;
+    LOGI("GUI texture loaded (Vulkan): %s (%dx%d)", assetPath.c_str(), tex.width, tex.height);
     if (outWidth) *outWidth = gt.width;
     if (outHeight) *outHeight = gt.height;
+    return gt.descriptorSet;
+}
+
+VkDescriptorSet VulkanRenderer::getMemoryTexture(const std::string& cacheKey, const uint8_t* pngData, size_t pngSize) {
+    auto it = guiTextureCache.find(cacheKey);
+    if (it != guiTextureCache.end()) return it->second.descriptorSet;
+
+    if (!imguiInitialized || !pngData || pngSize == 0) return VK_NULL_HANDLE;
+
+    int w = 0, h = 0, ch = 0;
+    uint8_t* pixels = stbi_load_from_memory(pngData, (int)pngSize, &w, &h, &ch, 4);
+    if (!pixels || w <= 0 || h <= 0) {
+        LOGE("Failed to decode memory texture: %s", cacheKey.c_str());
+        guiTextureCache[cacheKey] = GuiTexture{};  // 缓存失败，避免每帧重试
+        return VK_NULL_HANDLE;
+    }
+
+    GuiTexture gt;
+    bool ok = uploadGuiTexture(pixels, w, h, gt);
+    stbi_image_free(pixels);
+    if (!ok) {
+        LOGE("Failed to upload memory texture: %s", cacheKey.c_str());
+        guiTextureCache[cacheKey] = GuiTexture{};
+        return VK_NULL_HANDLE;
+    }
+    gt.width = w;
+    gt.height = h;
+
+    gt.descriptorSet = ImGui_ImplVulkan_AddTexture(gt.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    guiTextureCache[cacheKey] = gt;
+    LOGI("Memory texture loaded (Vulkan): %s (%dx%d)", cacheKey.c_str(), w, h);
     return gt.descriptorSet;
 }
 

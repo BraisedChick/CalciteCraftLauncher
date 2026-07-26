@@ -19,6 +19,7 @@ public:
         int maxPlayers = -1;
         int latencyMs = -1;
         GLuint iconTextureID = 0;
+        uint64_t iconTexVk = 0;  // Vulkan 后端：VkDescriptorSet 作 ImTextureID（由 VulkanRenderer 缓存管理）
         std::vector<uint8_t> faviconPngData;
         bool pinged = false;
         bool pinging = false;

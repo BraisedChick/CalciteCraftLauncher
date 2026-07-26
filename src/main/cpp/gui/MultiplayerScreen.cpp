@@ -73,40 +73,70 @@ void MultiplayerScreen::renderServerList() {
         ImGui::SetCursorPos(ImVec2(w * 0.5f - 120.0f, listHeight * 0.4f));
         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "暂无保存的服务器");
     } else {
-        // 懒加载默认服务器图标（Vulkan 后端暂不支持 GL 纹理）
-        if (defaultServerIconTexID == 0 && !GameUI::getInstance().isVulkanBackend()) {
-            TextureData tex = TextureLoader::loadPNG("misc/unknown_server.png");
-            if (tex.data && tex.width > 0 && tex.height > 0) {
-                glGenTextures(1, &defaultServerIconTexID);
-                glBindTexture(GL_TEXTURE_2D, defaultServerIconTexID);
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex.width, tex.height,
-                             0, GL_RGBA, GL_UNSIGNED_BYTE, tex.data);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            }
-        }
+        // 取纹理阶段双后端分叉：GL 懒加载自持 GL 纹理；Vulkan 走 VulkanRenderer 缓存（每帧仅哈希查找）
+        bool vulkanMode = GameUI::getInstance().isVulkanBackend();
+        VulkanRenderer* vk = nullptr;
+        if (vulkanMode && ClientEngine::getInstance())
+            vk = ClientEngine::getInstance()->getVulkanRenderer();
 
-        // 懒加载延迟信号图标（Vulkan 后端暂不支持 GL 纹理）
-        if (pingTex[0] == 0 && !GameUI::getInstance().isVulkanBackend()) {
-            auto loadPingTex = [](GLuint& texID, const char* path) {
-                TextureData tex = TextureLoader::loadPNG(path);
-                if (tex.data && tex.width > 0 && tex.height > 0) {
-                    glGenTextures(1, &texID);
-                    glBindTexture(GL_TEXTURE_2D, texID);
-                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex.width, tex.height,
-                                 0, GL_RGBA, GL_UNSIGNED_BYTE, tex.data);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-                }
-            };
+        ImTextureID defaultIconTex = 0;
+        ImTextureID pingIconTex[5] = {};
+        ImTextureID pingingIconTex[5] = {};
+        ImTextureID unreachableIconTex = 0;
+
+        if (vk) {
+            defaultIconTex = (ImTextureID)(intptr_t)vk->getAssetTexture("misc/unknown_server.png");
             for (int i = 0; i < 5; i++) {
                 char path[64];
-                snprintf(path, sizeof(path), "gui/sprites/server_list/ping_%d.png", i + 1);
-                loadPingTex(pingTex[i], path);
-                snprintf(path, sizeof(path), "gui/sprites/server_list/pinging_%d.png", i + 1);
-                loadPingTex(pingingTex[i], path);
+                snprintf(path, sizeof(path), "sprites/server_list/ping_%d", i + 1);
+                pingIconTex[i] = (ImTextureID)(intptr_t)vk->getGuiTexture(path);
+                snprintf(path, sizeof(path), "sprites/server_list/pinging_%d", i + 1);
+                pingingIconTex[i] = (ImTextureID)(intptr_t)vk->getGuiTexture(path);
             }
-            loadPingTex(unreachableTexID, "gui/sprites/server_list/unreachable.png");
+            unreachableIconTex = (ImTextureID)(intptr_t)vk->getGuiTexture("sprites/server_list/unreachable");
+        } else if (!vulkanMode) {
+            // 懒加载默认服务器图标
+            if (defaultServerIconTexID == 0) {
+                TextureData tex = TextureLoader::loadPNG("misc/unknown_server.png");
+                if (tex.data && tex.width > 0 && tex.height > 0) {
+                    glGenTextures(1, &defaultServerIconTexID);
+                    glBindTexture(GL_TEXTURE_2D, defaultServerIconTexID);
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex.width, tex.height,
+                                 0, GL_RGBA, GL_UNSIGNED_BYTE, tex.data);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                }
+            }
+
+            // 懒加载延迟信号图标
+            if (pingTex[0] == 0) {
+                auto loadPingTex = [](GLuint& texID, const char* path) {
+                    TextureData tex = TextureLoader::loadPNG(path);
+                    if (tex.data && tex.width > 0 && tex.height > 0) {
+                        glGenTextures(1, &texID);
+                        glBindTexture(GL_TEXTURE_2D, texID);
+                        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex.width, tex.height,
+                                     0, GL_RGBA, GL_UNSIGNED_BYTE, tex.data);
+                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                    }
+                };
+                for (int i = 0; i < 5; i++) {
+                    char path[64];
+                    snprintf(path, sizeof(path), "gui/sprites/server_list/ping_%d.png", i + 1);
+                    loadPingTex(pingTex[i], path);
+                    snprintf(path, sizeof(path), "gui/sprites/server_list/pinging_%d.png", i + 1);
+                    loadPingTex(pingingTex[i], path);
+                }
+                loadPingTex(unreachableTexID, "gui/sprites/server_list/unreachable.png");
+            }
+
+            defaultIconTex = (ImTextureID)(intptr_t)defaultServerIconTexID;
+            for (int i = 0; i < 5; i++) {
+                pingIconTex[i] = (ImTextureID)(intptr_t)pingTex[i];
+                pingingIconTex[i] = (ImTextureID)(intptr_t)pingingTex[i];
+            }
+            unreachableIconTex = (ImTextureID)(intptr_t)unreachableTexID;
         }
 
         if (ImGui::BeginTable("servers", 1,
@@ -121,23 +151,30 @@ void MultiplayerScreen::renderServerList() {
 
                 bool isSelected = (selectedServer == (int)i);
 
-                // 懒上传服务器图标纹理（Vulkan 后端暂不支持 GL 纹理）
-                if (!servers[i].faviconPngData.empty() && servers[i].iconTextureID == 0 &&
-                    !GameUI::getInstance().isVulkanBackend()) {
-                    int iw, ih, ich;
-                    uint8_t* pixels = stbi_load_from_memory(
-                        servers[i].faviconPngData.data(), (int)servers[i].faviconPngData.size(),
-                        &iw, &ih, &ich, 4);
-                    if (pixels && iw > 0 && ih > 0) {
-                        glGenTextures(1, &servers[i].iconTextureID);
-                        glBindTexture(GL_TEXTURE_2D, servers[i].iconTextureID);
-                        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, iw, ih, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                        stbi_image_free(pixels);
+                // 懒上传服务器图标纹理（ping 返回的内存 PNG 字节，双后端分叉）
+                if (!servers[i].faviconPngData.empty()) {
+                    if (vk && servers[i].iconTexVk == 0) {
+                        std::string key = "favicon:" + servers[i].ip + ":" + std::to_string(servers[i].port);
+                        servers[i].iconTexVk = (uint64_t)(intptr_t)vk->getMemoryTexture(
+                            key, servers[i].faviconPngData.data(), servers[i].faviconPngData.size());
+                        servers[i].faviconPngData.clear();
+                        servers[i].faviconPngData.shrink_to_fit();
+                    } else if (!vulkanMode && servers[i].iconTextureID == 0) {
+                        int iw, ih, ich;
+                        uint8_t* pixels = stbi_load_from_memory(
+                            servers[i].faviconPngData.data(), (int)servers[i].faviconPngData.size(),
+                            &iw, &ih, &ich, 4);
+                        if (pixels && iw > 0 && ih > 0) {
+                            glGenTextures(1, &servers[i].iconTextureID);
+                            glBindTexture(GL_TEXTURE_2D, servers[i].iconTextureID);
+                            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, iw, ih, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                            stbi_image_free(pixels);
+                        }
+                        servers[i].faviconPngData.clear();
+                        servers[i].faviconPngData.shrink_to_fit();
                     }
-                    servers[i].faviconPngData.clear();
-                    servers[i].faviconPngData.shrink_to_fit();
                 }
 
                 std::string line1 = servers[i].name;
@@ -174,7 +211,9 @@ void MultiplayerScreen::renderServerList() {
 
                 float iconSize = 64.0f;
                 float textOffsetX = iconSize + 8.0f;
-                GLuint displayIcon = (servers[i].iconTextureID != 0) ? servers[i].iconTextureID : defaultServerIconTexID;
+                ImTextureID displayIcon = vulkanMode ? (ImTextureID)servers[i].iconTexVk
+                                                     : (ImTextureID)(intptr_t)servers[i].iconTextureID;
+                if (displayIcon == 0) displayIcon = defaultIconTex;
 
                 ImVec2 startPos = ImGui::GetCursorPos();
                 float availWidth = ImGui::GetContentRegionAvail().x;
@@ -192,7 +231,7 @@ void MultiplayerScreen::renderServerList() {
 
                 if (displayIcon != 0) {
                     ImGui::SetCursorPos(ImVec2(startPos.x + 2, startPos.y + 5));
-                    ImGui::Image((ImTextureID)(intptr_t)displayIcon, ImVec2(iconSize, iconSize));
+                    ImGui::Image(displayIcon, ImVec2(iconSize, iconSize));
                 }
 
                 float textLeft = startPos.x + textOffsetX;
@@ -201,7 +240,7 @@ void MultiplayerScreen::renderServerList() {
                 ImGui::SetCursorPos(ImVec2(textLeft, startPos.y - 2));
                 ImGui::Text("%s", line1.c_str());
 
-                float pingIconWidth = (pingTex[0] != 0 || unreachableTexID != 0) ? 36.0f : 0.0f;
+                float pingIconWidth = (pingIconTex[0] != 0 || unreachableIconTex != 0) ? 36.0f : 0.0f;
                 if (!rightInfo.empty()) {
                     ImVec2 infoSize = ImGui::CalcTextSize(rightInfo.c_str());
                     ImGui::SetCursorPos(ImVec2(rightEdge - infoSize.x - pingIconWidth - 4, startPos.y + 3));
@@ -209,28 +248,28 @@ void MultiplayerScreen::renderServerList() {
                 }
 
                 {
-                    GLuint displayPingTex = 0;
+                    ImTextureID displayPingTex = 0;
                     if (servers[i].pinging) {
                         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::steady_clock::now().time_since_epoch()).count();
                         int frame = (int)((ms / 100 + (int)i * 2) % 8);
                         if (frame > 4) frame = 8 - frame;
-                        displayPingTex = pingingTex[frame];
+                        displayPingTex = pingingIconTex[frame];
                     } else if (servers[i].pinged && servers[i].latencyMs >= 0) {
-                        if (servers[i].latencyMs < 150) displayPingTex = pingTex[4];
-                        else if (servers[i].latencyMs < 300) displayPingTex = pingTex[3];
-                        else if (servers[i].latencyMs < 600) displayPingTex = pingTex[2];
-                        else if (servers[i].latencyMs < 1000) displayPingTex = pingTex[1];
-                        else displayPingTex = pingTex[0];
+                        if (servers[i].latencyMs < 150) displayPingTex = pingIconTex[4];
+                        else if (servers[i].latencyMs < 300) displayPingTex = pingIconTex[3];
+                        else if (servers[i].latencyMs < 600) displayPingTex = pingIconTex[2];
+                        else if (servers[i].latencyMs < 1000) displayPingTex = pingIconTex[1];
+                        else displayPingTex = pingIconTex[0];
                     } else {
-                        displayPingTex = unreachableTexID;
+                        displayPingTex = unreachableIconTex;
                     }
 
                     if (displayPingTex != 0) {
                         float iconDisplaySize = 28.0f;
                         float iconX = rightEdge - iconDisplaySize - 4;
                         ImGui::SetCursorPos(ImVec2(iconX, startPos.y + 8));
-                        ImGui::Image((ImTextureID)(intptr_t)displayPingTex,
+                        ImGui::Image(displayPingTex,
                                      ImVec2(iconDisplaySize, iconDisplaySize * 0.8f));
                         ImGui::SetCursorPos(ImVec2(iconX, startPos.y + 8));
                         ImGui::InvisibleButton("##ping", ImVec2(iconDisplaySize, iconDisplaySize * 0.8f));

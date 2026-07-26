@@ -38,6 +38,12 @@ public:
     // outWidth/outHeight 可选返回纹理像素尺寸（供标题图等按原图比例排版的场景）
     VkDescriptorSet getGuiTexture(const std::string& path, int* outWidth = nullptr, int* outHeight = nullptr);
 
+    // 任意 assets 路径纹理（含扩展名，如 "misc/unknown_server.png"），缓存键 = 完整路径
+    VkDescriptorSet getAssetTexture(const std::string& assetPath, int* outWidth = nullptr, int* outHeight = nullptr);
+
+    // 内存 PNG 字节解码上传（如服务器 favicon），按 cacheKey 缓存
+    VkDescriptorSet getMemoryTexture(const std::string& cacheKey, const uint8_t* pngData, size_t pngSize);
+
     // 切屏后 Surface 释放/重建（防止向失效 Surface 提交）
     void invalidateSurface() { surfaceValid = false; }
     bool recreateSurface(ANativeWindow* window, int width, int height);
