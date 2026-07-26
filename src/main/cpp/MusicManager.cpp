@@ -23,7 +23,9 @@ MusicManager::MusicManager() {
 }
 
 MusicManager::~MusicManager() {
-    // 空析构，所有清理在 shutdown() 中完成
+    // 兜底清理：若外部未显式调用 shutdown()，析构时自愈（幂等）
+    // 否则 ma_engine 不会 uninit，miniaudio 后台音频线程会在退出后继续播放
+    shutdown();
 }
 MusicManager::SceneConfig MusicManager::getConfig(MusicScene scene) {
     switch (scene) {
