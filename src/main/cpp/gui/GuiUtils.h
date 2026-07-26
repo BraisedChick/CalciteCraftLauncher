@@ -1,7 +1,6 @@
 #pragma once
 
 #include "imgui.h"
-#include "imgui_impl_vulkan.h"
 #include "ResourcepackManager.h"
 #include "MusicManager.h"
 #include "ClientEngine/ClientEngine.h"
@@ -122,10 +121,9 @@ inline void drawNineSlice(ImDrawList* dl, ImTextureID tex,
     float texW, float texH, float border)
 {
     if (tex == 0) return;
-    // 像素风纹理需 NEAREST 采样：GL 解绑 sampler 回退纹理自身参数，Vulkan 切后端内置 Nearest sampler
-    if (GameUI::getInstance().isVulkanBackend()) {
-        dl->AddCallback(ImGui_ImplVulkan_DrawCallback_SetSamplerNearest, nullptr);
-    } else {
+    // GL 解绑 sampler 回退纹理自身 NEAREST 参数；Vulkan 用后端默认 Linear sampler
+    // （1:1 边框 + 平色拉伸区域下两种采样视觉等价，不切 Nearest 可避免回调打断合批）
+    if (!GameUI::getInstance().isVulkanBackend()) {
         dl->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
             glBindSampler(0, 0);
         }, nullptr);
@@ -142,11 +140,6 @@ inline void drawNineSlice(ImDrawList* dl, ImTextureID tex,
                 ImVec2(sx[c], sy[r]), ImVec2(sx[c + 1], sy[r + 1]),
                 ImVec2(u[c], v[r]), ImVec2(u[c + 1], v[r + 1]));
         }
-    }
-
-    // Vulkan 后端恢复默认 Linear（字体等后续绘制依赖）
-    if (GameUI::getInstance().isVulkanBackend()) {
-        dl->AddCallback(ImGui_ImplVulkan_DrawCallback_SetSamplerLinear, nullptr);
     }
 }
 

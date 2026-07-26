@@ -157,10 +157,6 @@ IMGUI_IMPL_API void             ImGui_ImplVulkan_UpdateTexture(ImTextureData* te
 IMGUI_IMPL_API VkDescriptorSet  ImGui_ImplVulkan_AddTexture(VkImageView image_view, VkImageLayout image_layout);
 IMGUI_IMPL_API void             ImGui_ImplVulkan_RemoveTexture(VkDescriptorSet descriptor_set);
 
-// [CalciteCraft] Expose built-in sampler switch draw callbacks (use with ImDrawList::AddCallback to select nearest/linear sampling for subsequent draws)
-IMGUI_IMPL_API void             ImGui_ImplVulkan_DrawCallback_SetSamplerLinear(const ImDrawList* draw_list, const ImDrawCmd* draw_cmd);
-IMGUI_IMPL_API void             ImGui_ImplVulkan_DrawCallback_SetSamplerNearest(const ImDrawList* draw_list, const ImDrawCmd* draw_cmd);
-
 #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
 IMGUI_IMPL_API VkDescriptorSet  ImGui_ImplVulkan_AddTexture(VkSampler sampler, VkImageView image_view, VkImageLayout image_layout); // Ignore VkSampler
 #endif
