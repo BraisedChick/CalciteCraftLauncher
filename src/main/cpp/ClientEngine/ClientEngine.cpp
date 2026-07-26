@@ -7,7 +7,7 @@
 #include "BlockRegistry.h"
 #include "TextureLoader.h"
 #include "utils.h"
-#include "CameraController.h"
+#include "Camera.h"
 #include "Collision.h"
 #include "Light.h"
 #include "JniBridge.h"
@@ -219,16 +219,16 @@ void ClientEngine::renderLoop() {
             }
 
             // 更新玩家物理（传入视角方向计算移动）
-            float camPitch = CameraController::getInstance().getPitch();
-            float camYaw = CameraController::getInstance().getYaw();
+            float camPitch = Camera::getInstance().getPitch();
+            float camYaw = Camera::getInstance().getYaw();
             glm::vec3 physPos;
             bool onGround = false;
             game->getCollision()->update(deltaTime, camPitch, camYaw, &physPos, &onGround);
 
             // 发送玩家移动数据包到服务器（使用精确物理位置，已原子读取，无竞态）
             if (game) {
-                float curPitch = CameraController::getInstance().getPitch();
-                float curYaw = CameraController::getInstance().getYaw();
+                float curPitch = Camera::getInstance().getPitch();
+                float curYaw = Camera::getInstance().getYaw();
                 game->sendPlayerMovement(physPos.x, physPos.y, physPos.z, curYaw, curPitch, onGround);
             }
 
@@ -236,10 +236,10 @@ void ClientEngine::renderLoop() {
                 LOGI("Rendering frame %d", frameCount);
             }
 
-            // 从 CameraController 获取摄像机数据
-            auto pos = CameraController::getInstance().getSmoothPosition();
-            float pitch = CameraController::getInstance().getPitch();
-            float yaw = CameraController::getInstance().getYaw();
+            // 从 Camera 获取摄像机数据
+            auto pos = Camera::getInstance().getSmoothPosition();
+            float pitch = Camera::getInstance().getPitch();
+            float yaw = Camera::getInstance().getYaw();
 
             if (auto* renderer = getRenderer()) {
                 // 取走光照更新波及的脏 chunk，精准 remesh（替代旧版 5×5 无差别重建）
@@ -260,9 +260,9 @@ void ClientEngine::renderLoop() {
             // 非游戏状态：不访问任何引擎资源，GLRenderer::render() 内部渲染全景+ImGui
             m_renderThreadIdle.store(true, std::memory_order_release);
 
-            auto pos = CameraController::getInstance().getSmoothPosition();
-            float pitch = CameraController::getInstance().getPitch();
-            float yaw = CameraController::getInstance().getYaw();
+            auto pos = Camera::getInstance().getSmoothPosition();
+            float pitch = Camera::getInstance().getPitch();
+            float yaw = Camera::getInstance().getYaw();
 
             if (auto* activeRenderer = getRenderer()) {
                 activeRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);

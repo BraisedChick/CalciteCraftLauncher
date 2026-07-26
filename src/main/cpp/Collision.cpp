@@ -66,7 +66,7 @@ void Collision::resetMovement() {
 void Collision::update(float deltaTime, float camPitch, float camYaw, glm::vec3* outPosition, bool* outOnGround) {
     std::lock_guard<std::mutex> lock(mutex);
 
-    // 从 CameraController 同步视角方向
+    // 从 Camera 同步视角方向
     pitch = camPitch;
     yaw = camYaw;
 

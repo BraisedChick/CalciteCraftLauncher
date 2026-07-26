@@ -4,7 +4,7 @@
 #include "EntityManager.h"
 #include "Entity.h"
 #include "Collision.h"
-#include "CameraController.h"
+#include "Camera.h"
 #include "Light.h"
 #include "PlayerInventory.h"
 #include "BiomeColorManager.h"

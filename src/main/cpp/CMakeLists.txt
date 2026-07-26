@@ -74,7 +74,7 @@ set(APP_SOURCES
     PanoramaView.cpp
     TextureLoader.cpp
     BlockRegistry.cpp
-    CameraController.cpp
+    Camera.cpp
     Collision.cpp
     TextureAtlas.cpp
     BiomeColorManager.cpp

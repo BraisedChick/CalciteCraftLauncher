@@ -1,47 +1,47 @@
-#include "CameraController.h"
+#include "Camera.h"
 #include "Collision.h"
 #include "ClientEngine/ClientEngine.h"
 #include "ClientEngine/GameEngine.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <android/log.h>
 
-#define LOG_TAG "CameraController"
+#define LOG_TAG "Camera"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-CameraController::CameraController()
+Camera::Camera()
     : pitch(-0.3f), yaw(3.14159f) {
-    LOGI("CameraController initialized");
+    LOGI("Camera initialized");
 }
 
-glm::vec3 CameraController::getPosition() const {
+glm::vec3 Camera::getPosition() const {
     auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
     if (!game || !game->getCollision()) return glm::vec3(0.0f, 60.0f, 0.0f);
     return game->getCollision()->getPosition();
 }
 
-glm::vec3 CameraController::getSmoothPosition() const {
+glm::vec3 Camera::getSmoothPosition() const {
     auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
     if (!game || !game->getCollision()) return glm::vec3(0.0f, 60.0f, 0.0f);
     return game->getCollision()->getSmoothPosition();
 }
 
-float CameraController::getPitch() const {
+float Camera::getPitch() const {
     std::lock_guard<std::mutex> lock(mutex);
     return pitch;
 }
 
-float CameraController::getYaw() const {
+float Camera::getYaw() const {
     std::lock_guard<std::mutex> lock(mutex);
     return yaw;
 }
 
-void CameraController::setPosition(float x, float y, float z) {
+void Camera::setPosition(float x, float y, float z) {
     auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
     if (game && game->getCollision()) game->getCollision()->setPosition(x, y, z);
     LOGI("Camera position set to (%.2f, %.2f, %.2f)", x, y, z);
 }
 
-void CameraController::setRotation(float newPitch, float newYaw) {
+void Camera::setRotation(float newPitch, float newYaw) {
     std::lock_guard<std::mutex> lock(mutex);
     const float maxPitch = glm::radians(89.0f);
     pitch = glm::clamp(newPitch, -maxPitch, maxPitch);
@@ -50,7 +50,7 @@ void CameraController::setRotation(float newPitch, float newYaw) {
     if (yaw >= 2.0f * glm::pi<float>()) yaw -= 2.0f * glm::pi<float>();
 }
 
-void CameraController::updateRotation(float pitchDelta, float yawDelta) {
+void Camera::updateRotation(float pitchDelta, float yawDelta) {
     std::lock_guard<std::mutex> lock(mutex);
     pitch += pitchDelta;
     yaw += yawDelta;

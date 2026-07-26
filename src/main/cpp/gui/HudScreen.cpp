@@ -5,7 +5,7 @@
 #include <GLES3/gl3.h>
 #include "imgui.h"
 #include "GameUI.h"
-#include "CameraController.h"
+#include "Camera.h"
 #include "ClientEngine/ClientEngine.h"
 #include "ClientEngine/GameEngine.h"
 #include "ResourcepackManager.h"
@@ -424,10 +424,10 @@ void HudScreen::render(int mouseX, int mouseY) {
                      er ? er->getTotalCount() : 0);
         ImGui::Text("");
 
-        auto pos = CameraController::getInstance().getPosition();
+        auto pos = Camera::getInstance().getPosition();
         ImGui::Text("XYZ: %.1f / %.1f / %.1f", pos.x, pos.y, pos.z);
 
-        float yaw = CameraController::getInstance().getYaw();
+        float yaw = Camera::getInstance().getYaw();
         float yawDeg = glm::degrees(yaw);
         static const char* directions[] = {"South", "West", "North", "East"};
         int dirIdx = ((int)(yawDeg + 45) / 90) % 4;
@@ -435,7 +435,7 @@ void HudScreen::render(int mouseX, int mouseY) {
         ImGui::Text("Facing: %s (%.1f / %.1f)",
             directions[dirIdx],
             yawDeg,
-            glm::degrees(CameraController::getInstance().getPitch()));
+            glm::degrees(Camera::getInstance().getPitch()));
 
         ImGui::End();
     }

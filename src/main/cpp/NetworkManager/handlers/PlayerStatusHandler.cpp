@@ -2,7 +2,7 @@
 #include "ClientEngine/GameEngine.h"
 #include "utils.h"
 #include "Collision.h"
-#include "CameraController.h"
+#include "Camera.h"
 #include "Light.h"
 #include "PlayerInventory.h"
 
@@ -87,8 +87,8 @@ void NetworkManager::handlePlayerStatus(int packetId, const std::vector<uint8_t>
                      dist);
             }
 
-            CameraController::getInstance().setPosition(m_engine->playerX, m_engine->playerY, m_engine->playerZ);
-            CameraController::getInstance().setRotation(m_engine->pitch, m_engine->yaw);
+            Camera::getInstance().setPosition(m_engine->playerX, m_engine->playerY, m_engine->playerZ);
+            Camera::getInstance().setRotation(m_engine->pitch, m_engine->yaw);
             m_engine->getCollision()->setPosition(m_engine->playerX, m_engine->playerY, m_engine->playerZ);
 
             m_engine->lastSent.x = m_engine->playerX;

@@ -2,10 +2,10 @@
 #include <glm/glm.hpp>
 #include <mutex>
 
-class CameraController {
+class Camera {
 public:
-    static CameraController& getInstance() {
-        static CameraController instance;
+    static Camera& getInstance() {
+        static Camera instance;
         return instance;
     }
 
@@ -19,7 +19,7 @@ public:
     void updateRotation(float pitchDelta, float yawDelta);
 
 private:
-    CameraController();
+    Camera();
 
     float pitch;
     float yaw;

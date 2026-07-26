@@ -7,7 +7,7 @@
 #include "Renderer/GLRenderer.h"
 #include "utils.h"
 #include "MinecraftVersion.h"
-#include "CameraController.h"
+#include "Camera.h"
 #include "Collision.h"
 #include "Raycast.h"
 

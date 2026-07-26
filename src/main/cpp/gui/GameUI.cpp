@@ -15,7 +15,7 @@
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
 #include "imgui_impl_vulkan.h"
-#include "CameraController.h"
+#include "Camera.h"
 #include "EntityManager.h"
 #include "Collision.h"
 #include "PlayerInventory.h"
@@ -1053,7 +1053,7 @@ void GameUI::handleCameraTouch(int pointerId, float x, float y, int action) {
         case 0: pt->cameraLastX = x; pt->cameraLastY = y; break;
         case 2: {
             float dx = x - pt->cameraLastX, dy = y - pt->cameraLastY;
-            CameraController::getInstance().updateRotation(dy * 0.005f, dx * 0.005f);
+            Camera::getInstance().updateRotation(dy * 0.005f, dx * 0.005f);
             pt->cameraLastX = x; pt->cameraLastY = y; break;
         }
     }

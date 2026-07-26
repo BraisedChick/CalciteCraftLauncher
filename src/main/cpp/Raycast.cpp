@@ -4,7 +4,7 @@
 #include "ClientEngine/ClientEngine.h"
 #include "ClientEngine/GameEngine.h"
 #include "Collision.h"
-#include "CameraController.h"
+#include "Camera.h"
 #include "EntityManager.h"
 #include <cmath>
 #include <algorithm>
@@ -199,7 +199,7 @@ RaycastResult Raycast::rayCast(glm::vec3 origin, glm::vec3 direction, float maxD
 
 // 计算摄像机眼睛位置和朝向向量
 void Raycast::getCameraEyeRay(glm::vec3& eyePos, glm::vec3& dir) const {
-    auto& cam = CameraController::getInstance();
+    auto& cam = Camera::getInstance();
     eyePos = cam.getPosition() + glm::vec3(0.0f, 1.62f, 0.0f);
     float pitch = cam.getPitch(), yaw = cam.getYaw();
     dir.x = -std::sin(yaw) * std::cos(pitch);
