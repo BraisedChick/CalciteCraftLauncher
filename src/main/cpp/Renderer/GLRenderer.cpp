@@ -1541,6 +1541,9 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
 }
 
 bool GLRenderer::initImGui() {
+    // 同进程内可能先跑过 Vulkan（GameUI 是单例，vulkanBackend 会残留为 true），
+    // 必须显式设回 false，否则 init() 跳过 ImGui_ImplOpenGL3_Init、render() 走 Vulkan NewFrame 导致崩溃
+    GameUI::getInstance().setVulkanBackend(false);
     return GameUI::getInstance().init();
 }
 
