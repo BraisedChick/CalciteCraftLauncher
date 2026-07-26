@@ -938,26 +938,6 @@ long long GameEngine::getWorldDayTime() const {
     return m_light->getWorldDayTime();
 }
 
-void GameEngine::loadLanguage(const std::string& json) {
-    try {
-        auto root = njson::parse(json);
-        if (!root.is_object()) {
-            LOGE("Language file is not a JSON object");
-            return;
-        }
-        for (auto it = root.begin(); it != root.end(); ++it) {
-            if (it.value().is_string()) {
-                translations[it.key()] = it.value().get<std::string>();
-            }
-        }
-        LOGI("Loaded %zu translations", translations.size());
-    } catch (const std::exception& e) {
-        LOGE("Failed to parse language file: %s", e.what());
-    } catch (...) {
-        LOGE("Failed to parse language file: unknown error");
-    }
-}
-
 std::string GameEngine::parseChatComponent(const std::string& raw) const {
     try {
         auto j = njson::parse(raw, nullptr, false);
@@ -970,13 +950,13 @@ std::string GameEngine::parseChatComponent(const std::string& raw) const {
         if (!j.contains("translate") || !j["translate"].is_string()) return raw;
 
         std::string translateKey = j["translate"].get<std::string>();
-        auto it = translations.find(translateKey);
-        if (it == translations.end()) {
+        const std::string* tr = m_client ? m_client->translate(translateKey) : nullptr;
+        if (!tr) {
             return j.contains("text") && j["text"].is_string()
                 ? j["text"].get<std::string>() : raw;
         }
 
-        std::string result = it->second;
+        std::string result = *tr;
 
         std::vector<std::string> args;
         if (j.contains("with") && j["with"].is_array()) {
@@ -985,8 +965,8 @@ std::string GameEngine::parseChatComponent(const std::string& raw) const {
                     args.push_back(elem["text"].get<std::string>());
                 } else if (elem.contains("translate") && elem["translate"].is_string()) {
                     std::string subKey = elem["translate"].get<std::string>();
-                    auto subIt = translations.find(subKey);
-                    args.push_back(subIt != translations.end() ? subIt->second : subKey);
+                    const std::string* subTr = m_client ? m_client->translate(subKey) : nullptr;
+                    args.push_back(subTr ? *subTr : subKey);
                 } else if (elem.is_string()) {
                     args.push_back(elem.get<std::string>());
                 } else {

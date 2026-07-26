@@ -17,6 +17,7 @@
 #include "gui/TitleScreen.h"
 #include <atomic>
 #include "MusicManager.h"
+#include "3rdparty/json.hpp"
 ClientEngine* ClientEngine::instance = nullptr;
 std::string ClientEngine::s_pendingAccessToken;
 std::string ClientEngine::s_pendingPlayerUuid;
@@ -65,11 +66,8 @@ void ClientEngine::setupUICallbacks() {
                         ClientEngine::getPendingTokenType());
             }
 
-            // 加载语言文件
-            std::string langJson = TextureLoader::readTextFromZip("lang/zh_cn.json");
-            if (!langJson.empty()) {
-                game->loadLanguage(langJson);
-            }
+            // 加载语言文件（幂等，重连不重复解析）
+            client->loadLanguage();
 
             // 应用渲染器设置
             if (client->getRenderer()) {
@@ -377,4 +375,38 @@ void ClientEngine::loadBlockRegistry() {
     } else {
         LOGI("No items.json in ZIP, blocks-only mode");
     }
+}
+
+void ClientEngine::loadLanguage() {
+    if (m_languageLoaded) return;
+
+    std::string langJson = TextureLoader::readTextFromZip("lang/zh_cn.json");
+    if (langJson.empty()) {
+        LOGE("Language file lang/zh_cn.json not found in ZIP");
+        return;
+    }
+
+    try {
+        auto root = nlohmann::json::parse(langJson);
+        if (!root.is_object()) {
+            LOGE("Language file is not a JSON object");
+            return;
+        }
+        for (auto it = root.begin(); it != root.end(); ++it) {
+            if (it.value().is_string()) {
+                m_translations[it.key()] = it.value().get<std::string>();
+            }
+        }
+        m_languageLoaded = true;
+        LOGI("Loaded %zu translations", m_translations.size());
+    } catch (const std::exception& e) {
+        LOGE("Failed to parse language file: %s", e.what());
+    } catch (...) {
+        LOGE("Failed to parse language file: unknown error");
+    }
+}
+
+const std::string* ClientEngine::translate(const std::string& key) const {
+    auto it = m_translations.find(key);
+    return it != m_translations.end() ? &it->second : nullptr;
 }

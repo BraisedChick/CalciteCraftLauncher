@@ -119,8 +119,7 @@ public:
     long long getWorldDayTime() const;
     float getSkyDarken() const;
 
-    // ===== 语言翻译 =====
-    void loadLanguage(const std::string& json);
+    // ===== 聊天组件解析（翻译表向 ClientEngine 查询） =====
     std::string parseChatComponent(const std::string& rawJson) const;
 
     // ===== 正版认证（从 ClientEngine 复制） =====
@@ -187,8 +186,7 @@ private:
         std::vector<unsigned char>& encryptedSecret,
         std::vector<unsigned char>& encryptedVerifyToken);
 
-    // 语言翻译表
-    std::map<std::string, std::string> translations;
+    // 语言翻译表已迁至 ClientEngine（客户端资源，与会话无关）
 
     // 正版认证信息
     std::string accessToken;

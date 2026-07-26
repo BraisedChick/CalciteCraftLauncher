@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <map>
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -72,6 +73,12 @@ public:
     /// 从 ZIP 加载 blocks.json + items.json（幂等，多次调用只加载一次）
     void loadBlockRegistry();
 
+    // ===== 语言翻译表（客户端资源，全局生命周期） =====
+    /// 从 ZIP 加载 lang/zh_cn.json（幂等，多次调用只加载一次）
+    void loadLanguage();
+    /// 查询翻译键，未命中返回 nullptr
+    const std::string* translate(const std::string& key) const;
+
     // ===== 背景音乐/音效（全局生命周期） =====
     MusicManager* getMusicManager() { return m_musicManager.get(); }
 
@@ -103,4 +110,8 @@ private:
     static std::string s_username;
     static RendererType s_rendererType;
     bool m_blockRegistryLoaded = false;
+
+    // 语言翻译表（连接时惰性加载一次，之后只读）
+    std::map<std::string, std::string> m_translations;
+    bool m_languageLoaded = false;
 };
