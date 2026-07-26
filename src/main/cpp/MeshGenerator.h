@@ -1,7 +1,7 @@
 #pragma once
 #include "Chunk.h"
 #include "ChunkManager.h"
-#include "VulkanRenderer.h"
+#include "Renderer/VulkanRenderer.h"
 #include <vector>
 #include <unordered_map>
 #include <string>

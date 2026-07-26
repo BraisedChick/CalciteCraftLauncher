@@ -4,7 +4,7 @@
 #include "AESEncrypter.h"
 #include "Compression.h"
 #include "ChunkManager.h"
-#include "GLRenderer.h"
+#include "Renderer/GLRenderer.h"
 #include "utils.h"
 #include "MinecraftVersion.h"
 #include "CameraController.h"

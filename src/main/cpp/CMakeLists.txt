@@ -66,8 +66,8 @@ set(APP_SOURCES
     AESEncrypter_armv8.cpp
     ChunkManager.cpp
     ChunkParser.cpp
-    VulkanRenderer.cpp
-    GLRenderer.cpp
+    Renderer/VulkanRenderer.cpp
+    Renderer/GLRenderer.cpp
     Light.cpp
     MeshGenerator.cpp
     TextureLoader.cpp

@@ -6,7 +6,7 @@
 #include "ClientEngine/GameEngine.h"
 #include "NetworkManager/handlers/PacketHandlerBase.h"
 #include "ChunkManager.h"
-#include "GLRenderer.h"
+#include "Renderer/GLRenderer.h"
 #include "Light.h"
 #include "EntityManager.h"
 #include "gui/GameUI.h"

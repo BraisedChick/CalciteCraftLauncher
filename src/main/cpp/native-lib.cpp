@@ -7,8 +7,8 @@
 #include <cstring>
 #include "ClientEngine/ClientEngine.h"
 #include "ClientEngine/GameEngine.h"
-#include "VulkanRenderer.h"
-#include "GLRenderer.h"
+#include "Renderer/VulkanRenderer.h"
+#include "Renderer/GLRenderer.h"
 #include "utils.h"
 #include "TextureLoader.h"
 #include "ResourcepackManager.h"

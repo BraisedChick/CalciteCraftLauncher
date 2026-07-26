@@ -1,7 +1,7 @@
 #include "ResourcepackManager.h"
 #include "TextureLoader.h"
 #include "TextureAtlas.h"
-#include "GLRenderer.h"
+#include "Renderer/GLRenderer.h"
 #include "ClientEngine/ClientEngine.h"
 #include <android/log.h>
 #include <fstream>

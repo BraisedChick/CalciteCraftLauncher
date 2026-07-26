@@ -3,7 +3,7 @@
 #include "utils.h"
 #include "ChunkManager.h"
 #include "Light.h"
-#include "GLRenderer.h"
+#include "Renderer/GLRenderer.h"
 
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundLevelChunkWithLightPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundBlockUpdatePacket.hpp"

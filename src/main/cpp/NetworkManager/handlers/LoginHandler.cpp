@@ -9,7 +9,7 @@
 #include "PlayerInventory.h"
 #include "BiomeColorManager.h"
 #include "ChunkManager.h"
-#include "GLRenderer.h"
+#include "Renderer/GLRenderer.h"
 
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundLoginPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundGameEventPacket.hpp"

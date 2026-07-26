@@ -19,7 +19,7 @@
 #include "EntityManager.h"
 #include "Collision.h"
 #include "PlayerInventory.h"
-#include "GLRenderer.h"
+#include "Renderer/GLRenderer.h"
 #include "ClientEngine/ClientEngine.h"
 #include "ClientEngine/GameEngine.h"
 #include "JniBridge.h"
