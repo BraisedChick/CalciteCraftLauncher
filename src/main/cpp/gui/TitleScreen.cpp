@@ -25,48 +25,65 @@ void TitleScreen::render(int mouseX, int mouseY) {
                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
                  ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground);
 
-    // 标题图片（懒加载 minecraft.png；Vulkan 后端暂不支持 GL 纹理，走文字回退）
-    if (titleTextureID == 0 && !GameUI::getInstance().isVulkanBackend()) {
-        TextureData tex = TextureLoader::loadPNG("gui/title/minecraft.png");
-        if (tex.data && tex.width > 0 && tex.height > 0) {
-            glGenTextures(1, &titleTextureID);
-            glBindTexture(GL_TEXTURE_2D, titleTextureID);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex.width, tex.height,
-                         0, GL_RGBA, GL_UNSIGNED_BYTE, tex.data);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            LOGI("Title texture loaded: %dx%d", tex.width, tex.height);
+    // 标题/副标题图片：GL 懒加载并自行持有 GL 纹理；Vulkan 走 VulkanRenderer 的 GUI 纹理缓存
+    ImTextureID titleTex = 0;
+    ImTextureID editionTex = 0;
+    float edW = editionTexW, edH = editionTexH;
+
+    if (GameUI::getInstance().isVulkanBackend()) {
+        auto* vk = ClientEngine::getInstance() ? ClientEngine::getInstance()->getVulkanRenderer() : nullptr;
+        if (vk) {
+            int w0 = 0, h0 = 0;
+            titleTex = (ImTextureID)(intptr_t)vk->getGuiTexture("title/minecraft");
+            editionTex = (ImTextureID)(intptr_t)vk->getGuiTexture("title/edition", &w0, &h0);
+            edW = (float)w0;
+            edH = (float)h0;
         }
+    } else {
+        if (titleTextureID == 0) {
+            TextureData tex = TextureLoader::loadPNG("gui/title/minecraft.png");
+            if (tex.data && tex.width > 0 && tex.height > 0) {
+                glGenTextures(1, &titleTextureID);
+                glBindTexture(GL_TEXTURE_2D, titleTextureID);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex.width, tex.height,
+                             0, GL_RGBA, GL_UNSIGNED_BYTE, tex.data);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                LOGI("Title texture loaded: %dx%d", tex.width, tex.height);
+            }
+        }
+        if (editionTextureID == 0) {
+            TextureData tex = TextureLoader::loadPNG("gui/title/edition.png");
+            if (tex.data && tex.width > 0 && tex.height > 0) {
+                glGenTextures(1, &editionTextureID);
+                glBindTexture(GL_TEXTURE_2D, editionTextureID);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex.width, tex.height,
+                             0, GL_RGBA, GL_UNSIGNED_BYTE, tex.data);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                editionTexW = (float)tex.width;
+                editionTexH = (float)tex.height;
+                LOGI("Edition texture loaded: %dx%d", tex.width, tex.height);
+            }
+        }
+        titleTex = (ImTextureID)(intptr_t)titleTextureID;
+        editionTex = (ImTextureID)(intptr_t)editionTextureID;
+        edW = editionTexW;
+        edH = editionTexH;
     }
 
-    // 副标题图片（懒加载 edition.png）
-    if (editionTextureID == 0 && !GameUI::getInstance().isVulkanBackend()) {
-        TextureData tex = TextureLoader::loadPNG("gui/title/edition.png");
-        if (tex.data && tex.width > 0 && tex.height > 0) {
-            glGenTextures(1, &editionTextureID);
-            glBindTexture(GL_TEXTURE_2D, editionTextureID);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex.width, tex.height,
-                         0, GL_RGBA, GL_UNSIGNED_BYTE, tex.data);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            editionTexW = (float)tex.width;
-            editionTexH = (float)tex.height;
-            LOGI("Edition texture loaded: %dx%d", tex.width, tex.height);
-        }
-    }
-
-    if (titleTextureID != 0) {
+    if (titleTex != 0) {
         float titleW = 600.0f;
         float titleH = titleW * 0.27f;
         ImGui::SetCursorPos(ImVec2(w * 0.5f - titleW * 0.5f, h * 0.10f));
-        ImGui::Image((ImTextureID)(intptr_t)titleTextureID, ImVec2(titleW, titleH));
+        ImGui::Image(titleTex, ImVec2(titleW, titleH));
 
-        if (editionTextureID != 0 && editionTexW > 0) {
-            float editionDisplayW = editionTexW * 0.5f;
-            float editionDisplayH = editionTexH * 0.5f;
+        if (editionTex != 0 && edW > 0) {
+            float editionDisplayW = edW * 0.5f;
+            float editionDisplayH = edH * 0.5f;
             float editionY = h * 0.10f + titleH - editionDisplayH - 33.0f;
             ImGui::SetCursorPos(ImVec2(w * 0.5f - editionDisplayW * 0.5f, editionY));
-            ImGui::Image((ImTextureID)(intptr_t)editionTextureID, ImVec2(editionDisplayW, editionDisplayH));
+            ImGui::Image(editionTex, ImVec2(editionDisplayW, editionDisplayH));
         }
     } else {
         ImGui::SetCursorPos(ImVec2(w * 0.5f - 120.0f, h * 0.12f));

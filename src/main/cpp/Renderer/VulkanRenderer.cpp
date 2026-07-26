@@ -529,9 +529,13 @@ bool VulkanRenderer::uploadPixelsToImage(const uint8_t* pixels, uint32_t width, 
 // 像素解码复用 TextureLoader（图形 API 无关），这里只做 Vulkan 上传与 ImGui 注册
 // ============================================================
 
-VkDescriptorSet VulkanRenderer::getGuiTexture(const std::string& path) {
+VkDescriptorSet VulkanRenderer::getGuiTexture(const std::string& path, int* outWidth, int* outHeight) {
     auto it = guiTextureCache.find(path);
-    if (it != guiTextureCache.end()) return it->second.descriptorSet;
+    if (it != guiTextureCache.end()) {
+        if (outWidth) *outWidth = it->second.width;
+        if (outHeight) *outHeight = it->second.height;
+        return it->second.descriptorSet;
+    }
 
     // AddTexture 依赖 ImGui Vulkan 后端的描述符池
     if (!imguiInitialized) return VK_NULL_HANDLE;
@@ -550,11 +554,15 @@ VkDescriptorSet VulkanRenderer::getGuiTexture(const std::string& path) {
         guiTextureCache[path] = GuiTexture{};
         return VK_NULL_HANDLE;
     }
+    gt.width = tex.width;
+    gt.height = tex.height;
 
     // 注册给 ImGui：VkDescriptorSet 即 ImTextureID
     gt.descriptorSet = ImGui_ImplVulkan_AddTexture(gt.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     guiTextureCache[path] = gt;
     LOGI("GUI texture loaded (Vulkan): %s (%dx%d)", fullPath.c_str(), tex.width, tex.height);
+    if (outWidth) *outWidth = gt.width;
+    if (outHeight) *outHeight = gt.height;
     return gt.descriptorSet;
 }
 

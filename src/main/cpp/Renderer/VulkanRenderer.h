@@ -35,7 +35,8 @@ public:
 
     // GUI 纹理：加载 gui/<path>.png 并注册给 ImGui，返回 VkDescriptorSet 作 ImTextureID
     // （对应 GL 侧 ResourcepackManager::getGuiTexture 的角色，按路径缓存，失败返回 VK_NULL_HANDLE）
-    VkDescriptorSet getGuiTexture(const std::string& path);
+    // outWidth/outHeight 可选返回纹理像素尺寸（供标题图等按原图比例排版的场景）
+    VkDescriptorSet getGuiTexture(const std::string& path, int* outWidth = nullptr, int* outHeight = nullptr);
 
     // 切屏后 Surface 释放/重建（防止向失效 Surface 提交）
     void invalidateSurface() { surfaceValid = false; }
@@ -76,6 +77,8 @@ private:
         VmaAllocation memory = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE;
         VkDescriptorSet descriptorSet = VK_NULL_HANDLE;  // ImGui_ImplVulkan_AddTexture 返回
+        int width = 0;
+        int height = 0;
     };
     bool uploadGuiTexture(const uint8_t* pixels, int width, int height, GuiTexture& out);
     void destroyGuiTextures();
