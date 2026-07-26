@@ -37,6 +37,7 @@
 #include "CommonTypes.h"
 #include "ChunkManager.h"
 #include "CrackOverlayMesh.h"
+#include "PanoramaView.h"
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "GLRenderer", __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "GLRenderer", __VA_ARGS__)
@@ -306,6 +307,8 @@ private:
     std::unordered_map<std::string, GLuint> blockIconCache;
 
     // 全景背景（主菜单旋转 cubemap → FBO → ImGui 背景图）
+    // 面像素加载/几何/动画矩阵在 PanoramaView（纯逻辑），这里只负责 GL 资源与绘制
+    PanoramaView panoramaView;
     GLuint panoramaCubemap = 0;
     GLuint panoramaProgram = 0;
     GLuint panoramaVAO = 0;

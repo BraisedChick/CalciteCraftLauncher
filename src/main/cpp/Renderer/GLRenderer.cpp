@@ -1929,56 +1929,16 @@ void GLRenderer::initPanorama() {
         LOGW("GL error before panorama init: 0x%x", err);
     }
 
-    // 1. 创建 cubemap 纹理
+    // 1. 创建 cubemap 纹理（面像素加载与翻转在 PanoramaView，图形 API 无关）
     glGenTextures(1, &panoramaCubemap);
     glBindTexture(GL_TEXTURE_CUBE_MAP, panoramaCubemap);
 
-    // panorama_N.png → cubemap 面映射（Minecraft 全景图约定）
-    // 0: south (-Z), 1: west (-X), 2: north (+Z), 3: east (+X), 4: up (+Y), 5: down (-Y)
-    // OpenGL cubemap 顺序: POSITIVE_X, NEGATIVE_X, POSITIVE_Y, NEGATIVE_Y, POSITIVE_Z, NEGATIVE_Z
-    const char* faces[] = {
-        "gui/title/background/panorama_3.png",  // POSITIVE_X = east
-        "gui/title/background/panorama_1.png",  // NEGATIVE_X = west
-        "gui/title/background/panorama_4.png",  // POSITIVE_Y = up (sky)
-        "gui/title/background/panorama_5.png",  // NEGATIVE_Y = down (ground)
-        "gui/title/background/panorama_0.png",  // POSITIVE_Z = north
-        "gui/title/background/panorama_2.png"   // NEGATIVE_Z = south
-    };
-
-    int loadedCount = 0;
+    PanoramaView::FacePixels faces[6];
+    int loadedCount = panoramaView.loadFacePixels(faces);
     for (int i = 0; i < 6; i++) {
-        TextureData tex = TextureLoader::loadImage(faces[i]);
-        if (tex.data && tex.width > 0 && tex.height > 0) {
-            // 水平翻转全景图（Minecraft 全景图方向与 OpenGL cubemap 相反）
-            int rowBytes = tex.width * 4;
-            std::vector<uint8_t> flipped(rowBytes * tex.height);
-            for (int y = 0; y < tex.height; y++) {
-                for (int x = 0; x < tex.width; x++) {
-                    int srcIdx = (y * tex.width + x) * 4;
-                    int dstIdx = (y * tex.width + (tex.width - 1 - x)) * 4;
-                    flipped[dstIdx + 0] = tex.data[srcIdx + 0];
-                    flipped[dstIdx + 1] = tex.data[srcIdx + 1];
-                    flipped[dstIdx + 2] = tex.data[srcIdx + 2];
-                    flipped[dstIdx + 3] = tex.data[srcIdx + 3];
-                }
-            }
-            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGBA,
-                         tex.width, tex.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, flipped.data());
-            LOGI("Panorama face %d loaded: %s (%dx%d)", i, faces[i], tex.width, tex.height);
-            loadedCount++;
-        } else {
-            LOGE("Failed to load panorama face %d: %s", i, faces[i]);
-            // 用蓝色填充缺失面
-            std::vector<uint8_t> fill(16 * 16 * 4);
-            for (int p = 0; p < 16 * 16; p++) {
-                fill[p*4+0] = 30 + i * 20;
-                fill[p*4+1] = 30 + i * 20;
-                fill[p*4+2] = 80 + i * 20;
-                fill[p*4+3] = 255;
-            }
-            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGBA,
-                         16, 16, 0, GL_RGBA, GL_UNSIGNED_BYTE, fill.data());
-        }
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGBA,
+                     faces[i].width, faces[i].height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     faces[i].rgba.data());
     }
 
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -2064,16 +2024,10 @@ void main() {
 
     LOGI("Panorama shaders compiled, program ID=%d", panoramaProgram);
 
-    // 3. 创建立方体 VAO/VBO/EBO
-    static const float cubeVerts[] = {
-        -1,-1,-1,  1,-1,-1,  1, 1,-1, -1, 1,-1,
-        -1,-1, 1,  1,-1, 1,  1, 1, 1, -1, 1, 1,
-    };
-    static const uint16_t cubeIdx[] = {
-        0,1,2, 2,3,0,  4,6,5, 6,4,7,
-        0,4,5, 5,1,0,  2,6,7, 7,3,2,
-        0,3,7, 7,4,0,  1,5,6, 6,2,1,
-    };
+    // 3. 创建立方体 VAO/VBO/EBO（几何数据来自 PanoramaView）
+    size_t cubeVertFloats = 0, cubeIdxCount = 0;
+    const float* cubeVerts = PanoramaView::cubeVertices(cubeVertFloats);
+    const uint16_t* cubeIdx = PanoramaView::cubeIndices(cubeIdxCount);
 
     glGenVertexArrays(1, &panoramaVAO);
     glGenBuffers(1, &panoramaVBO);
@@ -2081,12 +2035,12 @@ void main() {
 
     glBindVertexArray(panoramaVAO);
     glBindBuffer(GL_ARRAY_BUFFER, panoramaVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVerts), cubeVerts, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, cubeVertFloats * sizeof(float), cubeVerts, GL_STATIC_DRAW);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, panoramaEBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubeIdx), cubeIdx, GL_STATIC_DRAW);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, cubeIdxCount * sizeof(uint16_t), cubeIdx, GL_STATIC_DRAW);
 
     glBindVertexArray(0);
 
@@ -2133,18 +2087,8 @@ void GLRenderer::renderPanoramaToFBO() {
     // 直接渲染到默认帧缓冲（不用 FBO）
     glUseProgram(panoramaProgram);
 
-    float aspect = (screenHeight > 0) ? (float)screenWidth / (float)screenHeight : 1.0f;
-    glm::mat4 proj = glm::perspective(glm::radians(70.0f), aspect, 0.1f, 10.0f);
-
-    static auto startTime = std::chrono::high_resolution_clock::now();
-    float elapsed = std::chrono::duration<float>(
-        std::chrono::high_resolution_clock::now() - startTime).count();
-    float angle = elapsed * 0.035f;  // ~2°/s
-
-    glm::mat4 view = glm::mat4(1.0f);
-    view = glm::rotate(view, glm::radians(15.0f), glm::vec3(1, 0, 0));
-    view = glm::rotate(view, angle, glm::vec3(0, 1, 0));
-    glm::mat4 mvp = proj * view;
+    // 旋转动画 MVP 由 PanoramaView 计算（图形 API 无关）
+    glm::mat4 mvp = panoramaView.computeMVP(screenWidth, screenHeight);
 
     GLint uMVP = glGetUniformLocation(panoramaProgram, "uMVP");
     GLint uCubemap = glGetUniformLocation(panoramaProgram, "uCubemap");

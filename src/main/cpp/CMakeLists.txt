@@ -71,6 +71,7 @@ set(APP_SOURCES
     Light.cpp
     MeshGenerator.cpp
     CrackOverlayMesh.cpp
+    PanoramaView.cpp
     TextureLoader.cpp
     BlockRegistry.cpp
     CameraController.cpp
