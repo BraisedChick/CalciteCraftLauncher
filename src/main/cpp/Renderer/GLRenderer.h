@@ -36,6 +36,7 @@
 
 #include "CommonTypes.h"
 #include "ChunkManager.h"
+#include "CrackOverlayMesh.h"
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "GLRenderer", __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "GLRenderer", __VA_ARGS__)
@@ -317,13 +318,11 @@ private:
     bool panoramaLoaded = false;
 
     // 破坏覆盖层（destroy overlay）
+    // 几何生成在 CrackOverlayMesh（纯逻辑，图形 API 无关），这里只负责 GL 上传与绘制
+    CrackOverlayMesh crackMesh;
     GLuint crackVAO = 0;
     GLuint crackVBO = 0;
     GLuint crackEBO = 0;
-    int crackLastBlockX = -9999999;
-    int crackLastBlockY = -9999999;
-    int crackLastBlockZ = -9999999;
-    int crackLastStage = -1;
 
     void renderCrackOverlay(const glm::mat4& viewMatrix, const glm::mat4& projMatrix, const ShaderProgramInfo& shader);
 };

@@ -1633,81 +1633,16 @@ void GLRenderer::renderUI() {
 // ===== 方块破坏覆盖层渲染 =====
 void GLRenderer::renderCrackOverlay(const glm::mat4& viewMatrix, const glm::mat4& projMatrix,
                                      const ShaderProgramInfo& shader) {
-    auto& ui = GameUI::getInstance();
-    if (!ui.isDigging()) return;
+    // 几何生成与脏检查在 CrackOverlayMesh（图形 API 无关），这里只做上传与绘制
+    bool rebuilt = false;
+    if (!crackMesh.update(rebuilt)) return;
 
-    int stage = ui.getDestroyStage();
-    if (stage < 0 || stage > 9) return;
+    // 重建或 VAO 尚未创建（含 EGL context 重建后）时重新上传
+    if (rebuilt || crackVAO == 0) {
+        const auto& verts = crackMesh.getVertices();
+        const auto& idx = crackMesh.getIndices();
 
-    int bx = ui.getDigBlockX();
-    int by = ui.getDigBlockY();
-    int bz = ui.getDigBlockZ();
-
-    int texLayer = ClientEngine::getInstance()->getTextureAtlas()->getDestroyStageLayer(stage);
-    if (texLayer < 0) return;
-
-    // 顶点/索引变化时才更新 VAO
-    bool posChanged = (bx != crackLastBlockX || by != crackLastBlockY || bz != crackLastBlockZ || stage != crackLastStage);
-    if (posChanged) {
-        crackLastBlockX = bx;
-        crackLastBlockY = by;
-        crackLastBlockZ = bz;
-        crackLastStage = stage;
-
-        // 生成 6 个面的立方体（24 顶点，36 索引）
-        float minX = (float)bx, minY = (float)by, minZ = (float)bz;
-
-        static const int8_t faceNormals[6][4] = {
-            {0, -1, 0, 0}, {0, 1, 0, 0}, {0, 0, -1, 0},
-            {0, 0, 1, 0}, {-1, 0, 0, 0}, {1, 0, 0, 0}
-        };
-        static const float faceVerts[6][4][3] = {
-            {{0,0,0},{1,0,0},{1,0,1},{0,0,1}},
-            {{0,1,0},{1,1,0},{1,1,1},{0,1,1}},
-            {{0,0,0},{1,0,0},{1,1,0},{0,1,0}},
-            {{1,0,1},{0,0,1},{0,1,1},{1,1,1}},
-            {{0,0,0},{0,0,1},{0,1,1},{0,1,0}},
-            {{1,0,0},{1,0,1},{1,1,1},{1,1,0}}
-        };
-        static const uint16_t faceUVs[6][4][2] = {
-            {{0,0},{65535,0},{65535,65535},{0,65535}},
-            {{0,0},{65535,0},{65535,65535},{0,65535}},
-            {{0,0},{65535,0},{65535,65535},{0,65535}},
-            {{65535,0},{0,0},{0,65535},{65535,65535}},
-            {{0,0},{65535,0},{65535,65535},{0,65535}},
-            {{0,0},{65535,0},{65535,65535},{0,65535}}
-        };
-
-        std::vector<PackedVertex> verts;
-        verts.reserve(24);
-        float texLayerFloat = (float)texLayer;
-        for (int face = 0; face < 6; face++) {
-            for (int v = 0; v < 4; v++) {
-                PackedVertex pv;
-                pv.pos[0] = minX + faceVerts[face][v][0];
-                pv.pos[1] = minY + faceVerts[face][v][1];
-                pv.pos[2] = minZ + faceVerts[face][v][2];
-                pv.texIndex = texLayerFloat;
-                pv.color[0] = 255; pv.color[1] = 255; pv.color[2] = 255; pv.color[3] = 255;
-                pv.uv[0] = faceUVs[face][v][0];
-                pv.uv[1] = faceUVs[face][v][1];
-                pv.uv2[0] = 8; pv.uv2[1] = 8;
-                pv.normal[0] = faceNormals[face][0];
-                pv.normal[1] = faceNormals[face][1];
-                pv.normal[2] = faceNormals[face][2];
-                pv.normal[3] = 0;
-                verts.push_back(pv);
-            }
-        }
-
-        std::vector<uint32_t> idx;
-        idx.reserve(36);
-        for (int f = 0; f < 6; f++) {
-            uint32_t base = f * 4;
-            idx.push_back(base); idx.push_back(base+1); idx.push_back(base+2);
-            idx.push_back(base); idx.push_back(base+2); idx.push_back(base+3);
-        }
-
+        // 仅 24 顶点，不值得走 PackedVertex 压缩，直接上传 Vertex 原始布局
         if (crackVAO == 0) {
             glGenVertexArrays(1, &crackVAO);
             glGenBuffers(1, &crackVBO);
@@ -1716,21 +1651,21 @@ void GLRenderer::renderCrackOverlay(const glm::mat4& viewMatrix, const glm::mat4
 
         glBindVertexArray(crackVAO);
         glBindBuffer(GL_ARRAY_BUFFER, crackVBO);
-        glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(PackedVertex), verts.data(), GL_DYNAMIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vertex), verts.data(), GL_DYNAMIC_DRAW);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, crackEBO);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, idx.size() * sizeof(uint32_t), idx.data(), GL_DYNAMIC_DRAW);
 
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PackedVertex), (void*)offsetof(PackedVertex, pos));
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
         glEnableVertexAttribArray(0);
-        glVertexAttribPointer(1, 2, GL_UNSIGNED_SHORT, GL_TRUE, sizeof(PackedVertex), (void*)offsetof(PackedVertex, uv));
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texCoord));
         glEnableVertexAttribArray(1);
-        glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(PackedVertex), (void*)offsetof(PackedVertex, texIndex));
+        glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texIndex));
         glEnableVertexAttribArray(2);
-        glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(PackedVertex), (void*)offsetof(PackedVertex, color));
+        glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex), (void*)offsetof(Vertex, color));
         glEnableVertexAttribArray(3);
-        glVertexAttribPointer(4, 4, GL_BYTE, GL_TRUE, sizeof(PackedVertex), (void*)offsetof(PackedVertex, normal));
+        glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
         glEnableVertexAttribArray(4);
-        glVertexAttribPointer(5, 2, GL_UNSIGNED_SHORT, GL_FALSE, sizeof(PackedVertex), (void*)offsetof(PackedVertex, uv2));
+        glVertexAttribPointer(5, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, uv2));
         glEnableVertexAttribArray(5);
     }
 

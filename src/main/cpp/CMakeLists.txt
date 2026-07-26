@@ -70,6 +70,7 @@ set(APP_SOURCES
     Renderer/GLRenderer.cpp
     Light.cpp
     MeshGenerator.cpp
+    CrackOverlayMesh.cpp
     TextureLoader.cpp
     BlockRegistry.cpp
     CameraController.cpp
