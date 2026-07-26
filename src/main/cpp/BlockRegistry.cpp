@@ -1,5 +1,6 @@
 #include "BlockRegistry.h"
 #include "TextureAtlas.h"
+#include "Light.h"
 #include "ClientEngine/ClientEngine.h"
 #include "3rdparty/json.hpp"
 #include <fstream>
@@ -320,6 +321,9 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         meta.name == "honey_block") {
         meta.isOpaque = false;
     }
+
+    // 发光等级预计算（字符串匹配仅在加载时执行一次，光照热路径 O(1) 读 meta.emission）
+    meta.emission = (uint8_t)Light::getBlockEmission(meta.name.c_str());
 
     auto* atlas = ClientEngine::getInstance()->getTextureAtlas();
     if (atlas && atlas->isInitialized()) {

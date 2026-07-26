@@ -46,6 +46,7 @@ struct BlockMetadata {
     bool isNoCollision = false;  // 火把、按钮等无碰撞方块
     bool isFullBlock = true;     // 几何上是否为完整 16x16x16 立方体（用于快速路径和面剔除）
     bool isOpaque = true;        // 是否不透明（false=玻璃等透明方块，相邻面不应被剔除）
+    uint8_t emission = 0;        // 发光等级 0-15（加载时经 Light::getBlockEmission 预计算，热路径 O(1) 读取）
     float hardness = 0.0f;       // 方块硬度（-1=不可破坏，0=瞬间破坏，>0=需要时间挖掘）
     bool requiresCorrectTool = false;  // 是否需正确工具才能掉落物品
     std::string material;          // 材质类型（"default", "mineable/pickaxe" 等）

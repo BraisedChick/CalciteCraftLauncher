@@ -5,7 +5,7 @@
 #include <android/log.h>
 #include <cmath>
 #include <algorithm>
-#include <queue>
+#include <unordered_map>
 #include <cstring>
 #include <string>
 
@@ -32,25 +32,20 @@ float Light::getSkyDarken() const {
     return darken;
 }
 
-// ===== 光照贴图创建 =====
+// ===== 光照贴图像素输出（渲染后端无关，纹理上传由调用方负责）=====
 
-void Light::createLightmapTexture() {
-    glGenTextures(1, &lightmapTextureID);
-    glBindTexture(GL_TEXTURE_2D, lightmapTextureID);
+bool Light::getLightmapPixelsIfChanged(uint8_t* pixels) {
+    float skyBright = 1.0f - getSkyDarken();
 
-    // 初始生成（全白天亮度，首帧 update() 会覆盖）
-    uint8_t pixels[16 * 16 * 4];
-    generateLightmapPixels(1.0f, pixels);
+    // 仅在天空亮度变化超过阈值时重新生成（避免每帧上传）
+    if (fabsf(skyBright - lastGeneratedSkyBright) <= 0.001f) return false;
 
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 16, 16, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    LOGI("Created lightmap texture 16x16 with colored lighting (warm block/cool sky)");
+    generateLightmapPixels(skyBright, pixels);
+    lastGeneratedSkyBright = skyBright;
+    return true;
 }
 
-// ===== 每帧更新 =====
+// ===== 每帧更新（天空/雾效颜色）=====
 
 void Light::update() {
     float skyDarken = getSkyDarken();
@@ -60,19 +55,6 @@ void Light::update() {
     skyR = 0.53f * skyBright + 0.02f * skyDarken;
     skyG = 0.81f * skyBright + 0.02f * skyDarken;
     skyB = 0.92f * skyBright + 0.08f * skyDarken;
-
-    // 光照贴图：仅在天空亮度变化超过阈值时更新（避免每帧上传）
-    float skyBrightDiff = fabsf(skyBright - lastUploadedSkyBright);
-    if (skyBrightDiff > 0.001f && lightmapTextureID != 0) {
-        uint8_t pixels[16 * 16 * 4];
-        generateLightmapPixels(skyBright, pixels);
-
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, lightmapTextureID);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 16, 16, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-
-        lastUploadedSkyBright = skyBright;
-    }
 }
 
 // ===== 光照贴图像素生成 =====
@@ -180,7 +162,51 @@ int Light::getBlockEmission(const char* name) {
     return 0;
 }
 
-// ===== 客户端方块光 BFS 传播 =====
+// ===== 客户端方块光增量传播（移植自原版 1.21 LightEngine 双队列算法）=====
+//
+// 核心思路：
+// - checkNode 只入队变化点，变暗（decrease）先全部排干，变亮（increase）再排干
+// - 队列条目打包：低 4 位光值 + 6 位方向掩码 + 发光标志位，避免向来源方向回传
+// - 变暗遇到有其他光源支撑的邻居时，让其单向"补光"，无需区域清除重扫
+
+namespace {
+
+// --- 坐标打包（同原版 BlockPos.asLong：x/z 各 26 位，y 12 位，带符号）---
+inline uint64_t packPos(int x, int y, int z) {
+    return ((uint64_t)((uint32_t)x & 0x3FFFFFFu) << 38)
+         | ((uint64_t)((uint32_t)z & 0x3FFFFFFu) << 12)
+         | ((uint64_t)((uint32_t)y & 0xFFFu));
+}
+inline void unpackPos(uint64_t p, int& x, int& y, int& z) {
+    x = (int)((int64_t)p >> 38);
+    z = (int)(((int64_t)(p << 26)) >> 38);
+    y = (int)(((int64_t)(p << 52)) >> 52);
+}
+
+// --- 6 方向：成对排列，opposite(d) = d ^ 1 ---
+constexpr int DX[6] = {1, -1, 0, 0, 0, 0};
+constexpr int DY[6] = {0, 0, 1, -1, 0, 0};
+constexpr int DZ[6] = {0, 0, 0, 0, 1, -1};
+
+// --- 队列条目打包（同原版 LightEngine.QueueEntry，省去形状遮挡标志）---
+// bit 0-3: fromLevel；bit 4-9: 方向掩码；bit 10: increase 来自发光源
+constexpr uint32_t DIRS_ALL = 0x3Fu << 4;
+constexpr uint32_t FLAG_FROM_EMISSION = 1u << 10;
+
+inline uint32_t dirBit(int d) { return 1u << (d + 4); }
+inline int entryLevel(uint32_t e) { return (int)(e & 15u); }
+inline uint32_t decreaseAllDirections(int level) { return DIRS_ALL | (uint32_t)level; }
+inline uint32_t decreaseSkipOneDirection(int level, int d) { return (DIRS_ALL & ~dirBit(d)) | (uint32_t)level; }
+inline uint32_t increaseFromEmission(int level) { return DIRS_ALL | FLAG_FROM_EMISSION | (uint32_t)level; }
+inline uint32_t increaseSkipOneDirection(int level, int d) { return (DIRS_ALL & ~dirBit(d)) | (uint32_t)level; }
+inline uint32_t increaseOnlyOneDirection(int level, int d) { return dirBit(d) | (uint32_t)level; }
+
+// "向内拉光"条目：level=1 的全方向 decrease，借补光分支让所有亮邻居向本格回灌
+constexpr uint32_t PULL_LIGHT_IN_ENTRY = DIRS_ALL | 1u;
+
+struct QueueItem { uint64_t pos; uint32_t entry; };
+
+} // namespace
 
 Light::Light() {
     startWorkerThread();
@@ -201,71 +227,58 @@ void Light::startWorkerThread() {
 
 void Light::workerLoop() {
     while (workerRunning.load()) {
-        int wx, wy, wz;
+        std::vector<uint64_t> nodes;
         {
             std::unique_lock<std::mutex> lock(inputMutex);
-            inputCV.wait(lock, [this] { return hasInput || !workerRunning.load(); });
+            inputCV.wait(lock, [this] { return !pendingNodes.empty() || !workerRunning.load(); });
             if (!workerRunning.load()) break;
-            wx = pendingLightX;
-            wy = pendingLightY;
-            wz = pendingLightZ;
-            hasInput = false;
+            nodes.assign(pendingNodes.begin(), pendingNodes.end());
+            pendingNodes.clear();
         }
 
-        // 在工作线程上执行 BFS（不阻塞任何线程）
+        // 在工作线程上执行增量传播（不阻塞任何线程）
         if (chunkManagerRef) {
-            recalcBlockLight(chunkManagerRef, wx, wy, wz);
-
-            // 结果入队，渲染线程 poll
-            std::lock_guard<std::mutex> lock(outputMutex);
-            completedX = wx;
-            completedY = wy;
-            completedZ = wz;
-            hasOutput = true;
+            runLightUpdates(chunkManagerRef, nodes);
         }
     }
 }
 
 void Light::queueBlockLightRecalc(int worldX, int worldY, int worldZ) {
     std::lock_guard<std::mutex> lock(inputMutex);
-    pendingLightX = worldX;
-    pendingLightY = worldY;
-    pendingLightZ = worldZ;
-    hasInput = true;
+    pendingNodes.insert(packPos(worldX, worldY, worldZ));
     inputCV.notify_one();
 }
 
-bool Light::pollCompletedLightRecalc(int* outX, int* outY, int* outZ) {
+bool Light::pollDirtyLightChunks(std::vector<std::pair<int, int>>& outChunks) {
     std::lock_guard<std::mutex> lock(outputMutex);
-    if (!hasOutput) return false;
-    if (outX) *outX = completedX;
-    if (outY) *outY = completedY;
-    if (outZ) *outZ = completedZ;
-    hasOutput = false;
+    if (dirtyChunkKeys.empty()) return false;
+    outChunks.clear();
+    outChunks.reserve(dirtyChunkKeys.size());
+    for (uint64_t key : dirtyChunkKeys) {
+        outChunks.emplace_back((int)(int32_t)(key >> 32), (int)(int32_t)(key & 0xFFFFFFFFu));
+    }
+    dirtyChunkKeys.clear();
     return true;
 }
 
-void Light::recalcBlockLight(ChunkManager* chunkMgr, int wx, int wy, int wz) {
-    if (!chunkMgr) return;
+void Light::runLightUpdates(ChunkManager* chunkMgr, const std::vector<uint64_t>& nodes) {
+    if (!chunkMgr || nodes.empty()) return;
 
     auto* registry = ClientEngine::getInstance()->getBlockRegistry();
 
     // 区块缓存：避免反复 getChunk() 导致 mutex + map 查找开销
     std::unordered_map<uint64_t, std::shared_ptr<Chunk>> chunkCache;
-    auto getCachedChunk = [&](int cx, int cz) -> std::shared_ptr<Chunk> {
-        uint64_t key = ((uint64_t)(cx & 0xFFFFFFFF) << 32) | (cz & 0xFFFFFFFF);
+    auto getCachedChunk = [&](int cx, int cz) -> Chunk* {
+        uint64_t key = ((uint64_t)(uint32_t)cx << 32) | (uint32_t)cz;
         auto it = chunkCache.find(key);
-        if (it != chunkCache.end()) return it->second;
+        if (it != chunkCache.end()) return it->second.get();
         auto chunk = chunkMgr->getChunk(cx, cz);
         chunkCache[key] = chunk;
-        return chunk;
+        return chunk.get();
     };
 
-    // 辅助：获取指定世界坐标的 ChunkSection
     auto getSectionAt = [&](int worldX, int worldY, int worldZ) -> ChunkSection* {
-        int cx = worldX >> 4;
-        int cz = worldZ >> 4;
-        auto chunk = getCachedChunk(cx, cz);
+        auto* chunk = getCachedChunk(worldX >> 4, worldZ >> 4);
         if (!chunk) return nullptr;
         auto& dim = chunk->dimension;
         if (worldY < dim.minY || worldY >= dim.maxY) return nullptr;
@@ -274,88 +287,138 @@ void Light::recalcBlockLight(ChunkManager* chunkMgr, int wx, int wy, int wz) {
         return chunk->sections[si].get();
     };
 
-    // 辅助：获取世界坐标的 blockState
     auto getStateAt = [&](int worldX, int worldY, int worldZ) -> int32_t {
-        int cx = worldX >> 4;
-        int cz = worldZ >> 4;
-        auto chunk = getCachedChunk(cx, cz);
+        auto* chunk = getCachedChunk(worldX >> 4, worldZ >> 4);
         if (!chunk) return 0;
-        return chunk->getBlockState(worldX & 15, worldY, worldZ & 15);
+        return (int32_t)chunk->getBlockState(worldX & 15, worldY, worldZ & 15);
     };
 
-    // 辅助：获取/设置世界坐标的方块光
     auto getBL = [&](int worldX, int worldY, int worldZ) -> uint8_t {
         auto* sec = getSectionAt(worldX, worldY, worldZ);
         if (!sec) return 0;
         return sec->getBlockLight(worldX & 15, worldY, worldZ & 15);
     };
+
+    // 脏 chunk 收集：写入点所在 chunk + 跨界采样波及的相邻 chunk（平滑光照 remesh 需要）
+    std::unordered_set<uint64_t> localDirty;
+    auto markDirty = [&](int cx, int cz) {
+        localDirty.insert(((uint64_t)(uint32_t)cx << 32) | (uint32_t)cz);
+    };
     auto setBL = [&](int worldX, int worldY, int worldZ, uint8_t val) {
         auto* sec = getSectionAt(worldX, worldY, worldZ);
-        if (sec) sec->setBlockLight(worldX & 15, worldY, worldZ & 15, val);
+        if (!sec) return;
+        sec->setBlockLight(worldX & 15, worldY, worldZ & 15, val);
+        int cx = worldX >> 4, cz = worldZ >> 4;
+        markDirty(cx, cz);
+        int lx = worldX & 15, lz = worldZ & 15;
+        if (lx == 0) markDirty(cx - 1, cz);
+        else if (lx == 15) markDirty(cx + 1, cz);
+        if (lz == 0) markDirty(cx, cz - 1);
+        else if (lz == 15) markDirty(cx, cz + 1);
     };
 
-    const int CLEAR_R = 16;   // 清除半径（曼哈顿距离）
-    const int SCAN_R = 31;    // 扫描半径 = CLEAR_R + 15（最远光源影响范围）
+    // 方块属性查询：发光等级 / 是否挡光（均为预计算元数据，O(1)）
+    auto getEmission = [&](int32_t state) -> int {
+        if (state == 0) return 0;
+        return registry->getBlockMetadata(state).emission;
+    };
+    auto blocksLight = [&](int32_t state) -> bool {
+        if (state == 0) return false;
+        const auto& meta = registry->getBlockMetadata(state);
+        return meta.isFullBlock && meta.isOpaque;
+    };
 
-    // Step 1: 清除受影响区域的方块光
-    for (int dy = -CLEAR_R; dy <= CLEAR_R; dy++) {
-        for (int dz = -CLEAR_R; dz <= CLEAR_R; dz++) {
-            for (int dx = -CLEAR_R; dx <= CLEAR_R; dx++) {
-                if (abs(dx) + abs(dy) + abs(dz) > CLEAR_R) continue;
-                setBL(wx + dx, wy + dy, wz + dz, 0);
-            }
+    // 双 FIFO 队列（vector + 读指针，只 push_back 不删除）
+    std::vector<QueueItem> decreaseQueue, increaseQueue;
+    size_t decHead = 0, incHead = 0;
+    auto enqueueDecrease = [&](uint64_t pos, uint32_t entry) { decreaseQueue.push_back({pos, entry}); };
+    auto enqueueIncrease = [&](uint64_t pos, uint32_t entry) { increaseQueue.push_back({pos, entry}); };
+
+    // ===== Phase 0: checkNode（同原版 BlockLightEngine.checkNode）=====
+    for (uint64_t node : nodes) {
+        int x, y, z;
+        unpackPos(node, x, y, z);
+        int emission = getEmission(getStateAt(x, y, z));
+        int stored = getBL(x, y, z);
+        if (emission < stored) {
+            // 发光减弱/方块变挡光：清零自身，携带旧光值全方向变暗
+            setBL(x, y, z, 0);
+            enqueueDecrease(node, decreaseAllDirections(stored));
+        } else {
+            // 向内拉光：让所有亮邻居稍后向本格单向补光
+            enqueueDecrease(node, PULL_LIGHT_IN_ENTRY);
+        }
+        if (emission > 0) {
+            enqueueIncrease(node, increaseFromEmission(emission));
         }
     }
 
-    // Step 2: 扫描更大范围，找到所有发光源
-    struct LightNode { int x, y, z; uint8_t light; };
-    std::queue<LightNode> bfsQueue;
-
-    for (int dy = -SCAN_R; dy <= SCAN_R; dy++) {
-        for (int dz = -SCAN_R; dz <= SCAN_R; dz++) {
-            for (int dx = -SCAN_R; dx <= SCAN_R; dx++) {
-                if (abs(dx) + abs(dy) + abs(dz) > SCAN_R) continue;
-                int bx = wx + dx, by = wy + dy, bz = wz + dz;
-                int32_t state = getStateAt(bx, by, bz);
-                if (state == 0) continue;
-                const auto* info = registry->getBlockInfo(state);
-                if (!info) continue;
-                int emission = getBlockEmission(info->name.c_str());
-                if (emission > 0) {
-                    setBL(bx, by, bz, (uint8_t)emission);
-                    bfsQueue.push({bx, by, bz, (uint8_t)emission});
-                }
-            }
-        }
-    }
-
-    // Step 3: BFS 光传播
-    static const int DX[] = {1, -1, 0, 0, 0, 0};
-    static const int DY[] = {0, 0, 1, -1, 0, 0};
-    static const int DZ[] = {0, 0, 0, 0, 1, -1};
-
-    while (!bfsQueue.empty()) {
-        auto [nx, ny, nz, nl] = bfsQueue.front();
-        bfsQueue.pop();
+    // ===== Phase 1: 排干变暗队列（同原版 propagateDecrease）=====
+    while (decHead < decreaseQueue.size()) {
+        QueueItem item = decreaseQueue[decHead++];
+        int x, y, z;
+        unpackPos(item.pos, x, y, z);
+        int fromLevel = entryLevel(item.entry);
 
         for (int d = 0; d < 6; d++) {
-            int ax = nx + DX[d], ay = ny + DY[d], az = nz + DZ[d];
-            if (abs(ax - wx) + abs(ay - wy) + abs(az - wz) > SCAN_R) continue;
+            if (!(item.entry & dirBit(d))) continue;
+            int nx = x + DX[d], ny = y + DY[d], nz = z + DZ[d];
+            int k = getBL(nx, ny, nz);
+            if (k == 0) continue;
 
-            uint8_t newLight = (nl > 0) ? (uint8_t)(nl - 1) : 0;
-            if (newLight == 0) continue;
-
-            int32_t neighborState = getStateAt(ax, ay, az);
-            if (neighborState != 0) {
-                const auto& meta = registry->getBlockMetadata(neighborState);
-                if (meta.isFullBlock && meta.isOpaque) continue;
-            }
-
-            uint8_t current = getBL(ax, ay, az);
-            if (newLight > current) {
-                setBL(ax, ay, az, newLight);
-                bfsQueue.push({ax, ay, az, newLight});
+            if (k <= fromLevel - 1) {
+                // 邻居是被本格照亮的：清零并继续变暗；若邻居自身发光则重新入队变亮
+                int emission = getEmission(getStateAt(nx, ny, nz));
+                setBL(nx, ny, nz, 0);
+                uint64_t npos = packPos(nx, ny, nz);
+                if (emission < k) {
+                    enqueueDecrease(npos, decreaseSkipOneDirection(k, d ^ 1));
+                }
+                if (emission > 0) {
+                    enqueueIncrease(npos, increaseFromEmission(emission));
+                }
+            } else {
+                // 邻居有其他光源支撑：让它稍后朝本格方向单向补光
+                enqueueIncrease(packPos(nx, ny, nz), increaseOnlyOneDirection(k, d ^ 1));
             }
         }
     }
+
+    // ===== Phase 2: 排干变亮队列（同原版 propagateIncrease）=====
+    while (incHead < increaseQueue.size()) {
+        QueueItem item = increaseQueue[incHead++];
+        int x, y, z;
+        unpackPos(item.pos, x, y, z);
+        int stored = getBL(x, y, z);
+        int fromLevel = entryLevel(item.entry);
+
+        if ((item.entry & FLAG_FROM_EMISSION) && stored < fromLevel) {
+            setBL(x, y, z, (uint8_t)fromLevel);
+            stored = fromLevel;
+        }
+        // 入队后光值变过则条目失效，跳过（同原版 l == i1 校验）
+        if (stored != fromLevel) continue;
+
+        for (int d = 0; d < 6; d++) {
+            if (!(item.entry & dirBit(d))) continue;
+            int nx = x + DX[d], ny = y + DY[d], nz = z + DZ[d];
+            int k = getBL(nx, ny, nz);
+            int newLevel = fromLevel - 1;
+            if (newLevel <= k) continue;
+
+            if (blocksLight(getStateAt(nx, ny, nz))) continue;
+
+            setBL(nx, ny, nz, (uint8_t)newLevel);
+            if (newLevel > 1) {
+                enqueueIncrease(packPos(nx, ny, nz), increaseSkipOneDirection(newLevel, d ^ 1));
+            }
+        }
+    }
+
+    // 脏 chunk 合并到输出集合，渲染线程 poll 后精准 remesh
+    if (!localDirty.empty()) {
+        std::lock_guard<std::mutex> lock(outputMutex);
+        dirtyChunkKeys.insert(localDirty.begin(), localDirty.end());
+    }
 }
+

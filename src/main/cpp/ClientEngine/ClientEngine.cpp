@@ -244,16 +244,12 @@ void ClientEngine::renderLoop() {
             float yaw = CameraController::getInstance().getYaw();
 
             if (auto* renderer = getRenderer()) {
-                // 检查是否有已完成的光照重算，标记邻近 chunk
+                // 取走光照更新波及的脏 chunk，精准 remesh（替代旧版 5×5 无差别重建）
                 {
-                    int lx, ly, lz;
-                    if (game->getLight()->pollCompletedLightRecalc(&lx, &ly, &lz)) {
-                        int cx = lx >> 4;
-                        int cz = lz >> 4;
-                        for (int dx = -2; dx <= 2; dx++) {
-                            for (int dz = -2; dz <= 2; dz++) {
-                                renderer->markChunkForUpdate(cx + dx, cz + dz);
-                            }
+                    static std::vector<std::pair<int, int>> dirtyLightChunks;
+                    if (game->getLight()->pollDirtyLightChunks(dirtyLightChunks)) {
+                        for (const auto& [cx, cz] : dirtyLightChunks) {
+                            renderer->markChunkForUpdate(cx, cz);
                         }
                     }
                 }

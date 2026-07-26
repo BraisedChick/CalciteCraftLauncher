@@ -1355,16 +1355,31 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         needRebuildMesh = rebuildMeshFromChunks();
     }
 
-    // ===== 昼夜循环：更新光照贴图和天空颜色 =====
-    // 延迟创建光照贴图（首次进入渲染循环时 GameEngine 已存在）
+    // ===== 昼夜循环：更新天空颜色 + 光照贴图上传（GL 纹理归渲染器所有，Light 只产出像素）=====
     auto* gameForLight = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
     if (gameForLight && gameForLight->getLight()) {
         auto* light = gameForLight->getLight();
-        if (lightmapTextureID == 0) {
-            light->createLightmapTexture();
-            lightmapTextureID = light->getLightmapTextureID();
-        }
         light->update();
+
+        // 延迟创建光照贴图纹理（EGL context 重建后也走这里，失效缓存保证首帧必上传）
+        if (lightmapTextureID == 0) {
+            glGenTextures(1, &lightmapTextureID);
+            glBindTexture(GL_TEXTURE_2D, lightmapTextureID);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 16, 16, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            light->invalidateLightmapCache();
+            LOGI("Created lightmap texture 16x16 (GL upload layer)");
+        }
+
+        uint8_t lightmapPixels[16 * 16 * 4];
+        if (light->getLightmapPixelsIfChanged(lightmapPixels)) {
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, lightmapTextureID);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 16, 16, GL_RGBA, GL_UNSIGNED_BYTE, lightmapPixels);
+        }
     }
     float skyR = (gameForLight && gameForLight->getLight()) ? gameForLight->getLight()->getSkyColorR() : 0.53f;
     float skyG = (gameForLight && gameForLight->getLight()) ? gameForLight->getLight()->getSkyColorG() : 0.81f;
