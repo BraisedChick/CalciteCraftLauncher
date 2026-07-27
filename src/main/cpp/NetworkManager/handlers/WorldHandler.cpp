@@ -9,6 +9,7 @@
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundBlockUpdatePacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundLightUpdatePacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundSectionBlocksUpdatePacket.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundForgetLevelChunkPacket.hpp"
 
 void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data, size_t startPos) {
     switch (packetId) {
@@ -59,6 +60,26 @@ void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data,
                 } else {
                     LOGW("BlockUpdate: chunk (%d, %d) not loaded", chunkX, chunkZ);
                 }
+            }
+            break;
+        }
+
+#if PROTOCOL_VERSION < 762
+        case 0x1D:
+#else
+        case 0x1E:
+#endif
+        { // Forget Level Chunk（服务端权威卸载）
+            try {
+                ProtocolCraft::ClientboundForgetLevelChunkPacket forgetPacket;
+                std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+                auto iter = pktData.cbegin();
+                size_t length = pktData.size();
+                forgetPacket.Read(iter, length);
+                // 与区块加载同队列执行，保证服务端“加载→卸载→重新加载”顺序不被并发打乱
+                enqueueChunkUnload(forgetPacket.GetX(), forgetPacket.GetZ());
+            } catch (const std::exception& e) {
+                LOGW("ForgetLevelChunk: parse error: %s", e.what());
             }
             break;
         }

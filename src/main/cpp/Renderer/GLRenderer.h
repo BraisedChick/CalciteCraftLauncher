@@ -101,6 +101,9 @@ public:
     // 标记指定区块需要更新
     void markChunkForUpdate(int chunkX, int chunkZ);
 
+    // 移除单个区块的渲染数据（服务端 ForgetLevelChunk，线程安全，GL 资源在渲染线程删除）
+    void removeChunk(int chunkX, int chunkZ);
+
     // 在渲染线程上完成纹理数组初始化（避免 ANR）
     bool finishTextureInit();
 
@@ -173,6 +176,7 @@ private:
     void stopWorker();
     void enqueueWork(ChunkWorkItem item);
     void processCompletedWork();
+    void processChunkRemovals();  // 渲染线程：删除已卸载区块的 GL 资源
 
     // 工作线程池（多个线程并行生成网格）
     static constexpr int WORKER_THREAD_COUNT = 4;
@@ -235,6 +239,8 @@ private:
 
     // 脏区块集合（只记录需要更新网格的区块，避免每次遍历所有区块）
     std::unordered_set<uint64_t> dirtyChunks;  // 由 cacheMutex 保护
+    // 待卸载区块集合（ForgetLevelChunk，渲染线程消费）
+    std::unordered_set<uint64_t> chunksToRemove;  // 由 cacheMutex 保护
     size_t lastChunkCount = 0;                  // 上次已知区块数，用于发现新区块
 
     // 帧计数器

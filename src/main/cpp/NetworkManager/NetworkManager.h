@@ -47,6 +47,8 @@ public:
 
     // === 区块数据入队（由 WorldHandler 从 GameEngine 调用） ===
     void enqueueChunkData(std::vector<uint8_t> rawData);
+    // 区块卸载入队（ForgetLevelChunk，与加载同队列保证服务端顺序）
+    void enqueueChunkUnload(int chunkX, int chunkZ);
 
 private:
     // 加密包接收
@@ -86,9 +88,12 @@ private:
     std::thread normalProcessor;
     std::atomic<bool> normalProcessorRunning{false};
 
-    // 区块数据队列
+    // 区块数据队列（加载与卸载共用，保证服务端包顺序）
     struct ChunkLoadTask {
-        std::vector<uint8_t> rawData;
+        std::vector<uint8_t> rawData;   // 非空=加载任务
+        bool isUnload = false;          // true=卸载任务
+        int chunkX = 0;
+        int chunkZ = 0;
     };
     std::queue<ChunkLoadTask> chunkQueue;
     std::mutex chunkQueueMutex;

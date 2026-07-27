@@ -310,7 +310,15 @@ void NetworkManager::chunkWorkerFunc() {
             chunkQueue.pop();
         }
         if (m_engine && m_engine->chunkManager) {
-            parseChunkDataPacket(task.rawData, 0);
+            if (task.isUnload) {
+                // 服务端 ForgetLevelChunk：释放区块数据 + 渲染资源
+                m_engine->chunkManager->unloadChunk(task.chunkX, task.chunkZ);
+                if (m_engine->getRenderer()) {
+                    m_engine->getRenderer()->removeChunk(task.chunkX, task.chunkZ);
+                }
+            } else {
+                parseChunkDataPacket(task.rawData, 0);
+            }
         }
     }
 }
@@ -506,6 +514,16 @@ bool NetworkManager::isConnected() const { return connected; }
 void NetworkManager::enqueueChunkData(std::vector<uint8_t> rawData) {
     std::lock_guard<std::mutex> lock(chunkQueueMutex);
     chunkQueue.push({std::move(rawData)});
+    chunkCV.notify_one();
+}
+
+void NetworkManager::enqueueChunkUnload(int chunkX, int chunkZ) {
+    std::lock_guard<std::mutex> lock(chunkQueueMutex);
+    ChunkLoadTask task;
+    task.isUnload = true;
+    task.chunkX = chunkX;
+    task.chunkZ = chunkZ;
+    chunkQueue.push(std::move(task));
     chunkCV.notify_one();
 }
 

@@ -767,6 +767,36 @@ void GLRenderer::markChunkForUpdate(int chunkX, int chunkZ) {
     needRebuildMesh.store(true);
 }
 
+void GLRenderer::removeChunk(int chunkX, int chunkZ) {
+    uint64_t chunkKey = ((uint64_t)(chunkX & 0xFFFFFFFF) << 32) | (chunkZ & 0xFFFFFFFF);
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        chunksToRemove.insert(chunkKey);
+        dirtyChunks.erase(chunkKey);   // 取消排队中的更新
+    }
+    {
+        std::lock_guard<std::mutex> lock(pendingMutex);
+        pendingChunks.erase(chunkKey);
+    }
+}
+
+void GLRenderer::processChunkRemovals() {
+    // 渲染线程调用（GL context 已 current）：安全删除 VAO/VBO/EBO
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    if (chunksToRemove.empty()) return;
+    for (uint64_t chunkKey : chunksToRemove) {
+        auto it = chunkRenderCache.find(chunkKey);
+        if (it == chunkRenderCache.end()) continue;
+        for (auto& sec : it->second.sections) {
+            if (sec.vao != 0) glDeleteVertexArrays(1, &sec.vao);
+            if (sec.vbo != 0) glDeleteBuffers(1, &sec.vbo);
+            if (sec.ebo != 0) glDeleteBuffers(1, &sec.ebo);
+        }
+        chunkRenderCache.erase(it);
+    }
+    chunksToRemove.clear();
+}
+
 // ===== 工作线程：离线网格生成，不阻塞渲染线程 =====
 
 void GLRenderer::startWorker() {
@@ -828,6 +858,7 @@ void GLRenderer::doClearChunks() {
         }
         chunkRenderCache.clear();
         dirtyChunks.clear();
+        chunksToRemove.clear();
         lastChunkCount = 0;
     }
 
@@ -1010,6 +1041,9 @@ void GLRenderer::workerLoop() {
 }
 
 void GLRenderer::processCompletedWork() {
+    // 先处理服务端要求卸载的区块（在上传新网格前，避免给已卸载区块白建资源）
+    processChunkRemovals();
+
     // 将新完成的结果追加到待处理队列
     {
         std::lock_guard<std::mutex> lock(resultMutex);
