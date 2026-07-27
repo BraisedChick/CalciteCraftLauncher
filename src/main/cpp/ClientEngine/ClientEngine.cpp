@@ -15,6 +15,7 @@
 #include "gui/GameUI.h"
 #include "gui/ScreenManager.h"
 #include "gui/TitleScreen.h"
+#include "gui/DisconnectedScreen.h"
 #include <atomic>
 #include "MusicManager.h"
 #include "3rdparty/json.hpp"
@@ -85,6 +86,8 @@ void ClientEngine::setupUICallbacks() {
 
             // 断开连接后的清理
             LOGI("Disconnected, returning to title screen");
+            // 在销毁会话前取出断开原因（空=玩家主动断开）
+            std::string disconnectReason = game->getDisconnectReason();
             auto& ui = GameUI::getInstance();
             ui.setState(UIState::MAIN_MENU);
 
@@ -108,7 +111,19 @@ void ClientEngine::setupUICallbacks() {
             ui.setDeathScreenActive(false);
             ui.setOptionsOpen(false);
             ui.setInventoryOpen(false);
-            ScreenManager::getInstance().setScreen(std::make_unique<TitleScreen>());
+
+            // 异常断开（连接失败/登录拒绝/被踢）时先展示原因，否则直接回标题界面
+            if (!disconnectReason.empty()) {
+                auto screen = std::make_unique<DisconnectedScreen>();
+                screen->setReason(disconnectReason);
+                // 对齐原版：DisconnectedScreen 的 parent 是服务器列表界面
+                screen->setBackCallback([]() {
+                    TitleScreen::openMultiplayerScreen();
+                });
+                ScreenManager::getInstance().setScreen(std::move(screen));
+            } else {
+                ScreenManager::getInstance().setScreen(std::make_unique<TitleScreen>());
+            }
 
         }).detach();
     });

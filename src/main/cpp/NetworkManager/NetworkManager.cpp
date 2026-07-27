@@ -11,6 +11,7 @@
 #include "EntityManager.h"
 #include "gui/GameUI.h"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundLevelChunkWithLightPacket.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundDisconnectPacket.hpp"
 #include "protocolCraft/Packets/Game/Serverbound/ServerboundClientInformationPacket.hpp"
 #include "Chunk.h"
 #include <sys/socket.h>
@@ -38,13 +39,16 @@ bool NetworkManager::isEncrypted() const {
 }
 
 bool NetworkManager::connect(const std::string& host, int port) {
+    lastError.clear();
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock == -1) {
+        lastError = std::string(strerror(errno)) + ": socket";
         LOGE("Failed to create socket");
         return false;
     }
     struct hostent* server = gethostbyname(host.c_str());
     if (server == nullptr) {
+        lastError = "未知的主机名: " + host;
         LOGE("Failed to resolve hostname");
         close(sock); sock = -1;
         return false;
@@ -61,6 +65,7 @@ bool NetworkManager::connect(const std::string& host, int port) {
     int ret = ::connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
     if (ret < 0) {
         if (errno != EINPROGRESS) {
+            lastError = std::string(strerror(errno)) + ": connect";
             LOGE("Connect failed: %s", strerror(errno));
             close(sock); sock = -1;
             return false;
@@ -71,6 +76,7 @@ bool NetworkManager::connect(const std::string& host, int port) {
         pfd.events = POLLOUT;
         int pollRet = poll(&pfd, 1, 10000);
         if (pollRet <= 0) {
+            lastError = "Connection timed out: connect";
             LOGE("Connect timed out or poll failed (%s:%d)", host.c_str(), port);
             close(sock); sock = -1;
             return false;
@@ -79,6 +85,8 @@ bool NetworkManager::connect(const std::string& host, int port) {
         int sockErr = 0;
         socklen_t errLen = sizeof(sockErr);
         if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &sockErr, &errLen) < 0 || sockErr != 0) {
+            // 原版风格："Connection refused: getsockopt"
+            lastError = std::string(strerror(sockErr)) + ": getsockopt";
             LOGE("Connect failed: %s", strerror(sockErr));
             close(sock); sock = -1;
             return false;
@@ -489,6 +497,32 @@ void NetworkManager::startPlayLoop() {
         size_t remaining = resp.size();
         int pid = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(iter, remaining);
         pos = resp.size() - remaining;
+
+        // 服务器踢出（Disconnect 包）：解析原因后退出主循环，由 DisconnectedScreen 展示
+#if PROTOCOL_VERSION >= 762
+        if (pid == 0x19) {
+#else
+        if (pid == 0x1A) {
+#endif
+            try {
+                ProtocolCraft::ClientboundDisconnectPacket disconnectPacket;
+                std::vector<unsigned char> pktData(resp.begin() + pos, resp.end());
+                auto pktIter = pktData.cbegin();
+                size_t pktLen = pktData.size();
+                disconnectPacket.Read(pktIter, pktLen);
+                if (m_engine) {
+                    std::string rawJson = disconnectPacket.GetReason().GetRawText();
+                    std::string reason = rawJson.empty() ? disconnectPacket.GetReason().GetText()
+                                                         : m_engine->parseChatComponent(rawJson);
+                    m_engine->disconnectReason = reason.empty() ? "被服务器断开连接" : reason;
+                    LOGI("Kicked by server: %s", m_engine->disconnectReason.c_str());
+                }
+            } catch (const std::exception& e) {
+                LOGW("Failed to parse disconnect reason: %s", e.what());
+                if (m_engine) m_engine->disconnectReason = "被服务器断开连接";
+            }
+            break;
+        }
 
         // 收到第一个 PLAY 状态包后，发送 ClientInformation
         if (!clientInfoSent) {

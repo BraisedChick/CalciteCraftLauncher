@@ -108,6 +108,9 @@ public:
     std::string getDeathMessage() const { return deathMessage; }
     void clearDeathMessage() { deathMessage.clear(); }
 
+    // ===== 断开连接原因（连接失败/登录拒绝/被踢，空=正常断开） =====
+    std::string getDisconnectReason() const { return disconnectReason; }
+
     // ===== 本地玩家实体 ID =====
     int getPlayerId() const { return playerId; }
 
@@ -172,6 +175,8 @@ public:
     int totalExperience = 0;
     int gameMode = 0;
     std::string deathMessage;
+    // 断开原因（startPlayLoop 收到 Disconnect 包时由 NetworkManager 直接写入）
+    std::string disconnectReason;
     int playerId = -1;
 
 private:

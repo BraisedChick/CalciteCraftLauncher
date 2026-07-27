@@ -13,6 +13,23 @@
 #define LOG_TAG "TitleScreen"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
+void TitleScreen::openMultiplayerScreen() {
+    auto mp = std::make_unique<MultiplayerScreen>();
+    auto connectCb = GameUI::getInstance().getConnectCallback();
+    mp->setConnectCallback([connectCb](const std::string& ip, int port, const std::string& address) {
+        GameUI::getInstance().setConnectingAddress(address);
+        GameUI::getInstance().setState(UIState::CONNECTING);
+        auto connecting = std::make_unique<ConnectingScreen>();
+        connecting->setAddress(address);
+        ScreenManager::getInstance().setScreen(std::move(connecting));
+        if (connectCb) connectCb(ip, port);
+    });
+    mp->setBackCallback([]() {
+        ScreenManager::getInstance().setScreen(std::make_unique<TitleScreen>());
+    });
+    ScreenManager::getInstance().setScreen(std::move(mp));
+}
+
 void TitleScreen::render(int mouseX, int mouseY) {
     ImGuiIO& io = ImGui::GetIO();
     float w = io.DisplaySize.x;
@@ -98,20 +115,7 @@ void TitleScreen::render(int mouseX, int mouseY) {
     // 多人游戏
     ImGui::SetCursorPos(ImVec2(w * 0.5f - btnW * 0.5f, startY));
     if (McButton("\xe5\xa4\x9a\xe4\xba\xba\xe6\xb8\xb8\xe6\x88\x8f", ImVec2(btnW, btnH))) {
-        auto mp = std::make_unique<MultiplayerScreen>();
-        auto connectCb = GameUI::getInstance().getConnectCallback();
-        mp->setConnectCallback([connectCb](const std::string& ip, int port, const std::string& address) {
-            GameUI::getInstance().setConnectingAddress(address);
-            GameUI::getInstance().setState(UIState::CONNECTING);
-            auto connecting = std::make_unique<ConnectingScreen>();
-            connecting->setAddress(address);
-            ScreenManager::getInstance().setScreen(std::move(connecting));
-            if (connectCb) connectCb(ip, port);
-        });
-        mp->setBackCallback([]() {
-            ScreenManager::getInstance().setScreen(std::make_unique<TitleScreen>());
-        });
-        ScreenManager::getInstance().setScreen(std::move(mp));
+        openMultiplayerScreen();
     }
 
     // 选项

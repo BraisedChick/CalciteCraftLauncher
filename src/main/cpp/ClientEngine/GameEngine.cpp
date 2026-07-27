@@ -249,6 +249,8 @@ bool GameEngine::start(const std::string& host, int port) {
     LOGI("Server: %s:%d", host.c_str(), port);
     LOGI("Username: %s", ClientEngine::getUsername().c_str());
 
+    disconnectReason.clear();
+
     // 初始化压缩状态
     Compression::setEnabled(false);
     Compression::setThreshold(-1);
@@ -267,6 +269,8 @@ bool GameEngine::start(const std::string& host, int port) {
     net = std::make_unique<NetworkManager>();
     if (!net->connect(host, port)) {
         LOGE("Failed to connect to %s:%d", host.c_str(), port);
+        // 原版风格：展示底层错误原因（如 "Connection refused: getsockopt"）
+        disconnectReason = net->getLastError().empty() ? "无法连接到服务器" : net->getLastError();
         return false;
     }
     LOGI("Network connection established");
@@ -293,6 +297,7 @@ bool GameEngine::start(const std::string& host, int port) {
         LOGI("Handshake packet size: %zu bytes", writeData.size());
         if (!sendPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()))) {
             LOGE("Failed to send handshake");
+            disconnectReason = "发送握手数据包失败";
             net->disconnect();
             return false;
         }
@@ -315,6 +320,7 @@ bool GameEngine::start(const std::string& host, int port) {
         LOGI("LoginStart packet size: %zu bytes", writeData.size());
         if (!sendPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()))) {
             LOGE("Failed to send login start");
+            disconnectReason = "发送登录数据包失败";
             net->disconnect();
             return false;
         }
@@ -325,6 +331,7 @@ bool GameEngine::start(const std::string& host, int port) {
         auto resp = net->receivePacket();
         if (resp.empty()) {
             LOGE("Empty response during login");
+            disconnectReason = "服务器关闭了连接";
             net->disconnect();
             return false;
         }
@@ -363,6 +370,7 @@ bool GameEngine::start(const std::string& host, int port) {
 
             if (!premium) {
                 LOGE("Server is in online mode, but no premium auth available");
+                disconnectReason = "该服务器开启了正版验证，请先登录正版账号";
                 net->disconnect();
                 return false;
             }
@@ -403,6 +411,7 @@ bool GameEngine::start(const std::string& host, int port) {
 
                 if (!encResult || rawSharedSecret.empty()) {
                     LOGE("Failed to handle encryption request via Java");
+                    disconnectReason = "正版验证失败：无法完成加密握手";
                     net->disconnect();
                     return false;
                 }
@@ -414,6 +423,7 @@ bool GameEngine::start(const std::string& host, int port) {
 
                 if (!aesEncrypter->isInitialized()) {
                     LOGE("Failed to initialize AESEncrypter");
+                    disconnectReason = "加密初始化失败";
                     net->disconnect();
                     return false;
                 }
@@ -433,6 +443,7 @@ bool GameEngine::start(const std::string& host, int port) {
 
                 if (!sendPacket(std::vector<uint8_t>(keyPacket.begin(), keyPacket.end()))) {
                     LOGE("Failed to send encryption key response");
+                    disconnectReason = "发送加密密钥失败";
                     net->disconnect();
                     return false;
                 }
@@ -443,6 +454,7 @@ bool GameEngine::start(const std::string& host, int port) {
 
             } catch (const std::exception& e) {
                 LOGE("Failed to parse encryption request: %s", e.what());
+                disconnectReason = "解析加密请求失败";
                 net->disconnect();
                 return false;
             }
@@ -470,10 +482,16 @@ bool GameEngine::start(const std::string& host, int port) {
             auto iter = packetData.cbegin();
             size_t length = packetData.size();
 
+            // 服务器拒绝登录（版本不匹配、白名单等）：解析 Chat 组件展示具体原因
             try {
                 disconnectPacket.Read(iter, length);
-                LOGE("Disconnected during login");
+                std::string rawJson = disconnectPacket.GetReason().GetRawText();
+                std::string reason = rawJson.empty() ? disconnectPacket.GetReason().GetText()
+                                                     : parseChatComponent(rawJson);
+                disconnectReason = reason.empty() ? "登录被服务器拒绝" : reason;
+                LOGE("Disconnected during login: %s", disconnectReason.c_str());
             } catch (...) {
+                disconnectReason = "登录被服务器拒绝";
                 LOGE("Disconnected during login (failed to parse reason)");
             }
             net->disconnect();
@@ -482,6 +500,7 @@ bool GameEngine::start(const std::string& host, int port) {
 
         default: {
             LOGE("Unexpected login packet: %d", pid);
+            disconnectReason = "意外的登录数据包 (id=" + std::to_string(pid) + ")";
             net->disconnect();
             return false;
         }

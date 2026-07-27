@@ -85,6 +85,7 @@ set(APP_SOURCES
     gui/TitleScreen.cpp
     gui/MultiplayerScreen.cpp
     gui/ConnectingScreen.cpp
+    gui/DisconnectedScreen.cpp
     gui/HudScreen.cpp
     gui/DeathScreen.cpp
     gui/InventoryScreen.cpp

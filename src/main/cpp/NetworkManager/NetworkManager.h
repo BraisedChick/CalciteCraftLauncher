@@ -24,6 +24,8 @@ public:
     bool sendRawPacket(const std::vector<uint8_t>& fullPacketData);
     std::vector<uint8_t> receivePacket();
     bool isConnected() const;
+    // 最后一次连接失败的原因（对应原版 "Connection refused: getsockopt" 风格）
+    const std::string& getLastError() const { return lastError; }
 
     // === AES 加密 ===
     void setEncrypter(AESEncrypter* encrypter);
@@ -110,6 +112,7 @@ private:
     // === 网络底层 ===
     int sock = -1;
     bool connected = false;
+    std::string lastError;
     AESEncrypter* encrypter = nullptr;
 
     // 引擎引用（用于 handlers 更新游戏状态）
