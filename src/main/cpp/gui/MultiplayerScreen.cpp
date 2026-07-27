@@ -38,6 +38,7 @@ void MultiplayerScreen::resetGLResources() {
 }
 
 void MultiplayerScreen::render(int mouseX, int mouseY) {
+    pollPingTasks();
     if (showingAddServer) {
         renderAddServer();
     } else {
@@ -443,34 +444,58 @@ void MultiplayerScreen::pingServer(int index) {
 
     servers[index].pinging = true;
     servers[index].pingFailed = false;
+    auto task = std::make_shared<PingTask>();
+    servers[index].pingTask = task;
     std::string ip = servers[index].ip;
     int port = servers[index].port;
     int protocolVersion = PROTOCOL_VERSION;
 
-    std::thread([this, index, ip, port, protocolVersion]() {
+    // 后台线程不捕获 this：屏幕切换销毁后，shared_ptr 保证 task 仍存活，
+    // 结果由渲染线程在 pollPingTasks() 中回填，避免悬空访问与数据竞争
+    std::thread([task, ip, port, protocolVersion]() {
         PingResult result = ServerList::ping(ip, port, protocolVersion);
-        if (index < (int)servers.size()) {
-            servers[index].pinging = false;
-            if (result.success) {
-                servers[index].motd = result.motd;
-                servers[index].onlinePlayers = result.onlinePlayers;
-                servers[index].maxPlayers = result.maxPlayers;
-                servers[index].latencyMs = result.latencyMs;
-                servers[index].pinged = true;
-                if (!result.faviconPng.empty()) {
-                    servers[index].faviconPngData = std::move(result.faviconPng);
+        std::lock_guard<std::mutex> lock(task->mtx);
+        task->success = result.success;
+        if (result.success) {
+            task->motd = std::move(result.motd);
+            task->onlinePlayers = result.onlinePlayers;
+            task->maxPlayers = result.maxPlayers;
+            task->latencyMs = result.latencyMs;
+            task->faviconPng = std::move(result.faviconPng);
+        }
+        task->done = true;
+    }).detach();
+}
+
+void MultiplayerScreen::pollPingTasks() {
+    for (size_t i = 0; i < servers.size(); i++) {
+        if (!servers[i].pingTask) continue;
+        auto task = servers[i].pingTask;  // 持有一份引用，防止锁期间对象被释放
+        {
+            std::lock_guard<std::mutex> lock(task->mtx);
+            if (!task->done) continue;
+            servers[i].pinging = false;
+            if (task->success) {
+                servers[i].motd = std::move(task->motd);
+                servers[i].onlinePlayers = task->onlinePlayers;
+                servers[i].maxPlayers = task->maxPlayers;
+                servers[i].latencyMs = task->latencyMs;
+                servers[i].pinged = true;
+                if (!task->faviconPng.empty()) {
+                    servers[i].faviconPngData = std::move(task->faviconPng);
                 }
-                LOGI("Server %d pinged: %s (%d/%d) %dms",
-                     index, result.motd.c_str(),
-                     result.onlinePlayers, result.maxPlayers, result.latencyMs);
+                LOGI("Server %zu pinged: %s (%d/%d) %dms",
+                     i, servers[i].motd.c_str(),
+                     task->onlinePlayers, task->maxPlayers, task->latencyMs);
             } else {
-                servers[index].pinged = false;
-                servers[index].latencyMs = -1;
-                servers[index].pingFailed = true;
-                LOGI("Server %d ping failed", index);
+                servers[i].pinged = false;
+                servers[i].latencyMs = -1;
+                servers[i].pingFailed = true;
+                LOGI("Server %zu ping failed", i);
             }
         }
-    }).detach();
+        servers[i].pingTask.reset();
+    }
 }
 
 void MultiplayerScreen::pingAllServers() {

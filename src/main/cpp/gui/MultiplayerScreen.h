@@ -6,10 +6,25 @@
 #include <vector>
 #include <functional>
 #include <cstdint>
+#include <memory>
+#include <mutex>
 
 // 多人游戏界面（对应 MC 的 JoinMultiplayerScreen + AddServerScreen）
 class MultiplayerScreen : public Screen {
 public:
+    // 后台 ping 线程与渲染线程共享的结果槽：
+    // 线程只持有 shared_ptr<PingTask>（不捕获 this），屏幕销毁后线程写入的仍是存活对象
+    struct PingTask {
+        std::mutex mtx;
+        bool done = false;
+        bool success = false;
+        std::string motd;
+        int onlinePlayers = -1;
+        int maxPlayers = -1;
+        int latencyMs = -1;
+        std::vector<uint8_t> faviconPng;
+    };
+
     struct ServerInfo {
         std::string name;
         std::string ip;
@@ -24,6 +39,7 @@ public:
         bool pinged = false;
         bool pinging = false;
         bool pingFailed = false;
+        std::shared_ptr<PingTask> pingTask;
     };
 
     using ConnectCallback = std::function<void(const std::string& ip, int port, const std::string& address)>;
@@ -47,6 +63,7 @@ private:
     void connectToServer(const ServerInfo& server);
     void pingAllServers();
     void pingServer(int index);
+    void pollPingTasks();
     void loadServerList();
     void saveServerList();
 
