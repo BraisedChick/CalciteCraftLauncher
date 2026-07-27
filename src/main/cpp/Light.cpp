@@ -162,7 +162,7 @@ int Light::getBlockEmission(const char* name) {
     return 0;
 }
 
-// ===== 客户端方块光增量传播（移植自原版 1.21 LightEngine 双队列算法）=====
+// ===== 客户端方块光增量传=====
 //
 // 核心思路：
 // - checkNode 只入队变化点，变暗（decrease）先全部排干，变亮（increase）再排干
@@ -171,7 +171,7 @@ int Light::getBlockEmission(const char* name) {
 
 namespace {
 
-// --- 坐标打包（同原版 BlockPos.asLong：x/z 各 26 位，y 12 位，带符号）---
+// --- 坐标打包（x/z 各 26 位，y 12 位，带符号）---
 inline uint64_t packPos(int x, int y, int z) {
     return ((uint64_t)((uint32_t)x & 0x3FFFFFFu) << 38)
          | ((uint64_t)((uint32_t)z & 0x3FFFFFFu) << 12)
@@ -188,7 +188,7 @@ constexpr int DX[6] = {1, -1, 0, 0, 0, 0};
 constexpr int DY[6] = {0, 0, 1, -1, 0, 0};
 constexpr int DZ[6] = {0, 0, 0, 0, 1, -1};
 
-// --- 队列条目打包（同原版 LightEngine.QueueEntry，省去形状遮挡标志）---
+// --- 队列条目打包（省去形状遮挡标志）---
 // bit 0-3: fromLevel；bit 4-9: 方向掩码；bit 10: increase 来自发光源
 constexpr uint32_t DIRS_ALL = 0x3Fu << 4;
 constexpr uint32_t FLAG_FROM_EMISSION = 1u << 10;
@@ -334,7 +334,7 @@ void Light::runLightUpdates(ChunkManager* chunkMgr, const std::vector<uint64_t>&
     auto enqueueDecrease = [&](uint64_t pos, uint32_t entry) { decreaseQueue.push_back({pos, entry}); };
     auto enqueueIncrease = [&](uint64_t pos, uint32_t entry) { increaseQueue.push_back({pos, entry}); };
 
-    // ===== Phase 0: checkNode（同原版 BlockLightEngine.checkNode）=====
+    // ===== Phase 0: checkNode=====
     for (uint64_t node : nodes) {
         int x, y, z;
         unpackPos(node, x, y, z);
@@ -353,7 +353,7 @@ void Light::runLightUpdates(ChunkManager* chunkMgr, const std::vector<uint64_t>&
         }
     }
 
-    // ===== Phase 1: 排干变暗队列（同原版 propagateDecrease）=====
+    // ===== Phase 1: 排干变暗队列=====
     while (decHead < decreaseQueue.size()) {
         QueueItem item = decreaseQueue[decHead++];
         int x, y, z;
@@ -384,7 +384,7 @@ void Light::runLightUpdates(ChunkManager* chunkMgr, const std::vector<uint64_t>&
         }
     }
 
-    // ===== Phase 2: 排干变亮队列（同原版 propagateIncrease）=====
+    // ===== Phase 2: 排干变亮队列=====
     while (incHead < increaseQueue.size()) {
         QueueItem item = increaseQueue[incHead++];
         int x, y, z;
@@ -396,7 +396,7 @@ void Light::runLightUpdates(ChunkManager* chunkMgr, const std::vector<uint64_t>&
             setBL(x, y, z, (uint8_t)fromLevel);
             stored = fromLevel;
         }
-        // 入队后光值变过则条目失效，跳过（同原版 l == i1 校验）
+        // 入队后光值变过则条目失效，跳过
         if (stored != fromLevel) continue;
 
         for (int d = 0; d < 6; d++) {
