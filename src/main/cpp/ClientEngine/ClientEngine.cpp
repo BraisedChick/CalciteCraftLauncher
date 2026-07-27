@@ -78,11 +78,9 @@ void ClientEngine::setupUICallbacks() {
                 client->getRenderer()->setMaxFps(ui.getMaxFps());
             }
 
-            // 切换状态并开始连接
-            GameUI::getInstance().setState(UIState::IN_GAME);
-            GameUI::getInstance().clearChatMessages();
-
-            // start() 阻塞直到断开连接
+            // 保持 CONNECTING 状态（显示 ConnectingScreen），登录成功后由
+            // GameEngine::start 内部切换到 IN_GAME，避免连接失败时进入空世界
+            // start() 阻塞直到断开连接（连接/登录失败则直接返回 false）
             game->start(ip, port);
 
             // 断开连接后的清理

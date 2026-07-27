@@ -496,6 +496,11 @@ loginDone:
         LOGI("Compression not enabled by server (offline mode)");
     }
 
+    // 登录成功，此时才切换到游戏状态（连接/登录失败时保持 CONNECTING，
+    // 由 ClientEngine 的连接线程收尾回到标题界面，避免进入空世界）
+    GameUI::getInstance().setState(UIState::IN_GAME);
+    GameUI::getInstance().clearChatMessages();
+
     // 委托 NetworkManager 处理 PLAY 状态
     net->setEngine(this);
     net->registerHandlers();

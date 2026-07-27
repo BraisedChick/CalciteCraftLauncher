@@ -18,6 +18,8 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <netdb.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <cstring>
 #include <errno.h>
 
@@ -51,17 +53,52 @@ bool NetworkManager::connect(const std::string& host, int port) {
     serv_addr.sin_family = AF_INET;
     memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
     serv_addr.sin_port = htons(port);
-    if (::connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
-        LOGE("Connect failed");
-        close(sock); sock = -1;
-        return false;
+
+    // 非阻塞 connect + poll 超时：避免网络不可达时阻塞到系统 SYN 重试超时（可达 2 分钟）
+    int flags = fcntl(sock, F_GETFL, 0);
+    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+
+    int ret = ::connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
+    if (ret < 0) {
+        if (errno != EINPROGRESS) {
+            LOGE("Connect failed: %s", strerror(errno));
+            close(sock); sock = -1;
+            return false;
+        }
+        // 等待连接完成（10 秒超时）
+        struct pollfd pfd;
+        pfd.fd = sock;
+        pfd.events = POLLOUT;
+        int pollRet = poll(&pfd, 1, 10000);
+        if (pollRet <= 0) {
+            LOGE("Connect timed out or poll failed (%s:%d)", host.c_str(), port);
+            close(sock); sock = -1;
+            return false;
+        }
+        // 检查连接结果（拒绝连接等错误也会触发 POLLOUT/POLLERR）
+        int sockErr = 0;
+        socklen_t errLen = sizeof(sockErr);
+        if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &sockErr, &errLen) < 0 || sockErr != 0) {
+            LOGE("Connect failed: %s", strerror(sockErr));
+            close(sock); sock = -1;
+            return false;
+        }
     }
+
+    // 恢复阻塞模式（后续 recv/send 依赖阻塞语义）
+    fcntl(sock, F_SETFL, flags);
+
     connected = true;
     return true;
 }
 
 void NetworkManager::disconnect() {
-    if (sock != -1) close(sock);
+    if (sock != -1) {
+        // 先 shutdown 再 close：Linux 上 close() 不会唤醒阻塞在 recv() 的其他线程，
+        // shutdown(SHUT_RDWR) 会让阻塞中的 recv 立即返回 0，使收包循环退出
+        shutdown(sock, SHUT_RDWR);
+        close(sock);
+    }
     sock = -1;
     connected = false;
 }
