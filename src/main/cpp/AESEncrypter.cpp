@@ -22,6 +22,14 @@ extern "C" void AES128_EncryptBlock_ARMv8(const uint8_t input[16],
                                            const uint8_t expandedKey[176],
                                            uint8_t output[16]);
 
+// ARMv8 CFB8 批处理（轮密钥常驻寄存器，支持原地处理）
+extern "C" void AES128_CFB8_Process_ARMv8(const uint8_t* input,
+                                           uint8_t* output,
+                                           size_t length,
+                                           const uint8_t expandedKey[176],
+                                           uint8_t shiftReg[16],
+                                           bool isEncrypt);
+
 // 检测 CPU 是否支持 ARMv8 Crypto Extensions
 static bool HasARMCryptoSupport() {
     #if defined(__aarch64__) || defined(_M_ARM64)
@@ -42,6 +50,21 @@ typedef void (*AESEncryptBlockFunc)(const uint8_t input[16],
 // 全局函数指针和状态
 static AESEncryptBlockFunc g_aesEncryptBlockFunc = nullptr;
 static bool g_hardwareAESChecked = false;
+
+// 确保硬件探测已完成（CFB8 批处理分支与单块调度共用），返回是否有硬件加速
+static bool EnsureAESDispatchInit() {
+    if (!g_hardwareAESChecked) {
+        if (HasARMCryptoSupport()) {
+            g_aesEncryptBlockFunc = AES128_EncryptBlock_ARMv8;
+            LOGI("AES: Using ARMv8 Crypto Extensions (hardware acceleration)");
+        } else {
+            g_aesEncryptBlockFunc = nullptr;  // nullptr 表示使用内联实现
+            LOGI("AES: Using pure C++ implementation");
+        }
+        g_hardwareAESChecked = true;
+    }
+    return g_aesEncryptBlockFunc != nullptr;
+}
 
 // ============================================================
 // AES S-Box（FIPS 197 标准替换盒）
@@ -120,21 +143,8 @@ void AESEncrypter::KeyExpansion(const uint8_t key[16], uint8_t out[EXPANDED_KEY_
 void AESEncrypter::AES128_EncryptBlock(const uint8_t input[16],
                                         const uint8_t expandedKey[EXPANDED_KEY_SIZE],
                                         uint8_t output[16]) {
-    // 首次调用时检测 CPU 特性并设置函数指针
-    if (!g_hardwareAESChecked) {
-        if (HasARMCryptoSupport()) {
-            g_aesEncryptBlockFunc = AES128_EncryptBlock_ARMv8;
-            LOGI("AES: Using ARMv8 Crypto Extensions (hardware acceleration)");
-        } else {
-            // 使用纯 C++ 实现（内联在下方）
-            g_aesEncryptBlockFunc = nullptr;  // nullptr 表示使用内联实现
-            LOGI("AES: Using pure C++ implementation");
-        }
-        g_hardwareAESChecked = true;
-    }
-    
-    // 如果设置了硬件加速函数指针，直接调用
-    if (g_aesEncryptBlockFunc) {
+    // 首次调用时检测 CPU 特性并设置函数指针；有硬件加速则直接调用
+    if (EnsureAESDispatchInit()) {
         g_aesEncryptBlockFunc(input, expandedKey, output);
         return;
     }
@@ -253,9 +263,15 @@ void AESEncrypter::Init(const std::vector<unsigned char>& sharedSecret) {
 }
 
 // ============================================================
-// CFB8 加密：逐字节处理
+// CFB8 加密：硬件加速走批处理，否则逐字节处理
 // ============================================================
 void AESEncrypter::encryptCFB8(const uint8_t* input, uint8_t* output, size_t length) {
+    // 硬件加速：整段批处理，轮密钥只装载一次（避免每字节调用+密钥重装）
+    if (EnsureAESDispatchInit()) {
+        AES128_CFB8_Process_ARMv8(input, output, length, expandedKey, encShiftReg.data(), true);
+        return;
+    }
+
     uint8_t encryptedBlock[16];
 
     for (size_t i = 0; i < length; ++i) {
@@ -274,10 +290,16 @@ void AESEncrypter::encryptCFB8(const uint8_t* input, uint8_t* output, size_t len
 }
 
 // ============================================================
-// CFB8 解密：逐字节处理
+// CFB8 解密：硬件加速走批处理，否则逐字节处理
 // 注意：解密也用 AES 加密（不是解密）！这是 CFB 模式的特性
 // ============================================================
 void AESEncrypter::decryptCFB8(const uint8_t* input, uint8_t* output, size_t length) {
+    // 硬件加速：整段批处理，反馈密文输入（isEncrypt=false）
+    if (EnsureAESDispatchInit()) {
+        AES128_CFB8_Process_ARMv8(input, output, length, expandedKey, decShiftReg.data(), false);
+        return;
+    }
+
     uint8_t encryptedBlock[16];
 
     for (size_t i = 0; i < length; ++i) {
