@@ -39,7 +39,7 @@ public:
     float getSkyColorG() const { return skyG; }
     float getSkyColorB() const { return skyB; }
 
-    // ===== 客户端方块光增量传播（移植自原版 1.21 LightEngine 双队列算法）=====
+    // ===== 客户端方块光增量传播（双队列算法）=====
     /// 异步入队：网络线程调用，不阻塞（方块变化时对该坐标触发增量光照更新）
     void queueBlockLightRecalc(int worldX, int worldY, int worldZ);
 
