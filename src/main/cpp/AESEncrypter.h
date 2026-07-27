@@ -30,11 +30,11 @@ public:
      */
     void Init(const std::vector<unsigned char>& sharedSecret);
 
-    /** 加密数据（发送前调用）*/
-    std::vector<unsigned char> Encrypt(const std::vector<unsigned char>& in);
+    /** 加密（发送前调用，支持 input == output 原地处理）*/
+    void Encrypt(const uint8_t* input, uint8_t* output, size_t length);
 
-    /** 解密数据（接收后调用）*/
-    std::vector<unsigned char> Decrypt(const std::vector<unsigned char>& in);
+    /** 解密（接收后调用，支持 input == output 原地处理）*/
+    void Decrypt(const uint8_t* input, uint8_t* output, size_t length);
 
     bool isInitialized() const { return initialized; }
 

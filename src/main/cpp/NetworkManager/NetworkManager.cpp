@@ -101,9 +101,9 @@ bool NetworkManager::sendRawPacket(const std::vector<uint8_t>& fullPacketData) {
     finalPacket.insert(finalPacket.end(), lenBytes.begin(), lenBytes.end());
     finalPacket.insert(finalPacket.end(), packetData.begin(), packetData.end());
 
-    // 如果启用了 AES 加密，加密整个数据 — 参考 Botcraft TCP_Com::SendPacket
+    // 如果启用了 AES 加密，原地加密整个数据 — 参考 Botcraft TCP_Com::SendPacket
     if (isEncrypted()) {
-        finalPacket = encrypter->Encrypt(finalPacket);
+        encrypter->Encrypt(finalPacket.data(), finalPacket.data(), finalPacket.size());
     }
 
     int sent = send(sock, finalPacket.data(), finalPacket.size(), 0);
@@ -158,13 +158,13 @@ std::vector<uint8_t> NetworkManager::receivePacket() {
             int uncompressedLen = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(iter, length);
             // 计算剩余数据的起始位置
             size_t remainingStart = rawData.size() - length;
-            std::vector<uint8_t> rest(rawData.begin() + remainingStart, rawData.end());
             if (uncompressedLen == 0) {
-                // 数据未压缩
-                return rest;
+                // 数据未压缩：原地去掉 VarInt 前缀（memmove，无新分配）
+                rawData.erase(rawData.begin(), rawData.begin() + remainingStart);
+                return rawData;
             } else {
-                // 需要解压
-                return Compression::decompress(rest, uncompressedLen);
+                // 需要解压（裸指针重载，省去 rest 拷贝）
+                return Compression::decompress(rawData.data() + remainingStart, length, uncompressedLen);
             }
         } catch (...) {
             return {};
@@ -188,6 +188,7 @@ void NetworkManager::registerHandlers() {
     reg(0x38, &NetworkManager::handlePlayerStatus);
     reg(0x22, &NetworkManager::handleWorld);
     reg(0x0C, &NetworkManager::handleWorld);
+    reg(0x1D, &NetworkManager::handleWorld); // ForgetLevelChunk
     reg(0x25, &NetworkManager::handleWorld);
     reg(0x3F, &NetworkManager::handleWorld);
     reg(0x14, &NetworkManager::handleInventory);
@@ -218,6 +219,7 @@ void NetworkManager::registerHandlers() {
     reg(0x3C, &NetworkManager::handlePlayerStatus);
     reg(0x24, &NetworkManager::handleWorld);
     reg(0x0A, &NetworkManager::handleWorld);
+    reg(0x1E, &NetworkManager::handleWorld); // ForgetLevelChunk
     reg(0x27, &NetworkManager::handleWorld);
     reg(0x43, &NetworkManager::handleWorld);
     reg(0x12, &NetworkManager::handleInventory);
@@ -533,59 +535,32 @@ void NetworkManager::enqueueChunkUnload(int chunkX, int chunkZ) {
  * AES CFB8 是流加密，可以逐字节处理
  */
 std::vector<uint8_t> NetworkManager::receiveEncryptedPacket() {
-    // 逐字节读取并解密，直到能解析出 VarInt 包长度
-    std::vector<uint8_t> decryptedBuf;
-    int packetLen = -1;
-
+    // 逐字节读取并解密，手工解码 VarInt 包长度（栈上单字节原地解密，零堆分配）
+    int packetLen = 0;
+    int shift = 0;
     while (true) {
-        uint8_t encryptedByte;
-        int n = recv(sock, &encryptedByte, 1, 0);
+        uint8_t b;
+        int n = recv(sock, &b, 1, 0);
         if (n <= 0) return {};
-
-        // 解密单字节
-        std::vector<uint8_t> encBuf = {encryptedByte};
-        std::vector<uint8_t> decByte = encrypter->Decrypt(encBuf);
-        if (!decByte.empty()) {
-            decryptedBuf.push_back(decByte[0]);
-        }
-
-        // 尝试解码 VarInt
-        ProtocolCraft::ReadIterator iter = decryptedBuf.begin();
-        size_t length = decryptedBuf.size();
-        try {
-            packetLen = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(iter, length);
-            break;
-        } catch (...) {
-            // VarInt 不完整，继续读取
-            if (decryptedBuf.size() >= 5) return {}; // VarInt 最大5字节
-            continue;
-        }
+        encrypter->Decrypt(&b, &b, 1);
+        packetLen |= (int)(b & 0x7F) << shift;
+        if (!(b & 0x80)) break;
+        shift += 7;
+        if (shift >= 35) return {}; // VarInt 最大5字节
     }
     if (packetLen <= 0) return {};
 
-    // 计算已读取的数据长度（VarInt 占了多少字节）
-    size_t varIntSize = decryptedBuf.size();
-
-    // 读取剩余数据
-    int remaining = packetLen - (varIntSize > 0 ? 0 : 0);
-    // 注意：VarInt 长度不包含在 packetLen 中，packetLen 就是数据长度
-    // 但我们可能已经在 VarInt 后面多读了一些字节（不太可能，因为是一字节一字节读的）
-
-    // 继续读取 packetLen 字节的加密数据
-    std::vector<uint8_t> encryptedData(packetLen);
+    // 读取 packetLen 字节的加密数据
+    std::vector<uint8_t> rawData(packetLen);
     int total = 0;
     while (total < packetLen) {
-        int n = recv(sock, encryptedData.data() + total, packetLen - total, 0);
+        int n = recv(sock, rawData.data() + total, packetLen - total, 0);
         if (n <= 0) return {};
         total += n;
     }
 
-    // 解密数据
-    std::vector<uint8_t> rawData = encrypter->Decrypt(encryptedData);
-    if (rawData.size() < (size_t)packetLen) {
-        // AES CFB8 解密后大小应该和输入一致
-        LOGW("Decrypted size mismatch: got %zu, expected %d", rawData.size(), packetLen);
-    }
+    // 原地解密（CFB8 输出长度 == 输入长度，批处理实现支持 input == output）
+    encrypter->Decrypt(rawData.data(), rawData.data(), rawData.size());
 
     // 处理压缩头（与 receivePacket 中的逻辑一致）
     if (Compression::isReceiveEnabled()) {
@@ -594,13 +569,13 @@ std::vector<uint8_t> NetworkManager::receiveEncryptedPacket() {
         try {
             int uncompressedLen = ProtocolCraft::ReadData<int, ProtocolCraft::VarInt>(iter, length);
             size_t remainingStart = rawData.size() - length;
-            std::vector<uint8_t> rest(rawData.begin() + remainingStart, rawData.end());
             if (uncompressedLen == 0) {
-                // 数据未压缩
-                return rest;
+                // 数据未压缩：原地去掉 VarInt 前缀（memmove，无新分配）
+                rawData.erase(rawData.begin(), rawData.begin() + remainingStart);
+                return rawData;
             } else {
-                // 需要解压
-                return Compression::decompress(rest, uncompressedLen);
+                // 需要解压（裸指针重载，省去 rest 拷贝）
+                return Compression::decompress(rawData.data() + remainingStart, length, uncompressedLen);
             }
         } catch (...) {
             return {};

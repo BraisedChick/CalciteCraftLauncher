@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <cstdint>
+#include <cstddef>
 
 class Compression {
 public:
@@ -12,4 +13,5 @@ public:
     static int getThreshold();
     static std::vector<uint8_t> compress(const std::vector<uint8_t>& input);
     static std::vector<uint8_t> decompress(const std::vector<uint8_t>& input, int uncompressedLength);
+    static std::vector<uint8_t> decompress(const uint8_t* data, size_t size, int uncompressedLength);
 };

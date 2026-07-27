@@ -36,9 +36,13 @@ std::vector<uint8_t> Compression::compress(const std::vector<uint8_t>& input) {
 }
 
 std::vector<uint8_t> Compression::decompress(const std::vector<uint8_t>& input, int uncompressedLength) {
+    return decompress(input.data(), input.size(), uncompressedLength);
+}
+
+std::vector<uint8_t> Compression::decompress(const uint8_t* data, size_t size, int uncompressedLength) {
     std::vector<uint8_t> output(uncompressedLength);
     uLongf destLen = uncompressedLength;
-    int ret = uncompress(output.data(), &destLen, input.data(), input.size());
+    int ret = uncompress(output.data(), &destLen, data, size);
     if (ret != Z_OK) {
         LOGE("Decompression failed: %d", ret);
         return {};

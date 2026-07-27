@@ -10,6 +10,7 @@
 #include "AESEncrypter.h"
 #include "utils.h"
 #include <chrono>
+#include <cstring>
 
 // ARM64 CPU 特性检测
 #if defined(__aarch64__) || defined(_M_ARM64)
@@ -306,38 +307,37 @@ void AESEncrypter::decryptCFB8(const uint8_t* input, uint8_t* output, size_t len
         // 加密当前移位寄存器（注意：仍然是加密操作）
         AES128_EncryptBlock(decShiftReg.data(), expandedKey, encryptedBlock);
 
+        // 先保存密文字节：原地处理（input == output）时写 output 会覆盖 input
+        uint8_t cipherByte = input[i];
+
         // 密文字节 XOR 密钥流首字节 → 明文字节
-        output[i] = input[i] ^ encryptedBlock[0];
+        output[i] = cipherByte ^ encryptedBlock[0];
 
         // 移位寄存器左移 1 字节，末尾补入密文字节（不是明文！）
         for (int j = 0; j < AES_BLOCK_SIZE - 1; ++j) {
             decShiftReg[j] = decShiftReg[j + 1];
         }
-        decShiftReg[AES_BLOCK_SIZE - 1] = input[i];
+        decShiftReg[AES_BLOCK_SIZE - 1] = cipherByte;
     }
 }
 
 // ============================================================
 // Encrypt / Decrypt 公开接口
 // ============================================================
-std::vector<unsigned char> AESEncrypter::Encrypt(const std::vector<unsigned char>& in) {
+void AESEncrypter::Encrypt(const uint8_t* input, uint8_t* output, size_t length) {
     if (!initialized) {
         LOGW("AESEncrypter: trying to encrypt while not initialized");
-        return in;
+        if (output != input) memcpy(output, input, length);
+        return;
     }
-    
-    std::vector<unsigned char> output(in.size());
-    encryptCFB8(in.data(), output.data(), in.size());
-    return output;
+    encryptCFB8(input, output, length);
 }
 
-std::vector<unsigned char> AESEncrypter::Decrypt(const std::vector<unsigned char>& in) {
+void AESEncrypter::Decrypt(const uint8_t* input, uint8_t* output, size_t length) {
     if (!initialized) {
         LOGW("AESEncrypter: trying to decrypt while not initialized");
-        return in;
+        if (output != input) memcpy(output, input, length);
+        return;
     }
-    
-    std::vector<unsigned char> output(in.size());
-    decryptCFB8(in.data(), output.data(), in.size());
-    return output;
+    decryptCFB8(input, output, length);
 }
