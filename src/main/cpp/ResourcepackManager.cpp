@@ -120,6 +120,32 @@ GLuint ResourcepackManager::getItemTexture(const std::string& itemName) {
     return glTex;
 }
 
+void ResourcepackManager::refreshItemIcons() {
+    // 3D 图标批量生成前（纹理分批上传窗口期）hotbar 已在每帧查询图标，
+    // 回退的 2D/missing 结果被永久缓存；这里把能查到 3D 图标的条目统一刷新
+    if (!ClientEngine::getInstance() || !ClientEngine::getInstance()->getRenderer()) return;
+    auto* renderer = ClientEngine::getInstance()->getRenderer();
+
+    int count = 0;
+    for (auto& pair : cache) {
+        // HUD/GUI 纹理的 key 含 '/'，不是物品名，跳过
+        if (pair.first.find('/') != std::string::npos) continue;
+
+        const GLuint* icon = renderer->getBlockIcon(pair.first);
+        if (!icon || *icon == 0 || *icon == pair.second) continue;
+
+        // 删掉旧的 2D 回退纹理（missingTex 共享，不能删）
+        if (pair.second != 0 && pair.second != missingTex) {
+            glDeleteTextures(1, &pair.second);
+        }
+        pair.second = *icon;
+        count++;
+    }
+    if (count > 0) {
+        LOGI("Refreshed %d item icons to 3D block icons", count);
+    }
+}
+
 GLuint ResourcepackManager::getHudTexture(const std::string& path) {
     auto it = cache.find(path);
     if (it != cache.end()) return it->second;

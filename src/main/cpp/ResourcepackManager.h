@@ -31,6 +31,10 @@ public:
     GLuint getGuiTexture(const std::string& path);
     GLuint getMissingTexture();
 
+    // 3D 方块图标批量生成完成后调用：将窗口期内被 2D/missing 回退
+    // 污染的缓存条目刷新为 3D 图标（hotbar 从进服第一帧就在查询）
+    void refreshItemIcons();
+
     // ===== 着色器 =====
     // 从资源包加载并编译 Mojang 格式着色器程序
     // name: JSON 文件名（如 "rendertype_cutout"），自动从 shaders/core/ 加载

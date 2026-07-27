@@ -77,6 +77,7 @@ set(APP_SOURCES
     Camera.cpp
     Collision.cpp
     TextureAtlas.cpp
+    BlockIconRasterizer.cpp
     BiomeColorManager.cpp
     gui/GameUI.cpp
     ServerList.cpp
