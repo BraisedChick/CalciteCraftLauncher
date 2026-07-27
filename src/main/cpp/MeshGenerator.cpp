@@ -397,6 +397,8 @@ static void generateFromModel(
                 faceVerts[v].normal[0] = FACEDIR_NORMALS[dir][0];
                 faceVerts[v].normal[1] = FACEDIR_NORMALS[dir][1];
                 faceVerts[v].normal[2] = FACEDIR_NORMALS[dir][2];
+                // shade=false（cross 植物等）的面光照阶段走平光
+                faceVerts[v].shade = face.shade ? 1 : 0;
                 // uv2 默认全亮 (240, 240)
             }
 
@@ -896,10 +898,19 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         outSky = 15; outBlock = 0;
     };
 
-    // 平滑光照辅助函数：对顶点周围 4 个方块做平均
+    // 平滑光照辅助函数：对顶点周围 4 个方块做平均，双通道输出
+    //（对齐原版 AmbientOcclusionFace 的 lightmap + brightness 分离设计）：
+    // - outSky/outBlock：光照贴图 UV2，只平均非黑样本（原版 blend() 用
+    //   中心光顶替 0 值项，等价于剔除实体内部样本）
+    // - outAO：AO 亮度乘数（乘进顶点 color），实体样本贡献 0.2、空气贡献
+    //   1.0 取平均（原版 getShadeBrightness 实体=0.2）
+    // 实体判定复用光照采样结果（sky==0 且 block==0 即实体内部，光照引擎
+    // 不向不透明方块内传播），相比原版单独查 BlockState 零额外查询开销。
+    // 完全黑暗区域无法区分实体与黑暗空气，此时 AO=1，保留光照贴图
+    // minAmbient 保底的可视性
     auto getSmoothLight = [&](float wx, float wy, float wz,
                                float nx, float ny, float nz,
-                               uint8_t& outSky, uint8_t& outBlock) {
+                               uint8_t& outSky, uint8_t& outBlock, float& outAO) {
         int fnx = (nx > 0.5f) ? 1 : ((nx < -0.5f) ? -1 : 0);
         int fny = (ny > 0.5f) ? 1 : ((ny < -0.5f) ? -1 : 0);
         int fnz = (nz > 0.5f) ? 1 : ((nz < -0.5f) ? -1 : 0);
@@ -909,39 +920,85 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         int vz = (int)floorf(wz);
 
         int sumSky = 0, sumBlock = 0, count = 0;
+        int total = 0, solidCount = 0;
         auto smpl = [&](int sx, int sy, int sz) {
             uint8_t sk, bk;
             getLightAtWorld(sx, sy, sz, sk, bk);
+            total++;
+            if (sk == 0 && bk == 0) {  // 实体内部（或黑暗空气）
+                solidCount++;
+                return;
+            }
             sumSky += sk;
             sumBlock += bk;
             count++;
         };
 
-        // 根据面法线方向，采样顶点周围的 4 个方块（采样面法线指向的空气侧）
-        // 偏移量：正方向面=max(fn,0)=1，负方向面=max(fn,0)=0
-        int ox = (fnx > 0) ? 1 : 0;
-        int oy = (fny > 0) ? 1 : 0;
-        int oz = (fnz > 0) ? 1 : 0;
+        // 内部面检测：土径 15/16 顶面、火把侧面等面不在方块整数边界上
+        //（沿法线轴坐标不是整数），按边界面规则偏移采样会取到邻居列
+        // 甚至实体方块内部。这类面改在“法线前方一层”做平滑采样：
+        // - 法线轴：采样点沿法线推 0.1 再 floor，落在面所朝向的前方格
+        // - 切向轴：顶点恰在整数边界（面的角点）则跨界取两格平均，
+        //   否则只取自身格——土径顶面角点邻接高一格的实体方块时
+        //   得到柔和阴影而非全黑（单点采样 floor 会正好落进该实体内部）
+        //（cross 植物 shade=false，在 applyLight 就走了平光，不进这里）
+        float axisCoord = (fnx != 0) ? wx : ((fny != 0) ? wy : wz);
+        float axisFrac = axisCoord - floorf(axisCoord);
+        if (axisFrac > 0.001f && axisFrac < 0.999f) {
+            auto axisRange = [](float w, int fn, int& lo, int& hi) {
+                if (fn != 0) {  // 法线轴：面前方单格
+                    lo = hi = (int)floorf(w + fn * 0.1f);
+                    return;
+                }
+                float fr = w - floorf(w);
+                if (fr < 0.001f || fr > 0.999f) {  // 切向整数边界：跨界两格
+                    hi = (int)floorf(w + 0.5f);
+                    lo = hi - 1;
+                } else {  // 切向格内：单格
+                    lo = hi = (int)floorf(w);
+                }
+            };
+            int x0, x1, y0, y1, z0, z1;
+            axisRange(wx, fnx, x0, x1);
+            axisRange(wy, fny, y0, y1);
+            axisRange(wz, fnz, z0, z1);
+            // 实体样本不拖黑 lightmap，只作为 AO 遮挡计入——土径顶面
+            // 角点旁高一格的草方块产生柔和 AO 阴影而非全黑交界
+            for (int sx = x0; sx <= x1; sx++)
+                for (int sy = y0; sy <= y1; sy++)
+                    for (int sz = z0; sz <= z1; sz++)
+                        smpl(sx, sy, sz);
+        } else {
+            // 边界对齐面：根据面法线方向，采样顶点周围的 4 个方块（采样面法线指向的空气侧）
+            // 偏移量：正方向面=max(fn,0)=1，负方向面=max(fn,0)=0
+            int ox = (fnx > 0) ? 1 : 0;
+            int oy = (fny > 0) ? 1 : 0;
+            int oz = (fnz > 0) ? 1 : 0;
 
-        if (fny != 0) {  // Y 面（TOP/BOTTOM）：在 XZ 平面采样
-            for (int dx = 0; dx <= 1; dx++)
-                for (int dz = 0; dz <= 1; dz++)
-                    smpl(vx - 1 + dx, vy - 1 + oy, vz - 1 + dz);
-        } else if (fnx != 0) {  // X 面（EAST/WEST）：在 YZ 平面采样
-            for (int dy = 0; dy <= 1; dy++)
-                for (int dz = 0; dz <= 1; dz++)
-                    smpl(vx - 1 + ox, vy - 1 + dy, vz - 1 + dz);
-        } else {  // Z 面（SOUTH/NORTH）：在 XY 平面采样
-            for (int dx = 0; dx <= 1; dx++)
+            if (fny != 0) {  // Y 面（TOP/BOTTOM）：在 XZ 平面采样
+                for (int dx = 0; dx <= 1; dx++)
+                    for (int dz = 0; dz <= 1; dz++)
+                        smpl(vx - 1 + dx, vy - 1 + oy, vz - 1 + dz);
+            } else if (fnx != 0) {  // X 面（EAST/WEST）：在 YZ 平面采样
                 for (int dy = 0; dy <= 1; dy++)
-                    smpl(vx - 1 + dx, vy - 1 + dy, vz - 1 + oz);
+                    for (int dz = 0; dz <= 1; dz++)
+                        smpl(vx - 1 + ox, vy - 1 + dy, vz - 1 + dz);
+            } else {  // Z 面（SOUTH/NORTH）：在 XY 平面采样
+                for (int dx = 0; dx <= 1; dx++)
+                    for (int dy = 0; dy <= 1; dy++)
+                        smpl(vx - 1 + dx, vy - 1 + dy, vz - 1 + oz);
+            }
         }
 
         if (count > 0) {
             outSky = (uint8_t)((sumSky + count/2) / count);
             outBlock = (uint8_t)((sumBlock + count/2) / count);
+            // 每个实体样本按原版 getShadeBrightness 贡献 0.2 亮度
+            outAO = (count + 0.2f * solidCount) / (float)total;
         } else {
-            outSky = 15; outBlock = 0;
+            // 周围全黑（洞穴深处）：输出真实的黑，AO 不再叠加变暗
+            outSky = 0; outBlock = 0;
+            outAO = 1.0f;
         }
     };
 
@@ -950,10 +1007,18 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         auto applyLight = [&](std::vector<Vertex>& verts) {
             for (auto& vert : verts) {
                 uint8_t sky = 15, block = 0;
-                if (smoothLighting) {
+                // shade=false（cross 植物等）强制平光：取顶点所在格自身光照，
+                // 四面亮度统一，与原版 ambientocclusion=false 行为一致
+                if (smoothLighting && vert.shade) {
+                    float ao = 1.0f;
                     getSmoothLight(vert.pos[0], vert.pos[1], vert.pos[2],
                                    vert.normal[0], vert.normal[1], vert.normal[2],
-                                   sky, block);
+                                   sky, block, ao);
+                    if (ao < 1.0f) {  // AO 亮度乘进顶点 color（着色器 Color×lightmap）
+                        vert.color[0] = (uint8_t)(vert.color[0] * ao + 0.5f);
+                        vert.color[1] = (uint8_t)(vert.color[1] * ao + 0.5f);
+                        vert.color[2] = (uint8_t)(vert.color[2] * ao + 0.5f);
+                    }
                 } else {
                     int wx = (int)floorf(vert.pos[0]);
                     int wy = (int)floorf(vert.pos[1]);
