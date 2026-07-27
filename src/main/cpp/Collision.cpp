@@ -233,8 +233,8 @@ void Collision::tick() {
     // 重力在 Y 轴移动后应用，保证跳跃 tick 使用完整跳跃速度
     float preVelY = velocity.y;
 
-    // Y轴（垂直优先）
-    if (velocity.y != 0.0f && !isFlying) {
+    // Y轴（垂直优先）——飞行时同样检测（原版仅旁观者 noClip 穿墙，上方已早退）
+    if (velocity.y != 0.0f) {
         AABB box = getPlayerAABB().offset(0.0f, velocity.y, 0.0f);
         int minBX = (int)floorf(box.minX);
         int maxBX = (int)floorf(box.maxX + 1e-5f);
