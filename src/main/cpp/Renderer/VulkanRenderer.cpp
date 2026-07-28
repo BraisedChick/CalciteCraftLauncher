@@ -45,24 +45,10 @@ VulkanRenderer::VulkanRenderer()
       device(VK_NULL_HANDLE),
       swapchain(VK_NULL_HANDLE),
       renderPass(VK_NULL_HANDLE),
-      descriptorSetLayout(VK_NULL_HANDLE),
-      pipelineLayout(VK_NULL_HANDLE),
-      graphicsPipeline(VK_NULL_HANDLE),
       commandPool(VK_NULL_HANDLE),
-      vertexBuffer(VK_NULL_HANDLE),
-      vertexBufferMemory(VK_NULL_HANDLE),
-      indexBuffer(VK_NULL_HANDLE),
-      indexBufferMemory(VK_NULL_HANDLE),
-      uniformBuffer(VK_NULL_HANDLE),
-      uniformBufferMemory(VK_NULL_HANDLE),
-      uniformBufferMapped(nullptr),
-      descriptorPool(VK_NULL_HANDLE),
-      descriptorSet(VK_NULL_HANDLE),
       imageAvailableSemaphore(VK_NULL_HANDLE),
       renderFinishedSemaphore(VK_NULL_HANDLE),
-      inFlightFence(VK_NULL_HANDLE),
-      vertexCount(0),
-      indexCount(0) {
+      inFlightFence(VK_NULL_HANDLE) {
 }
 
 VulkanRenderer::~VulkanRenderer() {
@@ -81,66 +67,13 @@ bool VulkanRenderer::initialize(ANativeWindow* window, int width, int height) {
     if (!createSwapchain(width, height)) return false;
     if (!createImageViews()) return false;
     if (!createRenderPass()) return false;
-    if (!createDescriptorSetLayout()) return false;
-    if (!createGraphicsPipeline()) return false;
     if (!createDepthResources()) return false;
     if (!createFramebuffers()) return false;
     if (!createCommandPool()) return false;
-
-    // 创建地面网格（10x10的格子）
-    std::vector<Vertex> vertices;
-    std::vector<uint32_t> indices;
-
-    float gridSize = 20.0f;  // 网格大小
-    int gridDivisions = 20;  // 分割数
-    float step = gridSize / gridDivisions;
-
-    // 生成顶点（与 OpenGL 完全一致）
-    for (int z = 0; z <= gridDivisions; z++) {
-        for (int x = 0; x <= gridDivisions; x++) {
-            Vertex vertex;
-            vertex.pos[0] = -gridSize/2.0f + x * step;  // X
-            vertex.pos[1] = 0.0f;  // Y = 0（地面高度）
-            vertex.pos[2] = -gridSize/2.0f + z * step;  // Z
-
-            // 纹理坐标（重复平铺）
-            vertex.texCoord[0] = (float)x / gridDivisions * 10.0f;
-            vertex.texCoord[1] = (float)z / gridDivisions * 10.0f;
-
-            vertices.push_back(vertex);
-        }
-    }
-
-    // 生成索引（三角形带）
-    for (int z = 0; z < gridDivisions; z++) {
-        for (int x = 0; x < gridDivisions; x++) {
-            uint32_t topLeft = z * (gridDivisions + 1) + x;
-            uint32_t topRight = topLeft + 1;
-            uint32_t bottomLeft = (z + 1) * (gridDivisions + 1) + x;
-            uint32_t bottomRight = bottomLeft + 1;
-
-            // 第一个三角形
-            indices.push_back(topLeft);
-            indices.push_back(bottomLeft);
-            indices.push_back(topRight);
-
-            // 第二个三角形
-            indices.push_back(topRight);
-            indices.push_back(bottomLeft);
-            indices.push_back(bottomRight);
-        }
-    }
-
-    if (!createVertexBuffer(vertices)) return false;
-    if (!createIndexBuffer(indices)) return false;
-    if (!createUniformBuffer()) return false;
-    if (!createDescriptorPool()) return false;
-    if (!createDescriptorSets()) return false;
     if (!createCommandBuffers()) return false;
     if (!createSyncObjects()) return false;
 
-    LOGI("Vulkan renderer initialized successfully with %zu vertices and %zu indices",
-         vertices.size(), indices.size());
+    LOGI("Vulkan renderer initialized successfully");
     return true;
 }
 bool VulkanRenderer::createDepthResources() {
@@ -205,36 +138,6 @@ void VulkanRenderer::cleanup() {
 
     cleanupSwapchain();
 
-    if (uniformBuffer != VK_NULL_HANDLE) {
-        vmaDestroyBuffer(allocator, uniformBuffer, uniformBufferMemory);
-        uniformBuffer = VK_NULL_HANDLE;
-        uniformBufferMemory = VK_NULL_HANDLE;
-        uniformBufferMapped = nullptr;
-    }
-
-    if (vertexBuffer != VK_NULL_HANDLE) {
-        vmaDestroyBuffer(allocator, vertexBuffer, vertexBufferMemory);
-        vertexBuffer = VK_NULL_HANDLE;
-        vertexBufferMemory = VK_NULL_HANDLE;
-    }
-
-    // 修复存量泄漏：旧代码从未释放过 indexBuffer
-    if (indexBuffer != VK_NULL_HANDLE) {
-        vmaDestroyBuffer(allocator, indexBuffer, indexBufferMemory);
-        indexBuffer = VK_NULL_HANDLE;
-        indexBufferMemory = VK_NULL_HANDLE;
-    }
-
-    if (descriptorSetLayout != VK_NULL_HANDLE) {
-        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
-        descriptorSetLayout = VK_NULL_HANDLE;
-    }
-
-    if (pipelineLayout != VK_NULL_HANDLE) {
-        vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-        pipelineLayout = VK_NULL_HANDLE;
-    }
-
     if (renderPass != VK_NULL_HANDLE) {
         vkDestroyRenderPass(device, renderPass, nullptr);
         renderPass = VK_NULL_HANDLE;
@@ -278,11 +181,6 @@ void VulkanRenderer::cleanup() {
 void VulkanRenderer::cleanupSwapchain() {
     // 区块管线依赖 renderPass，随 swapchain 一起销毁（recreate 路径按需重建）
     destroyChunkPipelines();
-
-    if (graphicsPipeline != VK_NULL_HANDLE) {
-        vkDestroyPipeline(device, graphicsPipeline, nullptr);
-        graphicsPipeline = VK_NULL_HANDLE;
-    }
 
     for (auto framebuffer : swapchainFramebuffers) {
         vkDestroyFramebuffer(device, framebuffer, nullptr);
@@ -329,7 +227,6 @@ void VulkanRenderer::recreateSwapchain(int width, int height) {
     createImageViews();
     createDepthResources();  // 重新创建深度资源
     createRenderPass();
-    createGraphicsPipeline();
     if (chunkResourcesReady) createChunkPipelines();
     createFramebuffers();
     createCommandBuffers();
@@ -355,7 +252,6 @@ bool VulkanRenderer::recreateSurface(ANativeWindow* window, int width, int heigh
     if (!createImageViews()) return false;
     if (!createDepthResources()) return false;
     if (!createRenderPass()) return false;
-    if (!createGraphicsPipeline()) return false;
     if (chunkResourcesReady) createChunkPipelines();
     if (!createFramebuffers()) return false;
     if (!createCommandBuffers()) return false;
@@ -1648,9 +1544,6 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
     // Surface 已失效（切屏）：跳过渲染防止崩溃
     if (!surfaceValid) return;
 
-    // 每帧更新 uniform buffer
-    updateUniformBuffer(cameraX, cameraY, cameraZ, pitch, yaw);
-
     if (frameCount <= 5 || frameCount % 60 == 0) {
         LOGI("=== Rendering frame %d ===", frameCount);
         LOGI("Camera: pos=(%.1f, %.1f, %.1f), pitch=%.1f, yaw=%.1f",
@@ -1846,47 +1739,6 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
         // 若因此重建会每帧 vkDeviceWaitIdle+全量重建导致帧率暴跌
         LOGE("Failed to present image: %d", result);
     }
-}
-
-void VulkanRenderer::updateUniformBuffer(float cameraX, float cameraY, float cameraZ,
-                                         float pitch, float yaw) {
-    if (!uniformBufferMapped) return;
-
-    struct UniformBufferObject {
-        float model[16];
-        float view[16];
-        float proj[16];
-    } ubo{};
-
-    // 模型矩阵（单位矩阵）
-    glm::mat4 model(1.0f);
-    memcpy(ubo.model, &model[0][0], sizeof(float) * 16);
-
-    // 视图矩阵（Camera 统一数学，与 GL 后端一致：含眼睛高度 1.62 与俯仰角限制）
-    glm::mat4 view = Camera::computeViewMatrix(cameraX, cameraY, cameraZ, pitch, yaw);
-    memcpy(ubo.view, &view[0][0], sizeof(float) * 16);
-
-    // 透视投影矩阵（Vulkan 坐标系：Y 轴向下，Z 轴 [0, 1]）
-    float aspect = (float)swapchainExtent.width / (float)swapchainExtent.height;
-    glm::mat4 proj = Camera::computeProjectionMatrix(70.0f, aspect, 0.1f, 100.0f);
-    proj[1][1] *= -1.0f;  // 翻转 Y 轴（Vulkan NDC Y 轴向下）
-    memcpy(ubo.proj, &proj[0][0], sizeof(float) * 16);
-
-    memcpy(uniformBufferMapped, &ubo, sizeof(ubo));
-    // 非 coherent 内存兑底（coherent 上为空操作）
-    vmaFlushAllocation(allocator, uniformBufferMemory, 0, sizeof(ubo));
-}
-
-void VulkanRenderer::updateVertexBuffer(const std::vector<Vertex>& vertices) {
-    vkDeviceWaitIdle(device);
-
-    if (vertexBuffer != VK_NULL_HANDLE) {
-        vmaDestroyBuffer(allocator, vertexBuffer, vertexBufferMemory);
-        vertexBuffer = VK_NULL_HANDLE;
-        vertexBufferMemory = VK_NULL_HANDLE;
-    }
-
-    createVertexBuffer(vertices);
 }
 
 std::vector<char> VulkanRenderer::readFile(const std::string& filename) {
@@ -2283,177 +2135,6 @@ bool VulkanRenderer::createRenderPass() {
     return true;
 }
 
-bool VulkanRenderer::createDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding uboLayoutBinding{};
-    uboLayoutBinding.binding = 0;
-    uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    uboLayoutBinding.descriptorCount = 1;
-    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-
-    VkDescriptorSetLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &uboLayoutBinding;
-
-    if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
-        LOGE("Failed to create descriptor set layout");
-        return false;
-    }
-
-    LOGI("Descriptor set layout created");
-    return true;
-}
-
-bool VulkanRenderer::createGraphicsPipeline() {
-    auto vertShaderCode = readFile("shaders/shader_vert.spv");
-    auto fragShaderCode = readFile("shaders/shader_frag.spv");
-
-    VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
-    VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
-
-    if (vertShaderModule == VK_NULL_HANDLE || fragShaderModule == VK_NULL_HANDLE) {
-        LOGE("Failed to create shader modules");
-        return false;
-    }
-
-    VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
-    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    vertShaderStageInfo.module = vertShaderModule;
-    vertShaderStageInfo.pName = "main";
-
-    VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
-    fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    fragShaderStageInfo.module = fragShaderModule;
-    fragShaderStageInfo.pName = "main";
-
-    VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
-
-    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
-    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-
-    VkVertexInputBindingDescription bindingDescription{};
-    bindingDescription.binding = 0;
-    bindingDescription.stride = sizeof(Vertex);
-    bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-    VkVertexInputAttributeDescription attributeDescriptions[2];
-    attributeDescriptions[0].binding = 0;
-    attributeDescriptions[0].location = 0;
-    attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attributeDescriptions[0].offset = offsetof(Vertex, pos);
-
-    attributeDescriptions[1].binding = 0;
-    attributeDescriptions[1].location = 1;
-    attributeDescriptions[1].format = VK_FORMAT_R32G32_SFLOAT;
-    attributeDescriptions[1].offset = offsetof(Vertex, texCoord);
-
-    vertexInputInfo.vertexBindingDescriptionCount = 1;
-    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-    vertexInputInfo.vertexAttributeDescriptionCount = 2;
-    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions;
-
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    inputAssembly.primitiveRestartEnable = VK_FALSE;
-
-    VkViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = (float)swapchainExtent.width;
-    viewport.height = (float)swapchainExtent.height;
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-
-    VkRect2D scissor{};
-    scissor.offset = {0, 0};
-    scissor.extent = swapchainExtent;
-
-    VkPipelineViewportStateCreateInfo viewportState{};
-    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportState.viewportCount = 1;
-    viewportState.pViewports = &viewport;
-    viewportState.scissorCount = 1;
-    viewportState.pScissors = &scissor;
-
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.depthClampEnable = VK_FALSE;
-    rasterizer.rasterizerDiscardEnable = VK_FALSE;
-    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_NONE;
-    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
-    rasterizer.depthBiasEnable = VK_FALSE;
-
-    VkPipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.sampleShadingEnable = VK_FALSE;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    // 深度 stencil 状态
-    VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_TRUE;   // 启用深度测试
-    depthStencil.depthWriteEnable = VK_TRUE;  // 启用深度写入
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;  // 对齐原版全局 LEQUAL（共面几何后画者覆盖）
-    depthStencil.depthBoundsTestEnable = VK_FALSE;
-    depthStencil.stencilTestEnable = VK_FALSE;
-
-    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    colorBlendAttachment.blendEnable = VK_FALSE;
-
-    VkPipelineColorBlendStateCreateInfo colorBlending{};
-    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    colorBlending.logicOpEnable = VK_FALSE;
-    colorBlending.attachmentCount = 1;
-    colorBlending.pAttachments = &colorBlendAttachment;
-
-    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
-
-    if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
-        LOGE("Failed to create pipeline layout");
-        vkDestroyShaderModule(device, fragShaderModule, nullptr);
-        vkDestroyShaderModule(device, vertShaderModule, nullptr);
-        return false;
-    }
-
-    VkGraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount = 2;
-    pipelineInfo.pStages = shaderStages;
-    pipelineInfo.pVertexInputState = &vertexInputInfo;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = &depthStencil;  // 添加深度 stencil 状态
-    pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.layout = pipelineLayout;
-    pipelineInfo.renderPass = renderPass;
-    pipelineInfo.subpass = 0;
-
-    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
-        LOGE("Failed to create graphics pipeline");
-        vkDestroyShaderModule(device, fragShaderModule, nullptr);
-        vkDestroyShaderModule(device, vertShaderModule, nullptr);
-        return false;
-    }
-
-    vkDestroyShaderModule(device, fragShaderModule, nullptr);
-    vkDestroyShaderModule(device, vertShaderModule, nullptr);
-
-    LOGI("Graphics pipeline created");
-    return true;
-}
-
 bool VulkanRenderer::createFramebuffers() {
     swapchainFramebuffers.resize(swapchainImageViews.size());
 
@@ -2493,164 +2174,6 @@ bool VulkanRenderer::createCommandPool() {
     }
 
     LOGI("Command pool created");
-    return true;
-}
-
-bool VulkanRenderer::createVertexBuffer(const std::vector<Vertex>& vertices) {
-    VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
-    vertexCount = static_cast<uint32_t>(vertices.size());
-
-    // staging：VMA 一步完成创建+上传
-    VkBuffer stagingBuffer;
-    VmaAllocation stagingAllocation;
-    if (!createHostBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vertices.data(), bufferSize,
-                          stagingBuffer, stagingAllocation)) {
-        LOGE("Failed to create staging buffer");
-        return false;
-    }
-
-    // 目标 buffer：AUTO 且无 host 访问标志 → VMA 自动选 DEVICE_LOCAL
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = bufferSize;
-    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    VmaAllocationCreateInfo vmaInfo{};
-    vmaInfo.usage = VMA_MEMORY_USAGE_AUTO;
-    if (vmaCreateBuffer(allocator, &bufferInfo, &vmaInfo, &vertexBuffer, &vertexBufferMemory, nullptr) != VK_SUCCESS) {
-        LOGE("Failed to create vertex buffer");
-        vmaDestroyBuffer(allocator, stagingBuffer, stagingAllocation);
-        return false;
-    }
-
-    VkCommandBuffer cmd = beginOneTimeCommands();
-    VkBufferCopy copyRegion{};
-    copyRegion.size = bufferSize;
-    vkCmdCopyBuffer(cmd, stagingBuffer, vertexBuffer, 1, &copyRegion);
-    endOneTimeCommands(cmd);
-
-    vmaDestroyBuffer(allocator, stagingBuffer, stagingAllocation);
-
-    LOGI("Vertex buffer created with %u vertices", vertexCount);
-    return true;
-}
-
-bool VulkanRenderer::createIndexBuffer(const std::vector<uint32_t>& indices) {
-    VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
-    indexCount = static_cast<uint32_t>(indices.size());
-
-    // staging：VMA 一步完成创建+上传
-    VkBuffer stagingBuffer;
-    VmaAllocation stagingAllocation;
-    if (!createHostBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, indices.data(), bufferSize,
-                          stagingBuffer, stagingAllocation)) {
-        LOGE("Failed to create staging buffer");
-        return false;
-    }
-
-    // 目标 buffer：AUTO 且无 host 访问标志 → VMA 自动选 DEVICE_LOCAL
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = bufferSize;
-    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    VmaAllocationCreateInfo vmaInfo{};
-    vmaInfo.usage = VMA_MEMORY_USAGE_AUTO;
-    if (vmaCreateBuffer(allocator, &bufferInfo, &vmaInfo, &indexBuffer, &indexBufferMemory, nullptr) != VK_SUCCESS) {
-        LOGE("Failed to create index buffer");
-        vmaDestroyBuffer(allocator, stagingBuffer, stagingAllocation);
-        return false;
-    }
-
-    VkCommandBuffer cmd = beginOneTimeCommands();
-    VkBufferCopy copyRegion{};
-    copyRegion.size = bufferSize;
-    vkCmdCopyBuffer(cmd, stagingBuffer, indexBuffer, 1, &copyRegion);
-    endOneTimeCommands(cmd);
-
-    vmaDestroyBuffer(allocator, stagingBuffer, stagingAllocation);
-
-    LOGI("Index buffer created with %u indices", indexCount);
-    return true;
-}
-
-bool VulkanRenderer::createUniformBuffer() {
-    VkDeviceSize bufferSize = sizeof(float) * 16 * 3;
-
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = bufferSize;
-    bufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    // MAPPED_BIT：VMA 负责持久映射，映射指针从 VmaAllocationInfo 取，替代手动 vkMapMemory
-    VmaAllocationCreateInfo vmaInfo{};
-    vmaInfo.usage = VMA_MEMORY_USAGE_AUTO;
-    vmaInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
-                    VMA_ALLOCATION_CREATE_MAPPED_BIT;
-
-    VmaAllocationInfo allocResult{};
-    if (vmaCreateBuffer(allocator, &bufferInfo, &vmaInfo, &uniformBuffer, &uniformBufferMemory, &allocResult) != VK_SUCCESS) {
-        LOGE("Failed to create uniform buffer");
-        return false;
-    }
-    uniformBufferMapped = allocResult.pMappedData;
-
-    LOGI("Uniform buffer created");
-    return true;
-}
-
-bool VulkanRenderer::createDescriptorPool() {
-    VkDescriptorPoolSize poolSize{};
-    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSize.descriptorCount = 1;
-
-    VkDescriptorPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
-    poolInfo.maxSets = 1;
-
-    if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
-        LOGE("Failed to create descriptor pool");
-        return false;
-    }
-
-    LOGI("Descriptor pool created");
-    return true;
-}
-
-bool VulkanRenderer::createDescriptorSets() {
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = descriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &descriptorSetLayout;
-
-    if (vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet) != VK_SUCCESS) {
-        LOGE("Failed to allocate descriptor sets");
-        return false;
-    }
-
-    VkDescriptorBufferInfo bufferInfo{};
-    bufferInfo.buffer = uniformBuffer;
-    bufferInfo.offset = 0;
-    bufferInfo.range = VK_WHOLE_SIZE;
-
-    VkWriteDescriptorSet descriptorWrite{};
-    descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrite.dstSet = descriptorSet;
-    descriptorWrite.dstBinding = 0;
-    descriptorWrite.dstArrayElement = 0;
-    descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    descriptorWrite.descriptorCount = 1;
-    descriptorWrite.pBufferInfo = &bufferInfo;
-
-    vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
-
-    LOGI("Descriptor sets created");
     return true;
 }
 

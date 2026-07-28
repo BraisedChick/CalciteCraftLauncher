@@ -26,9 +26,6 @@ public:
     bool initialize(ANativeWindow* window, int width, int height);
     void cleanup();
     void render(float cameraX, float cameraY, float cameraZ, float pitch, float yaw);
-    void updateUniformBuffer(float cameraX, float cameraY, float cameraZ,
-                             float pitch, float yaw);
-    void updateVertexBuffer(const std::vector<Vertex>& vertices);
     void recreateSwapchain(int width, int height);
 
     // ImGui Vulkan 后端接入（主界面渲染，第一步）
@@ -107,16 +104,9 @@ private:
     bool createSwapchain(int width, int height);
     bool createImageViews();
     bool createRenderPass();
-    bool createDescriptorSetLayout();
-    bool createGraphicsPipeline();
     bool createFramebuffers();
     bool createCommandPool();
     bool createDepthResources();
-    bool createVertexBuffer(const std::vector<Vertex>& vertices);
-    bool createIndexBuffer(const std::vector<uint32_t>& indices);
-    bool createUniformBuffer();
-    bool createDescriptorPool();
-    bool createDescriptorSets();
     bool createCommandBuffers();
     bool createSyncObjects();
 
@@ -196,9 +186,6 @@ private:
 
     // Pipeline
     VkRenderPass renderPass;
-    VkDescriptorSetLayout descriptorSetLayout;
-    VkPipelineLayout pipelineLayout;
-    VkPipeline graphicsPipeline;
 
     // Framebuffers
     std::vector<VkFramebuffer> swapchainFramebuffers;
@@ -206,25 +193,6 @@ private:
     // Command buffers
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
-
-    // Vertex buffer
-    VkBuffer vertexBuffer;
-    VmaAllocation vertexBufferMemory;
-    uint32_t vertexCount = 0;
-
-    // Index buffer
-    VkBuffer indexBuffer;
-    VmaAllocation indexBufferMemory;
-    uint32_t indexCount = 0;
-
-    // Uniform buffer
-    VkBuffer uniformBuffer;
-    VmaAllocation uniformBufferMemory;
-    void* uniformBufferMapped;
-
-    // Descriptor sets
-    VkDescriptorPool descriptorPool;
-    VkDescriptorSet descriptorSet;
 
     // Sync objects
     VkSemaphore imageAvailableSemaphore;
