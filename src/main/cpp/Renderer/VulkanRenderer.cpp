@@ -1836,7 +1836,14 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
     presentInfo.pImageIndices = &imageIndex;
 
     result = vkQueuePresentKHR(presentQueue, &presentInfo);
-    if (result != VK_SUCCESS) {
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+        LOGI("Swapchain out of date after present, recreating");
+        recreateSwapchain(screenWidth, screenHeight);
+    } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+        // SUBOPTIMAL(1000001003) 静默接受：成功码，图像已呈现。
+        // 本项目 preTransform 故意声明 IDENTITY 让合成器负责旋转（见 createSwapchain），
+        // 与 currentTransform（如 ROTATE_90）不符是设计内常态，重建无法消除，
+        // 若因此重建会每帧 vkDeviceWaitIdle+全量重建导致帧率暴跌
         LOGE("Failed to present image: %d", result);
     }
 }
