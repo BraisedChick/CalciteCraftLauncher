@@ -418,12 +418,14 @@ public class LauncherActivity extends Activity {
                 }
             }
         }
-        // 选中变化时保存
+        // 选中变化时保存并立即刷新启动面板（无需回主页才生效）
         accountAdapter.setOnAccountSelectedListener((pos, acc) -> {
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .edit()
                 .putString(KEY_SELECTED_ACCOUNT, acc.getUuid())
                 .apply();
+            updatePanelDisplay();
+            savePreferences();
         });
         accountAdapter.setOnAccountDeleteListener(position -> {
             accounts.remove(position);
@@ -431,6 +433,7 @@ public class LauncherActivity extends Activity {
             accountAdapter.setSelectedPosition(accountAdapter.getSelectedPosition());
             accountAdapter.notifyDataSetChanged();
             updatePanelDisplay();
+            savePreferences();
         });
         listView.setAdapter(accountAdapter);
     }
