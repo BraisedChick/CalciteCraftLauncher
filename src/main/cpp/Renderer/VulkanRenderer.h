@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include <atomic>
+#include <time.h>
 #include <android/native_window.h>
 #include <android/asset_manager.h>
 #include "CommonTypes.h"
@@ -56,6 +57,11 @@ public:
     // 渲染距离（视频设置，单位区块；换算与 GLRenderer 一致：farPlane = chunks * 16）
     void setRenderDistance(int chunks) { chunkFar = chunks * 16.0f; }
     int getRenderDistance() const { return static_cast<int>(chunkFar / 16.0f); }
+
+    // 最大帧率控制（三段式语义与 GLRenderer 一致：0=垂直同步, 1-255=fps值, 256=无限制）
+    // swapchain 固定 FIFO 自带 vsync：0/256 两档交给 vsync 节拍，1-255 由 CPU 绝对时间限帧
+    void setMaxFps(int fps);
+    int getMaxFps() const { return maxFps; }
 
 private:
     // ===== 区块渲染（消费图形 API 无关的 ChunkMeshScheduler 产出）=====
@@ -158,6 +164,14 @@ private:
 
     // 远平面/渲染距离（视频设置驱动，setRenderDistance 修改，对应 GLRenderer::farPlane）
     float chunkFar = 500.0f;
+
+    // 帧率限制（对应 GLRenderer 的绝对时间限帧：TIMER_ABSTIME，零漂移，present 后调用）
+    int maxFps = 0;
+    long long frameIntervalNs = 0;
+    struct timespec frameTimeBase = {0, 0};
+    bool frameTimeBaseValid = false;
+    static constexpr long long NANOSECONDS_PER_SECOND = 1000000000LL;
+    void limitFramerate();
 
     // Core Vulkan objects
     VkInstance instance;

@@ -225,6 +225,8 @@ bool GameUI::init() {
         auto* engine = ClientEngine::getInstance();
         if (engine && engine->getRenderer()) {
             engine->getRenderer()->setMaxFps(fps);
+        } else if (engine && engine->getVulkanRenderer()) {
+            engine->getVulkanRenderer()->setMaxFps(fps);
         }
     });
 

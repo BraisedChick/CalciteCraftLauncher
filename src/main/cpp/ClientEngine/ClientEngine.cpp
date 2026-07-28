@@ -82,6 +82,7 @@ void ClientEngine::setupUICallbacks() {
                 client->getRenderer()->setMaxFps(ui.getMaxFps());
             } else if (client->getVulkanRenderer()) {
                 client->getVulkanRenderer()->setRenderDistance(GameUI::getInstance().getRenderDistance());
+                client->getVulkanRenderer()->setMaxFps(GameUI::getInstance().getMaxFps());
             }
 
             // 保持 CONNECTING 状态（显示 ConnectingScreen），登录成功后由

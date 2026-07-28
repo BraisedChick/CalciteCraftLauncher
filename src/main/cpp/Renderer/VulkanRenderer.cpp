@@ -257,6 +257,8 @@ bool VulkanRenderer::recreateSurface(ANativeWindow* window, int width, int heigh
     if (!createCommandBuffers()) return false;
 
     surfaceValid = true;
+    // 重置限帧基准（Surface 重建后时间线不连续）
+    frameTimeBaseValid = false;
     LOGI("Vulkan surface recreated: %dx%d", width, height);
     return true;
 }
@@ -1739,6 +1741,46 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
         // 若因此重建会每帧 vkDeviceWaitIdle+全量重建导致帧率暴跌
         LOGE("Failed to present image: %d", result);
     }
+
+    // 帧率限制（统一使用绝对时间，与 GLRenderer 帧末 limitFramerate 对位）
+    limitFramerate();
+}
+
+void VulkanRenderer::setMaxFps(int fps) {
+    maxFps = fps;
+    // FIFO present 自带 vsync：0（垂直同步）与 256（无限制）都交给 vsync 节拍，
+    // 仅 1-255 时由 CPU 限帧（低于刷新率时生效，高于时被 vsync 封顶）
+    if (fps > 0 && fps < 256) {
+        frameIntervalNs = NANOSECONDS_PER_SECOND / fps;
+    } else {
+        frameIntervalNs = 0;
+    }
+    // 重置基准，下次限帧时重新以当前时间开始
+    frameTimeBaseValid = false;
+    LOGI("MaxFps set to %d, interval=%lld ns (Vulkan)", fps, frameIntervalNs);
+}
+
+void VulkanRenderer::limitFramerate() {
+    if (frameIntervalNs <= 0) {
+        frameTimeBaseValid = false;
+        return;
+    }
+
+    // 首次启用或刚调整 FPS，以当前时刻为起点
+    if (!frameTimeBaseValid) {
+        clock_gettime(CLOCK_MONOTONIC, &frameTimeBase);
+        frameTimeBaseValid = true;
+    }
+
+    // 计算下一帧的绝对唤醒时间
+    frameTimeBase.tv_nsec += frameIntervalNs;
+    while (frameTimeBase.tv_nsec >= NANOSECONDS_PER_SECOND) {
+        frameTimeBase.tv_nsec -= NANOSECONDS_PER_SECOND;
+        frameTimeBase.tv_sec += 1;
+    }
+
+    // 绝对时间睡眠。如果目标时间已过（渲染超时），立即返回
+    clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &frameTimeBase, nullptr);
 }
 
 std::vector<char> VulkanRenderer::readFile(const std::string& filename) {
