@@ -77,7 +77,9 @@ struct ChunkSection {
 
     // 设置某方块的光照值
     void setSkyLight(int x, int y, int z, uint8_t val) {
-        if (skyLight.size() != 2048) skyLight.resize(2048, 0);
+        // 懒分配填 15（0xFF=两个 nibble 各 15）而非 0：与 getSkyLight 缺数据
+        // 默认 15 保持一致，避免光照引擎首写把其余 4095 格从"隐含 15"塌成 0
+        if (skyLight.size() != 2048) skyLight.assign(2048, 0xFF);
         int idx = ((y & 15) * 16 + (z & 15)) * 16 + (x & 15);
         int byteIdx = idx / 2;
         int shift = (idx & 1) * 4;

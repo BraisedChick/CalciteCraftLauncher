@@ -39,9 +39,9 @@ public:
     float getSkyColorG() const { return skyG; }
     float getSkyColorB() const { return skyB; }
 
-    // ===== 客户端方块光增量传播（双队列算法）=====
-    /// 异步入队：网络线程调用，不阻塞（方块变化时对该坐标触发增量光照更新）
-    void queueBlockLightRecalc(int worldX, int worldY, int worldZ);
+    // ===== 客户端光照增量传播（双队列算法，方块光 + 天空光）=====
+    /// 异步入队：网络线程调用，不阻塞（方块变化时对该坐标同时触发方块光+天空光增量更新）
+    void queueLightRecalc(int worldX, int worldY, int worldZ);
 
     /// 取走光照更新波及的脏 chunk 列表（渲染线程调用，用于精准 remesh）
     bool pollDirtyLightChunks(std::vector<std::pair<int, int>>& outChunks);
@@ -56,7 +56,7 @@ private:
     void startWorkerThread();
     void workerLoop();
 
-    /// 增量光照更新：checkNode 收集 + 变暗/变亮两阶段 FIFO 传播（工作线程执行）
+    /// 增量光照更新：checkNode 收集 + 变暗/变亮两阶段 FIFO 传播，方块光与天空光各跑一遍（工作线程执行）
     void runLightUpdates(ChunkManager* chunkMgr, const std::vector<uint64_t>& nodes);
 
     long long worldDayTime = 6000;

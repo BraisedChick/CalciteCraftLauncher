@@ -162,12 +162,13 @@ int Light::getBlockEmission(const char* name) {
     return 0;
 }
 
-// ===== 客户端方块光增量传=====
+// ===== 客户端光照增量传播（方块光 + 天空光）=====
 //
 // 核心思路：
 // - checkNode 只入队变化点，变暗（decrease）先全部排干，变亮（increase）再排干
 // - 队列条目打包：低 4 位光值 + 6 位方向掩码 + 发光标志位，避免向来源方向回传
 // - 变暗遇到有其他光源支撑的邻居时，让其单向"补光"，无需区域清除重扫
+// - 天空光复用同一算法（processLayer 参数化），服务器快照仅作初始态，增量全靠客户端
 
 namespace {
 
@@ -187,6 +188,7 @@ inline void unpackPos(uint64_t p, int& x, int& y, int& z) {
 constexpr int DX[6] = {1, -1, 0, 0, 0, 0};
 constexpr int DY[6] = {0, 0, 1, -1, 0, 0};
 constexpr int DZ[6] = {0, 0, 0, 0, 1, -1};
+constexpr int DIR_DOWN = 3;  // DY[3] == -1，天空光垂直下落方向
 
 // --- 队列条目打包（省去形状遮挡标志）---
 // bit 0-3: fromLevel；bit 4-9: 方向掩码；bit 10: increase 来自发光源
@@ -243,7 +245,7 @@ void Light::workerLoop() {
     }
 }
 
-void Light::queueBlockLightRecalc(int worldX, int worldY, int worldZ) {
+void Light::queueLightRecalc(int worldX, int worldY, int worldZ) {
     std::lock_guard<std::mutex> lock(inputMutex);
     pendingNodes.insert(packPos(worldX, worldY, worldZ));
     inputCV.notify_one();
@@ -299,15 +301,25 @@ void Light::runLightUpdates(ChunkManager* chunkMgr, const std::vector<uint64_t>&
         return sec->getBlockLight(worldX & 15, worldY, worldZ & 15);
     };
 
+    auto getSL = [&](int worldX, int worldY, int worldZ) -> uint8_t {
+        auto* chunk = getCachedChunk(worldX >> 4, worldZ >> 4);
+        if (!chunk) return 0;                  // 未加载 chunk 不作光源，避免向卸载区灌光
+        auto& dim = chunk->dimension;
+        if (worldY >= dim.maxY) return 15;     // 虚拟天空源：世界顶以上恒为满天空光
+        if (worldY < dim.minY) return 0;
+        int si = (worldY - dim.minY) / 16;
+        if (si < 0 || si >= (int)chunk->sections.size()) return 0;
+        auto* sec = chunk->sections[si].get();
+        if (!sec) return 15;                   // 空 section 视为全亮（与快照/渲染端语义一致）
+        return sec->getSkyLight(worldX & 15, worldY, worldZ & 15);
+    };
+
     // 脏 chunk 收集：写入点所在 chunk + 跨界采样波及的相邻 chunk（平滑光照 remesh 需要）
     std::unordered_set<uint64_t> localDirty;
     auto markDirty = [&](int cx, int cz) {
         localDirty.insert(((uint64_t)(uint32_t)cx << 32) | (uint32_t)cz);
     };
-    auto setBL = [&](int worldX, int worldY, int worldZ, uint8_t val) {
-        auto* sec = getSectionAt(worldX, worldY, worldZ);
-        if (!sec) return;
-        sec->setBlockLight(worldX & 15, worldY, worldZ & 15, val);
+    auto markDirtyAround = [&](int worldX, int worldZ) {
         int cx = worldX >> 4, cz = worldZ >> 4;
         markDirty(cx, cz);
         int lx = worldX & 15, lz = worldZ & 15;
@@ -315,6 +327,18 @@ void Light::runLightUpdates(ChunkManager* chunkMgr, const std::vector<uint64_t>&
         else if (lx == 15) markDirty(cx + 1, cz);
         if (lz == 0) markDirty(cx, cz - 1);
         else if (lz == 15) markDirty(cx, cz + 1);
+    };
+    auto setBL = [&](int worldX, int worldY, int worldZ, uint8_t val) {
+        auto* sec = getSectionAt(worldX, worldY, worldZ);
+        if (!sec) return;
+        sec->setBlockLight(worldX & 15, worldY, worldZ & 15, val);
+        markDirtyAround(worldX, worldZ);
+    };
+    auto setSL = [&](int worldX, int worldY, int worldZ, uint8_t val) {
+        auto* sec = getSectionAt(worldX, worldY, worldZ);
+        if (!sec) return;
+        sec->setSkyLight(worldX & 15, worldY, worldZ & 15, val);
+        markDirtyAround(worldX, worldZ);
     };
 
     // 方块属性查询：发光等级 / 是否挡光（均为预计算元数据，O(1)）
@@ -327,93 +351,124 @@ void Light::runLightUpdates(ChunkManager* chunkMgr, const std::vector<uint64_t>&
         const auto& meta = registry->getBlockMetadata(state);
         return meta.isFullBlock && meta.isOpaque;
     };
+    // 半透光方块（水/树叶）：打断 15 级天空光的垂直无衰减下落
+    auto isDiffuse = [&](int32_t state) -> bool {
+        if (state == 0) return false;
+        const auto& meta = registry->getBlockMetadata(state);
+        return meta.isWater || meta.isLeaves;
+    };
 
-    // 双 FIFO 队列（vector + 读指针，只 push_back 不删除）
-    std::vector<QueueItem> decreaseQueue, increaseQueue;
-    size_t decHead = 0, incHead = 0;
-    auto enqueueDecrease = [&](uint64_t pos, uint32_t entry) { decreaseQueue.push_back({pos, entry}); };
-    auto enqueueIncrease = [&](uint64_t pos, uint32_t entry) { increaseQueue.push_back({pos, entry}); };
+    // ===== 单层传播：方块光与天空光共用同一套双队列算法 =====
+    // 天空光仅三处差异：
+    // 1. 无方块发光源（emission 恒 0），光源是"虚拟天空"（getSL 在世界顶以上返回 15）
+    // 2. 15 级天空光向正下方传播不衰减（skyFall），穿过水/树叶降为 14
+    // 3. 变暗依赖判定需把"正下方同为 15"视为被本格灌注（skyFall 链）
+    auto processLayer = [&](bool sky) {
+        auto getL = [&](int x, int y, int z) -> int {
+            return sky ? getSL(x, y, z) : getBL(x, y, z);
+        };
+        auto setL = [&](int x, int y, int z, uint8_t v) {
+            if (sky) setSL(x, y, z, v); else setBL(x, y, z, v);
+        };
 
-    // ===== Phase 0: checkNode=====
-    for (uint64_t node : nodes) {
-        int x, y, z;
-        unpackPos(node, x, y, z);
-        int emission = getEmission(getStateAt(x, y, z));
-        int stored = getBL(x, y, z);
-        if (emission < stored) {
-            // 发光减弱/方块变挡光：清零自身，携带旧光值全方向变暗
-            setBL(x, y, z, 0);
-            enqueueDecrease(node, decreaseAllDirections(stored));
-        } else {
-            // 向内拉光：让所有亮邻居稍后向本格单向补光
-            enqueueDecrease(node, PULL_LIGHT_IN_ENTRY);
-        }
-        if (emission > 0) {
-            enqueueIncrease(node, increaseFromEmission(emission));
-        }
-    }
+        // 双 FIFO 队列（vector + 读指针，只 push_back 不删除）
+        std::vector<QueueItem> decreaseQueue, increaseQueue;
+        size_t decHead = 0, incHead = 0;
+        auto enqueueDecrease = [&](uint64_t pos, uint32_t entry) { decreaseQueue.push_back({pos, entry}); };
+        auto enqueueIncrease = [&](uint64_t pos, uint32_t entry) { increaseQueue.push_back({pos, entry}); };
 
-    // ===== Phase 1: 排干变暗队列=====
-    while (decHead < decreaseQueue.size()) {
-        QueueItem item = decreaseQueue[decHead++];
-        int x, y, z;
-        unpackPos(item.pos, x, y, z);
-        int fromLevel = entryLevel(item.entry);
-
-        for (int d = 0; d < 6; d++) {
-            if (!(item.entry & dirBit(d))) continue;
-            int nx = x + DX[d], ny = y + DY[d], nz = z + DZ[d];
-            int k = getBL(nx, ny, nz);
-            if (k == 0) continue;
-
-            if (k <= fromLevel - 1) {
-                // 邻居是被本格照亮的：清零并继续变暗；若邻居自身发光则重新入队变亮
-                int emission = getEmission(getStateAt(nx, ny, nz));
-                setBL(nx, ny, nz, 0);
-                uint64_t npos = packPos(nx, ny, nz);
-                if (emission < k) {
-                    enqueueDecrease(npos, decreaseSkipOneDirection(k, d ^ 1));
-                }
-                if (emission > 0) {
-                    enqueueIncrease(npos, increaseFromEmission(emission));
-                }
+        // ===== Phase 0: checkNode=====
+        for (uint64_t node : nodes) {
+            int x, y, z;
+            unpackPos(node, x, y, z);
+            int emission = sky ? 0 : getEmission(getStateAt(x, y, z));
+            int stored = getL(x, y, z);
+            if (emission < stored) {
+                // 发光减弱/方块变挡光：清零自身，携带旧光值全方向变暗
+                setL(x, y, z, 0);
+                enqueueDecrease(node, decreaseAllDirections(stored));
             } else {
-                // 邻居有其他光源支撑：让它稍后朝本格方向单向补光
-                enqueueIncrease(packPos(nx, ny, nz), increaseOnlyOneDirection(k, d ^ 1));
+                // 向内拉光：让所有亮邻居稍后向本格单向补光
+                enqueueDecrease(node, PULL_LIGHT_IN_ENTRY);
+            }
+            if (emission > 0) {
+                enqueueIncrease(node, increaseFromEmission(emission));
             }
         }
-    }
 
-    // ===== Phase 2: 排干变亮队列=====
-    while (incHead < increaseQueue.size()) {
-        QueueItem item = increaseQueue[incHead++];
-        int x, y, z;
-        unpackPos(item.pos, x, y, z);
-        int stored = getBL(x, y, z);
-        int fromLevel = entryLevel(item.entry);
+        // ===== Phase 1: 排干变暗队列=====
+        while (decHead < decreaseQueue.size()) {
+            QueueItem item = decreaseQueue[decHead++];
+            int x, y, z;
+            unpackPos(item.pos, x, y, z);
+            int fromLevel = entryLevel(item.entry);
 
-        if ((item.entry & FLAG_FROM_EMISSION) && stored < fromLevel) {
-            setBL(x, y, z, (uint8_t)fromLevel);
-            stored = fromLevel;
-        }
-        // 入队后光值变过则条目失效，跳过
-        if (stored != fromLevel) continue;
+            for (int d = 0; d < 6; d++) {
+                if (!(item.entry & dirBit(d))) continue;
+                int nx = x + DX[d], ny = y + DY[d], nz = z + DZ[d];
+                int k = getL(nx, ny, nz);
+                if (k == 0) continue;
 
-        for (int d = 0; d < 6; d++) {
-            if (!(item.entry & dirBit(d))) continue;
-            int nx = x + DX[d], ny = y + DY[d], nz = z + DZ[d];
-            int k = getBL(nx, ny, nz);
-            int newLevel = fromLevel - 1;
-            if (newLevel <= k) continue;
-
-            if (blocksLight(getStateAt(nx, ny, nz))) continue;
-
-            setBL(nx, ny, nz, (uint8_t)newLevel);
-            if (newLevel > 1) {
-                enqueueIncrease(packPos(nx, ny, nz), increaseSkipOneDirection(newLevel, d ^ 1));
+                // skyFall 链：正下方同为 15 的天空光是被本格灌注的，同样视为依赖
+                bool dependent = k <= fromLevel - 1
+                              || (sky && d == DIR_DOWN && fromLevel == 15 && k == 15);
+                if (dependent) {
+                    // 邻居是被本格照亮的：清零并继续变暗；若邻居自身发光则重新入队变亮
+                    int emission = sky ? 0 : getEmission(getStateAt(nx, ny, nz));
+                    setL(nx, ny, nz, 0);
+                    uint64_t npos = packPos(nx, ny, nz);
+                    if (emission < k) {
+                        enqueueDecrease(npos, decreaseSkipOneDirection(k, d ^ 1));
+                    }
+                    if (emission > 0) {
+                        enqueueIncrease(npos, increaseFromEmission(emission));
+                    }
+                } else {
+                    // 邻居有其他光源支撑：让它稍后朝本格方向单向补光
+                    enqueueIncrease(packPos(nx, ny, nz), increaseOnlyOneDirection(k, d ^ 1));
+                }
             }
         }
-    }
+
+        // ===== Phase 2: 排干变亮队列=====
+        while (incHead < increaseQueue.size()) {
+            QueueItem item = increaseQueue[incHead++];
+            int x, y, z;
+            unpackPos(item.pos, x, y, z);
+            int stored = getL(x, y, z);
+            int fromLevel = entryLevel(item.entry);
+
+            if ((item.entry & FLAG_FROM_EMISSION) && stored < fromLevel) {
+                setL(x, y, z, (uint8_t)fromLevel);
+                stored = fromLevel;
+            }
+            // 入队后光值变过则条目失效，跳过
+            if (stored != fromLevel) continue;
+
+            for (int d = 0; d < 6; d++) {
+                if (!(item.entry & dirBit(d))) continue;
+                int nx = x + DX[d], ny = y + DY[d], nz = z + DZ[d];
+                int k = getL(nx, ny, nz);
+                int newLevel = fromLevel - 1;
+                // 15 级天空光垂直下落不衰减；可能把 k 抬回 15，不能提前拒绝
+                bool skyFall = sky && d == DIR_DOWN && fromLevel == 15;
+                if (!skyFall && newLevel <= k) continue;
+
+                int32_t nstate = getStateAt(nx, ny, nz);
+                if (blocksLight(nstate)) continue;
+                if (skyFall && !isDiffuse(nstate)) newLevel = 15;
+                if (newLevel <= k) continue;
+
+                setL(nx, ny, nz, (uint8_t)newLevel);
+                if (newLevel > 1) {
+                    enqueueIncrease(packPos(nx, ny, nz), increaseSkipOneDirection(newLevel, d ^ 1));
+                }
+            }
+        }
+    };
+
+    processLayer(false);  // 方块光
+    processLayer(true);   // 天空光
 
     // 脏 chunk 合并到输出集合，渲染线程 poll 后精准 remesh
     if (!localDirty.empty()) {

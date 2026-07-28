@@ -53,7 +53,7 @@ void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data,
                 auto chunk = m_engine->chunkManager->getChunk(chunkX, chunkZ);
                 if (chunk) {
                     chunk->setBlockState(localX, blockY, localZ, blockState);
-                    m_engine->getLight()->queueBlockLightRecalc(blockX, blockY, blockZ);
+                    m_engine->getLight()->queueLightRecalc(blockX, blockY, blockZ);
                     if (m_engine->getRenderer()) {
                         m_engine->getRenderer()->markChunkForUpdate(chunkX, chunkZ);
                     }
@@ -185,6 +185,8 @@ void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data,
                 int localY = sectionLocalIndex & 0xF;
                 int blockY = sectionY * 16 + localY;
                 chunk->setBlockState(localX, blockY, localZ, blockState);
+                // 批量方块变更同样要触发光照重算（与 BlockUpdate 对齐，修复此前缺口）
+                m_engine->getLight()->queueLightRecalc(chunkX * 16 + localX, blockY, chunkZ * 16 + localZ);
             }
 
             if (m_engine->getRenderer()) {
