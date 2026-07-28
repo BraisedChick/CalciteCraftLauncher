@@ -68,7 +68,6 @@ public:
 
     void updateCamera(float cameraX, float cameraY, float cameraZ, float pitch, float yaw);
     void makeCurrent();
-    void releaseCurrent();
 
     // ImGui 菜单
     bool initImGui();

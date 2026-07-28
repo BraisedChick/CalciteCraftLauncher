@@ -915,12 +915,6 @@ void GLRenderer::makeCurrent() {
     }
 }
 
-void GLRenderer::releaseCurrent() {
-    if (display) {
-        eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        LOGI("EGL context released");
-    }
-}
 void GLRenderer::computeFrustumPlanes(const glm::mat4& viewProj) {
     // 提取视锥体的 6 个平面（列主序矩阵）
     // 左平面
