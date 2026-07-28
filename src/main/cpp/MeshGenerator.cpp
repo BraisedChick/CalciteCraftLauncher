@@ -238,6 +238,10 @@ static void generateFromModel(
 
             const ModelFaceData& face = elem.faces[dir];
 
+            // grass_block 模型自带的 #overlay 元素与下方 needsOverlay 特判重复（特判已
+            // 另发独立染色 overlay 批次），跳过以免同面叠层 Z-fighting + 双份 overlay
+            if (isGrassBlock && face.textureLayer == (int)grassOverlayLayer) continue;
+
             // cullface 剔除：检查 cull 方向的邻居
             // FaceDir 枚举值 ≠ Face 枚举值，用 FACEDIR_TO_FACE 映射
             // cullface 方向需经元素旋转和 blockstate 旋转变换
@@ -636,6 +640,11 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         return m;
     };
 
+    // 变体模型去重容器：提到方块循环外复用，避免每方块一次堆分配
+    struct RenderedKey { const ResolvedBlockModel* model; int rotX; int rotY; };
+    std::vector<RenderedKey> renderedModels;
+    renderedModels.reserve(8);
+
 // 阶段计时
     int countModel = 0, countWater = 0, countCubic = 0;
 
@@ -732,16 +741,24 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
 
                     if (variant && !variant->models.empty()) {
                         bool renderedAny = false;
-                        // 用模型指针去重，而非模型名字符串
-                        std::unordered_set<const ResolvedBlockModel*> renderedModels;
+                        // 去重键 = 模型对象 + 旋转角：同模型同旋转才算重复（防变体重复导致 Z-fighting）；
+                        // 同模型不同旋转是 multipart 的多条臂（如栅栏 east+west 复用 fence_side），必须全部渲染
+                        renderedModels.clear();
                         for (const auto& modelEntry : variant->models) {
                             const auto* blockModel = getModel(modelEntry.modelName);
                             if (blockModel && !blockModel->elements.empty()) {
-                                // 如果这个模型对象已经渲染过，跳过
-                                if (renderedModels.find(blockModel) != renderedModels.end()) {
+                                // 如果同一模型对象以相同旋转已经渲染过，跳过
+                                bool dup = false;
+                                for (const auto& r : renderedModels) {
+                                    if (r.model == blockModel && r.rotX == modelEntry.rotX && r.rotY == modelEntry.rotY) {
+                                        dup = true;
+                                        break;
+                                    }
+                                }
+                                if (dup) {
                                     continue;
                                 }
-                                renderedModels.insert(blockModel);
+                                renderedModels.push_back({blockModel, modelEntry.rotX, modelEntry.rotY});
 
                                 generateFromModel(
                                         baseVertices, baseIndices,

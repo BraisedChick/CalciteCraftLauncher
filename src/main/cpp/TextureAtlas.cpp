@@ -757,10 +757,12 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const json& j) 
         const json& val = it.value();
 
         // 解析值（可能是单个对象 {model:..., x:..., y:...} 或数组 [{...}, {...}]）
+        // 数组 = 随机变体候选（如草方块 4 个随机旋转），原版语义是只选一个渲染；
+        // 全部渲染会同位置叠加导致 Z-fighting，这里固定取第一个
         std::vector<json> models;
         if (val.is_array()) {
             for (const auto& m : val) {
-                if (m.is_object()) models.push_back(m);
+                if (m.is_object()) { models.push_back(m); break; }
             }
         } else if (val.is_object()) {
             models.push_back(val);
@@ -980,12 +982,13 @@ void TextureAtlas::parseMultipart(const std::string& blockName, const json& j) {
 
         json when = part.contains("when") ? part["when"] : json();
 
-        // 解析 apply
+        // 解析 apply：数组同样是随机候选（非叠加），只取第一个；
+        // multipart 的多臂叠加来自多个 part 各自的 apply，不受此影响
         if (!part.contains("apply")) continue;
         const json& apply = part["apply"];
         std::vector<json> models;
         if (apply.is_array()) {
-            for (const auto& m : apply) { if (m.is_object()) models.push_back(m); }
+            for (const auto& m : apply) { if (m.is_object()) { models.push_back(m); break; } }
         } else if (apply.is_object()) {
             models.push_back(apply);
         }
@@ -1230,9 +1233,9 @@ std::vector<CollisionBox> TextureAtlas::getBlockCollisionBoxes(
                     box.maxZ = maxZ / 16.0f;
                     boxes.push_back(box);
                 }
-                // 如果有模型元素，直接返回（通常楼梯只匹配一个模型）
-                if (!model->elements.empty()) return boxes;
             }
+            // 变体的所有模型（multipart 多条臂）都已累加，有结果则直接返回
+            if (!boxes.empty()) return boxes;
         }
     }
 
