@@ -1644,7 +1644,7 @@ bool VulkanRenderer::createGraphicsPipeline() {
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = VK_TRUE;   // 启用深度测试
     depthStencil.depthWriteEnable = VK_TRUE;  // 启用深度写入
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;  // 深度比较操作
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;  // 对齐原版全局 LEQUAL（共面几何后画者覆盖）
     depthStencil.depthBoundsTestEnable = VK_FALSE;
     depthStencil.stencilTestEnable = VK_FALSE;
 

@@ -90,7 +90,9 @@ bool GLRenderer::initialize(ANativeWindow* window) {
     }
 
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
+    // 对齐原版 RenderSystem 全局 LEQUAL：共面几何（如 grass_block 模型自带的
+    // #overlay 元素）顶点逐位一致时后画者确定性覆盖，不产生 Z-fighting
+    glDepthFunc(GL_LEQUAL);
 
     // 启用背面剔除，减少渲染的面数
     glEnable(GL_CULL_FACE);
@@ -1209,7 +1211,6 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
                 glDrawElements(GL_TRIANGLES, sec.overlayIndexCount, GL_UNSIGNED_INT,
                                (const GLvoid*)(uintptr_t)(baseEnd * sizeof(uint32_t)));
                 glDepthMask(GL_TRUE);
-                glDepthFunc(GL_LESS);
 
                 totalTriangles += sec.overlayIndexCount / 3;
             }
@@ -1272,7 +1273,6 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
 
         if (waterStateSet) {
             glDepthMask(GL_TRUE);
-            glDepthFunc(GL_LESS);
             glDisable(GL_BLEND);
         }
     }
@@ -1411,7 +1411,6 @@ void GLRenderer::renderCrackOverlay(const glm::mat4& viewMatrix, const glm::mat4
 
     // 恢复 OpenGL 状态
     glDepthMask(GL_TRUE);
-    glDepthFunc(GL_LESS);
     glDisable(GL_BLEND);
     glDisable(GL_POLYGON_OFFSET_FILL);
     glEnable(GL_CULL_FACE);
@@ -1798,7 +1797,7 @@ void GLRenderer::renderPanoramaToFBO() {
 
     // 恢复 GL 状态
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
+    glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_TRUE);
     glEnable(GL_SCISSOR_TEST);
     glEnable(GL_CULL_FACE);

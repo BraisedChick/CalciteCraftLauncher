@@ -205,17 +205,14 @@ static int8_t transformCullface(int8_t cullface, const ElementRotation& elemRot,
 }
 
 // 根据模型元素 elements 生成顶点
-// vertices/indices: 输出到 base 几何体
-// overlayVertices/overlayIndices: 输出草覆盖层几何体
-// isGrassBlock, isSnowCovered, grassSideLayer, grassOverlayLayer 用于草地覆盖层特判
+// 数据驱动（对齐原版 ModelBlockRenderer）：所有 element/face 通用处理，无方块特判。
+// grass_block 的 #overlay 元素作为普通面进入 base 批次，与底面完全共面且顶点
+// 同源逐位一致，依赖全局 LEQUAL 深度测试后画覆盖，透明像素由 cutout discard 丢弃
 static void generateFromModel(
     std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
-    std::vector<Vertex>& overlayVertices, std::vector<uint32_t>& overlayIndices,
     const ResolvedBlockModel& model,
     float blockX, float blockY, float blockZ,  // 方块世界坐标
     const int32_t neighborStates[6],           // 6 个方向的邻居 blockState
-    bool isGrassBlock, bool isSnowCovered,
-    float grassSideLayer, float grassOverlayLayer,
     uint8_t tintR, uint8_t tintG, uint8_t tintB,
     int biomeId,
     int bsRotX, int bsRotY) {
@@ -238,10 +235,6 @@ static void generateFromModel(
 
             const ModelFaceData& face = elem.faces[dir];
 
-            // grass_block 模型自带的 #overlay 元素与下方 needsOverlay 特判重复（特判已
-            // 另发独立染色 overlay 批次），跳过以免同面叠层 Z-fighting + 双份 overlay
-            if (isGrassBlock && face.textureLayer == (int)grassOverlayLayer) continue;
-
             // cullface 剔除：检查 cull 方向的邻居
             // FaceDir 枚举值 ≠ Face 枚举值，用 FACEDIR_TO_FACE 映射
             // cullface 方向需经元素旋转和 blockstate 旋转变换
@@ -258,7 +251,6 @@ static void generateFromModel(
             // FACE_VERTS 定义: {ox, oy, oz, u, v} 在 0-1 范围
 
             uint32_t baseIdx = static_cast<uint32_t>(vertices.size());
-            uint32_t overlayBase = static_cast<uint32_t>(overlayVertices.size());
 
             // UV 范围 (0-1)
             float u1 = face.uv[0] / 16.0f;
@@ -309,30 +301,13 @@ static void generateFromModel(
                 }
             }
 
-            // 是否需要草覆盖层（grass block side overlay 的特判）
-            bool needsOverlay = false;
             float texLayer = static_cast<float>(face.textureLayer);
 
-            // 草地特判：如果是 grass_block 的 side 面且不是雪覆盖
-            if (isGrassBlock && !isSnowCovered) {
-                // 侧边四个面（不是顶/底）
-                if (dir == FACE_NORTH || dir == FACE_SOUTH ||
-                    dir == FACE_WEST || dir == FACE_EAST) {
-                    // 检查纹理是否为 grass_side，若是则覆盖为 grass_side + overlay
-                    // 这里简化处理：草地侧面固定使用 grassSideLayer 和 overlay
-                    // 因为 grass_block 的 side 纹理总是 grass_block_side
-                    needsOverlay = true;
-                    texLayer = grassSideLayer;
-                }
-            } else if (isSnowCovered && dir == FACE_UP) {
-                // 雪覆盖的草地顶面
-                texLayer = static_cast<float>(ClientEngine::getInstance()->getTextureAtlas()->getGrassBlockSnowLayer());
-            }
-
             // 确定面的颜色（所有 4 个顶点相同，提出到循环外）
+            // 数据驱动染色（对齐原版 putQuadData：BakedQuad.isTinted → BlockColors）：
+            // 只看 face.tintindex，匹配时优先用调用方预计算的颜色（grass_block/leaves/
+            // redstone），否则从 BiomeColorManager 采样；无 tintindex 的面保持白色
             uint8_t cr = 255, cg = 255, cb = 255;
-            // tintindex 匹配时优先用调用方预计算的颜色（grass_block/leaves），否则从 BiomeColorManager 采样
-            // 非 tintindex 面保持白色（如草方块侧面由 overlay 着色）
             if (face.tintindex == 0) {
                 if (tintR != 255 || tintG != 255 || tintB != 255) {
                     cr = tintR; cg = tintG; cb = tintB;
@@ -345,9 +320,6 @@ static void generateFromModel(
                 } else {
                     BiomeColorManager::getInstance().getFoliageColor(biomeId, cr, cg, cb);
                 }
-            } else if (needsOverlay) {
-                // overlay 面：base 面白色，颜色由 overlay 携带
-                cr = 255; cg = 255; cb = 255;
             }
 
             // 批量生成 4 个顶点到局部数组，一次性 insert
@@ -416,25 +388,6 @@ static void generateFromModel(
                 baseIdx, baseIdx + 2, baseIdx + 3
             };
             indices.insert(indices.end(), triIdx, triIdx + 6);
-
-            // 草覆盖层（额外的半透明 overlay 四边形）
-            if (needsOverlay) {
-                Vertex overlayVerts[4];
-                for (int v = 0; v < 4; v++) {
-                    overlayVerts[v] = faceVerts[v];
-                    overlayVerts[v].texIndex = grassOverlayLayer;
-                    overlayVerts[v].color[0] = tintR;
-                    overlayVerts[v].color[1] = tintG;
-                    overlayVerts[v].color[2] = tintB;
-                    overlayVerts[v].color[3] = 255;
-                }
-                overlayVertices.insert(overlayVertices.end(), overlayVerts, overlayVerts + 4);
-                uint32_t ovIdx[6] = {
-                    overlayBase, overlayBase + 1, overlayBase + 2,
-                    overlayBase, overlayBase + 2, overlayBase + 3
-                };
-                overlayIndices.insert(overlayIndices.end(), ovIdx, ovIdx + 6);
-            }
         }
     }
 
@@ -731,9 +684,8 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
 
                 // ===== 模型驱动渲染（适用于所有有模型数据的方块） =====
                 // 跳过水：水使用独立的渲染管道（alpha blend + 动画纹理）
-                bool isSnowCovered2 = (blockMeta.isGrassBlock && n[TOP] != 0 &&
-                                      ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(n[TOP]).isSnow);
-
+                // 草方块雪覆盖由服务器 blockstate 的 snowy 属性驱动（snowy=true →
+                // grass_block_snow 模型），无需客户端探测顶部邻居
                 if (!blockMeta.isWater) {
                     // Blockstate 变体查找
                     const BlockStateVariant* variant = atlas->getBlockStateVariant(
@@ -762,12 +714,9 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
 
                                 generateFromModel(
                                         baseVertices, baseIndices,
-                                        overlayVertices, overlayIndices,
                                         *blockModel,
                                         posX, posY, posZ,
                                         n,
-                                        blockMeta.isGrassBlock, isSnowCovered2,
-                                        grassSideLayer, grassOverlayLayer,
                                         tintR, tintG, tintB,
                                         biomeId,
                                         modelEntry.rotX, modelEntry.rotY);
@@ -783,12 +732,9 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     if (blockModel && !blockModel->elements.empty()) {
                         generateFromModel(
                                 baseVertices, baseIndices,
-                                overlayVertices, overlayIndices,
                                 *blockModel,
                                 posX, posY, posZ,
                                 n,
-                                blockMeta.isGrassBlock, isSnowCovered2,
-                                grassSideLayer, grassOverlayLayer,
                                 tintR, tintG, tintB,
                                 biomeId,
                                 0, 0);
