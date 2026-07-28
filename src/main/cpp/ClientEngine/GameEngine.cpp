@@ -250,6 +250,7 @@ bool GameEngine::start(const std::string& host, int port) {
     LOGI("Username: %s", ClientEngine::getUsername().c_str());
 
     disconnectReason.clear();
+    loginCompleted = false;
 
     // 初始化压缩状态
     Compression::setEnabled(false);
@@ -508,6 +509,7 @@ bool GameEngine::start(const std::string& host, int port) {
     }
 
 loginDone:
+    loginCompleted = true;
     if (Compression::isReceiveEnabled()) {
         Compression::setEnabled(true);
         LOGI("Compression fully enabled (threshold=%d)", Compression::getThreshold());

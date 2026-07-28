@@ -20,7 +20,7 @@ void DisconnectedScreen::render(int mouseX, int mouseY) {
 
     const float CENTER_X = w * 0.5f;
 
-    // 标题（连接失败 / 与服务器的连接已断开）
+    // 标题（连接已丢失 / 无法连接至服务器，由 ClientEngine 按断开阶段设置）
     float textW = ImGui::CalcTextSize(title.c_str()).x;
     ImGui::SetCursorPos(ImVec2(CENTER_X - textW * 0.5f, h * 0.25f));
     ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", title.c_str());

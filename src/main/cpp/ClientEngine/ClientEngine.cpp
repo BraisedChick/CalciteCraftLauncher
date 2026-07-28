@@ -86,8 +86,9 @@ void ClientEngine::setupUICallbacks() {
 
             // 断开连接后的清理
             LOGI("Disconnected, returning to title screen");
-            // 在销毁会话前取出断开原因（空=玩家主动断开）
+            // 在销毁会话前取出断开原因（空=玩家主动断开）与登录阶段标志
             std::string disconnectReason = game->getDisconnectReason();
+            bool wasInGame = game->isLoginCompleted();
             auto& ui = GameUI::getInstance();
             ui.setState(UIState::MAIN_MENU);
 
@@ -115,6 +116,9 @@ void ClientEngine::setupUICallbacks() {
             // 异常断开（连接失败/登录拒绝/被踢）时先展示原因，否则直接回标题界面
             if (!disconnectReason.empty()) {
                 auto screen = std::make_unique<DisconnectedScreen>();
+                // 对齐原版标题：游戏中断开=disconnect.lost（连接已丢失），
+                // 连接/登录阶段失败=connect.failed（无法连接至服务器）
+                screen->setTitle(wasInGame ? "连接已丢失" : "无法连接至服务器");
                 screen->setReason(disconnectReason);
                 // 对齐原版：DisconnectedScreen 的 parent 是服务器列表界面
                 screen->setBackCallback([]() {

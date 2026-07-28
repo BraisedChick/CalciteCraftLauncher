@@ -110,6 +110,8 @@ public:
 
     // ===== 断开连接原因（连接失败/登录拒绝/被踢，空=正常断开） =====
     std::string getDisconnectReason() const { return disconnectReason; }
+    // 是否已完成登录进入 play 阶段（区分原版标题：连接中失败=connect.failed，游戏中断开=disconnect.lost）
+    bool isLoginCompleted() const { return loginCompleted; }
 
     // ===== 本地玩家实体 ID =====
     int getPlayerId() const { return playerId; }
@@ -177,6 +179,8 @@ public:
     std::string deathMessage;
     // 断开原因（startPlayLoop 收到 Disconnect 包时由 NetworkManager 直接写入）
     std::string disconnectReason;
+    // 登录完成标志（loginDone 后置 true，断开时决定 DisconnectedScreen 标题）
+    bool loginCompleted = false;
     int playerId = -1;
 
 private:
