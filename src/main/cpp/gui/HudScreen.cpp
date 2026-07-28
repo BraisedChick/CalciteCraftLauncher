@@ -5,6 +5,7 @@
 #include <GLES3/gl3.h>
 #include "imgui.h"
 #include "GameUI.h"
+#include "GuiUtils.h"
 #include "Camera.h"
 #include "ClientEngine/ClientEngine.h"
 #include "ClientEngine/GameEngine.h"
@@ -215,15 +216,13 @@ void HudScreen::render(int mouseX, int mouseY) {
         if (hotbar[i].present && hotbar[i].itemId > 0) {
             std::string itemName = ClientEngine::getInstance()->getBlockRegistry()->getItemName(hotbar[i].itemId);
             if (!itemName.empty()) {
-                GLuint tex = ResourcepackManager::getInstance().getItemTexture(itemName);
+                ImTextureID tex = getItemIconTexture(itemName);
                 if (tex != 0) {
-                    ImGui::GetWindowDrawList()->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
-                        glBindSampler(0, 0);
-                    }, nullptr);
+                    addNearestSamplerCallback(ImGui::GetWindowDrawList());
                     float pad = 5.0f;
                     float iconSize = SLOT_SIZE - pad * 2;
                     ImGui::SetCursorScreenPos(ImVec2((int)(sx + pad), (int)(HOTBAR_Y + pad)));
-                    ImGui::Image((ImTextureID)(intptr_t)tex, ImVec2(iconSize, iconSize));
+                    ImGui::Image(tex, ImVec2(iconSize, iconSize));
                 }
             }
 
@@ -276,15 +275,14 @@ void HudScreen::render(int mouseX, int mouseY) {
             const float HUD_Y = HOTBAR_Y - ICON_SIZE - h * 0.025f;
 
             if (!hudTexturesLoaded) {
-                auto& rm = ResourcepackManager::getInstance();
-                texHeartContainer = rm.getHudTexture("heart/container");
-                texHeartFull = rm.getHudTexture("heart/full");
-                texHeartHalf = rm.getHudTexture("heart/half");
-                texFoodEmpty = rm.getHudTexture("food_empty");
-                texFoodFull = rm.getHudTexture("food_full");
-                texFoodHalf = rm.getHudTexture("food_half");
-                texExpBarBg = rm.getHudTexture("experience_bar_background");
-                texExpBarProgress = rm.getHudTexture("experience_bar_progress");
+                texHeartContainer = getHudTextureId("heart/container");
+                texHeartFull = getHudTextureId("heart/full");
+                texHeartHalf = getHudTextureId("heart/half");
+                texFoodEmpty = getHudTextureId("food_empty");
+                texFoodFull = getHudTextureId("food_full");
+                texFoodHalf = getHudTextureId("food_half");
+                texExpBarBg = getHudTextureId("experience_bar_background");
+                texExpBarProgress = getHudTextureId("experience_bar_progress");
                 hudTexturesLoaded = true;
             }
 
@@ -292,17 +290,17 @@ void HudScreen::render(int mouseX, int mouseY) {
                 float hx = hotbarX + i * (ICON_SIZE + GAP);
                 if (texHeartContainer) {
                     ImGui::GetWindowDrawList()->AddImage(
-                        (ImTextureID)(intptr_t)texHeartContainer,
+                    texHeartContainer,
                         ImVec2(hx, HUD_Y), ImVec2(hx + ICON_SIZE, HUD_Y + ICON_SIZE));
                 }
                 float remain = healthVal - i * 2.0f;
                 if (remain >= 2.0f && texHeartFull) {
                     ImGui::GetWindowDrawList()->AddImage(
-                        (ImTextureID)(intptr_t)texHeartFull,
+                        texHeartFull,
                         ImVec2(hx, HUD_Y), ImVec2(hx + ICON_SIZE, HUD_Y + ICON_SIZE));
                 } else if (remain >= 1.0f && texHeartHalf) {
                     ImGui::GetWindowDrawList()->AddImage(
-                        (ImTextureID)(intptr_t)texHeartHalf,
+                        texHeartHalf,
                         ImVec2(hx, HUD_Y), ImVec2(hx + ICON_SIZE, HUD_Y + ICON_SIZE));
                 }
             }
@@ -314,17 +312,17 @@ void HudScreen::render(int mouseX, int mouseY) {
                 float fx = foodStartX + i * (ICON_SIZE + GAP);
                 if (texFoodEmpty) {
                     ImGui::GetWindowDrawList()->AddImage(
-                        (ImTextureID)(intptr_t)texFoodEmpty,
+                        texFoodEmpty,
                         ImVec2(fx, HUD_Y), ImVec2(fx + ICON_SIZE, HUD_Y + ICON_SIZE));
                 }
                 int remain = foodVal - i * 2;
                 if (remain >= 2 && texFoodFull) {
                     ImGui::GetWindowDrawList()->AddImage(
-                        (ImTextureID)(intptr_t)texFoodFull,
+                        texFoodFull,
                         ImVec2(fx, HUD_Y), ImVec2(fx + ICON_SIZE, HUD_Y + ICON_SIZE));
                 } else if (remain >= 1 && texFoodHalf) {
                     ImGui::GetWindowDrawList()->AddImage(
-                        (ImTextureID)(intptr_t)texFoodHalf,
+                        texFoodHalf,
                         ImVec2(fx, HUD_Y), ImVec2(fx + ICON_SIZE, HUD_Y + ICON_SIZE));
                 }
             }
@@ -336,11 +334,9 @@ void HudScreen::render(int mouseX, int mouseY) {
                 float expBarX = hotbarX;
                 float expBarY = HOTBAR_Y - expBarH - 4.0f;
 
-                ImGui::GetWindowDrawList()->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
-                    glBindSampler(0, 0);
-                }, nullptr);
+                addNearestSamplerCallback(ImGui::GetWindowDrawList());
                 ImGui::GetWindowDrawList()->AddImage(
-                    (ImTextureID)(intptr_t)texExpBarBg,
+                    texExpBarBg,
                     ImVec2(expBarX, expBarY),
                     ImVec2(expBarX + expBarW, expBarY + expBarH),
                     ImVec2(0, 0), ImVec2(1, 1));
@@ -349,7 +345,7 @@ void HudScreen::render(int mouseX, int mouseY) {
                     float progress = engine->getExperienceProgress();
                     if (progress > 0.0f && progress <= 1.0f) {
                         ImGui::GetWindowDrawList()->AddImage(
-                            (ImTextureID)(intptr_t)texExpBarProgress,
+                            texExpBarProgress,
                             ImVec2(expBarX, expBarY),
                             ImVec2(expBarX + expBarW * progress, expBarY + expBarH),
                             ImVec2(0, 0), ImVec2(progress, 1));

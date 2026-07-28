@@ -17,6 +17,7 @@
 #include "TextureAtlas.h"
 #include "Light.h"
 #include "ChunkMeshScheduler.h"
+#include "BlockIconRasterizer.h"
 #include "ClientEngine/ClientEngine.h"
 #include "ClientEngine/GameEngine.h"
 
@@ -613,6 +614,51 @@ VkDescriptorSet VulkanRenderer::getMemoryTexture(const std::string& cacheKey, co
     guiTextureCache[cacheKey] = gt;
     LOGI("Memory texture loaded (Vulkan): %s (%dx%d)", cacheKey.c_str(), w, h);
     return gt.descriptorSet;
+}
+
+VkDescriptorSet VulkanRenderer::getItemTexture(const std::string& itemName) {
+    std::string cacheKey = "item:" + itemName;
+    auto it = guiTextureCache.find(cacheKey);
+    if (it != guiTextureCache.end()) return it->second.descriptorSet;
+
+    if (!imguiInitialized) return VK_NULL_HANDLE;
+
+    // 1) 3D 方块图标：CPU 光栅化（BlockIconRasterizer 与 GL 侧共用纯逻辑层）
+    auto* atlas = ClientEngine::getInstance() ? ClientEngine::getInstance()->getTextureAtlas() : nullptr;
+    if (atlas) {
+        const auto& modelCache = atlas->getItemModelCache();
+        auto mit = modelCache.find(itemName);
+        if (mit != modelCache.end()) {
+            std::vector<uint8_t> pixels;
+            if (BlockIconRasterizer::rasterize(atlas, mit->second, 64, pixels)) {
+                GuiTexture gt;
+                if (uploadGuiTexture(pixels.data(), 64, 64, gt)) {
+                    gt.width = 64;
+                    gt.height = 64;
+                    gt.descriptorSet = ImGui_ImplVulkan_AddTexture(gt.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                    guiTextureCache[cacheKey] = gt;
+                    return gt.descriptorSet;
+                }
+            }
+        }
+    }
+
+    // 2) 2D 贴图回退：item/ 优先（工具等非方块），再试 block/
+    for (const char* prefix : {"item/", "block/"}) {
+        TextureData tex = TextureLoader::loadImage(std::string(prefix) + itemName + ".png");
+        if (!tex.data || tex.width <= 0 || tex.height <= 0) continue;
+        GuiTexture gt;
+        if (!uploadGuiTexture(tex.data, tex.width, tex.height, gt)) break;
+        gt.width = tex.width;
+        gt.height = tex.height;
+        gt.descriptorSet = ImGui_ImplVulkan_AddTexture(gt.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        guiTextureCache[cacheKey] = gt;
+        return gt.descriptorSet;
+    }
+
+    LOGE("Failed to load item texture (Vulkan): %s", itemName.c_str());
+    guiTextureCache[cacheKey] = GuiTexture{};  // 缓存失败，避免每帧重试
+    return VK_NULL_HANDLE;
 }
 
 bool VulkanRenderer::uploadGuiTexture(const uint8_t* pixels, int width, int height, GuiTexture& out) {
@@ -1660,18 +1706,20 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
         LOGI("Chunk render data cleared (Vulkan)");
     }
 
-    // 主界面模式：非游戏状态下构建 ImGui 绘制数据（命令录制前）
+    // 主界面模式：非游戏状态下绘制全景背景
     bool menuMode = imguiInitialized &&
                     GameUI::getInstance().getState() != UIState::IN_GAME;
-    if (menuMode) {
+    if (menuMode && !panoramaInitAttempted) {
         // 全景资源懒初始化（一次性上传命令必须在帧命令录制之前提交）
-        if (!panoramaInitAttempted) {
-            panoramaInitAttempted = true;
-            panoramaReady = initPanorama();
-        }
+        panoramaInitAttempted = true;
+        panoramaReady = initPanorama();
+    }
+    // ImGui 绘制数据构建（主界面菜单与游戏内 HUD 共用，命令录制前；
+    // 内部懒加载的 GUI/物品纹理一次性上传命令也必须在此提交）
+    if (imguiInitialized) {
         ImGuiIO& io = ImGui::GetIO();
         io.DisplaySize = ImVec2((float)swapchainExtent.width, (float)swapchainExtent.height);
-        // 真实帧间隔（菜单动画/双击判定依赖）
+        // 真实帧间隔（菜单动画/双击判定/挖掘冷却依赖）
         static auto lastFrameTime = std::chrono::high_resolution_clock::now();
         auto now = std::chrono::high_resolution_clock::now();
         float dt = std::chrono::duration<float>(now - lastFrameTime).count();
@@ -1746,14 +1794,17 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
     vkCmdBeginRenderPass(commandBuffers[imageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
     if (menuMode) {
-        // 主界面：旋转全景背景（失败时回退清屏色）+ ImGui
+        // 主界面：旋转全景背景（失败时回退清屏色）
         if (panoramaReady) {
             renderPanorama(commandBuffers[imageIndex]);
         }
-        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffers[imageIndex]);
     } else {
         // 游戏内：区块三段绘制（图集就绪前只出天空色清屏）
         renderChunks(commandBuffers[imageIndex]);
+    }
+    // ImGui 最后叠加（主界面菜单 / 游戏内 HUD）
+    if (imguiInitialized) {
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffers[imageIndex]);
     }
 
     vkCmdEndRenderPass(commandBuffers[imageIndex]);

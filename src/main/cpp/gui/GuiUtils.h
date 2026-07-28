@@ -114,6 +114,43 @@ inline void ensureWidgetTextures(ImTextureID& button, ImTextureID& buttonHighlig
     buttonDisabled = (ImTextureID)(intptr_t)rm.getGuiTexture("sprites/widget/button_disabled");
 }
 
+// 物品图标（hotbar/物品栏，双后端）：GL 走 ResourcepackManager（3D 图标缓存+2D 回退），
+// Vulkan 走 VulkanRenderer::getItemTexture（CPU 光栅化 3D 图标+2D 回退）
+inline ImTextureID getItemIconTexture(const std::string& itemName) {
+    if (GameUI::getInstance().isVulkanBackend()) {
+        auto* vk = ClientEngine::getInstance() ? ClientEngine::getInstance()->getVulkanRenderer() : nullptr;
+        return vk ? (ImTextureID)(intptr_t)vk->getItemTexture(itemName) : 0;
+    }
+    return (ImTextureID)(intptr_t)ResourcepackManager::getInstance().getItemTexture(itemName);
+}
+
+// GUI 纹理（gui/<path>.png，如容器背景，双后端）
+inline ImTextureID getGuiTextureId(const std::string& path) {
+    if (GameUI::getInstance().isVulkanBackend()) {
+        auto* vk = ClientEngine::getInstance() ? ClientEngine::getInstance()->getVulkanRenderer() : nullptr;
+        return vk ? (ImTextureID)(intptr_t)vk->getGuiTexture(path) : 0;
+    }
+    return (ImTextureID)(intptr_t)ResourcepackManager::getInstance().getGuiTexture(path);
+}
+
+// HUD 纹理（gui/sprites/hud/<path>.png，心/食物/经验条，双后端）
+inline ImTextureID getHudTextureId(const std::string& path) {
+    if (GameUI::getInstance().isVulkanBackend()) {
+        auto* vk = ClientEngine::getInstance() ? ClientEngine::getInstance()->getVulkanRenderer() : nullptr;
+        return vk ? (ImTextureID)(intptr_t)vk->getAssetTexture("gui/sprites/hud/" + path + ".png") : 0;
+    }
+    return (ImTextureID)(intptr_t)ResourcepackManager::getInstance().getHudTexture(path);
+}
+
+// GL 解绑 sampler 回退纹理自身 NEAREST 参数；Vulkan 用后端默认 Linear 采样器（跳过回调）
+inline void addNearestSamplerCallback(ImDrawList* dl) {
+    if (!GameUI::getInstance().isVulkanBackend()) {
+        dl->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
+            glBindSampler(0, 0);
+        }, nullptr);
+    }
+}
+
 // 九宫格绘制（MC .mcmeta nine_slice 规范）
 // texW/texH = 纹理像素尺寸，border = 边框像素宽度
 inline void drawNineSlice(ImDrawList* dl, ImTextureID tex,

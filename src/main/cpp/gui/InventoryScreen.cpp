@@ -10,6 +10,7 @@
 #include "ClientEngine/ClientEngine.h"
 #include "ClientEngine/GameEngine.h"
 #include "GameUI.h"
+#include "GuiUtils.h"
 
 #include <android/log.h>
 #include <cstdio>
@@ -61,14 +62,12 @@ void InventoryScreen::renderPlayerInventory(float w, float h) {
     ImGui::GetForegroundDrawList()->AddRectFilled(
         ImVec2(0, 0), ImVec2(w, h), IM_COL32(0, 0, 0, 160));
 
-    // 容器纹理
-    GLuint bgTex = ResourcepackManager::getInstance().getGuiTexture("container/inventory");
+    // 容器纹理（双后端：GL=ResourcepackManager，Vulkan=VulkanRenderer）
+    ImTextureID bgTex = getGuiTextureId("container/inventory");
     if (bgTex != 0) {
-        ImGui::GetForegroundDrawList()->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
-            glBindSampler(0, 0);
-        }, nullptr);
+        addNearestSamplerCallback(ImGui::GetForegroundDrawList());
         ImGui::GetForegroundDrawList()->AddImage(
-            (ImTextureID)(intptr_t)bgTex,
+            bgTex,
             ImVec2(containerX, containerY),
             ImVec2(containerX + containerW, containerY + containerH),
             ImVec2(0, 0),
@@ -93,15 +92,13 @@ void InventoryScreen::renderPlayerInventory(float w, float h) {
         if (!slot.present || slot.itemId <= 0) return;
         std::string itemName = ClientEngine::getInstance()->getBlockRegistry()->getItemName(slot.itemId);
         if (itemName.empty()) return;
-        GLuint tex = ResourcepackManager::getInstance().getItemTexture(itemName);
+        ImTextureID tex = getItemIconTexture(itemName);
         if (tex == 0) return;
-        ImGui::GetForegroundDrawList()->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
-            glBindSampler(0, 0);
-        }, nullptr);
+        addNearestSamplerCallback(ImGui::GetForegroundDrawList());
         float pad = 5.0f;
         float iconSize = INV_SLOT - pad * 2;
         ImGui::GetForegroundDrawList()->AddImage(
-            (ImTextureID)(intptr_t)tex,
+            tex,
             ImVec2(sx + pad, sy + pad),
             ImVec2(sx + pad + iconSize, sy + pad + iconSize));
         if (slot.count > 1) {
@@ -371,12 +368,12 @@ void InventoryScreen::renderPlayerInventory(float w, float h) {
 
             if (cursorItem.present && cursorItem.itemId > 0 && countForThisSlot > 0) {
                 std::string itemName = ClientEngine::getInstance()->getBlockRegistry()->getItemName(cursorItem.itemId);
-                GLuint tex = ResourcepackManager::getInstance().getItemTexture(itemName);
+                ImTextureID tex = getItemIconTexture(itemName);
                 if (tex != 0) {
                     float pad = 5.0f;
                     float iconSize = INV_SLOT - pad * 2;
                     ImGui::GetForegroundDrawList()->AddImage(
-                        (ImTextureID)(intptr_t)tex,
+                        tex,
                         ImVec2(sx + pad, sy + pad),
                         ImVec2(sx + pad + iconSize, sy + pad + iconSize),
                         ImVec2(0, 0), ImVec2(1, 1),
@@ -457,14 +454,12 @@ void InventoryScreen::renderCraftingTable(float w, float h) {
     ImGui::GetForegroundDrawList()->AddRectFilled(
         ImVec2(0, 0), ImVec2(w, h), IM_COL32(0, 0, 0, 160));
 
-    // 工作台纹理
-    GLuint bgTex = ResourcepackManager::getInstance().getGuiTexture("container/crafting_table");
+    // 工作台纹理（双后端）
+    ImTextureID bgTex = getGuiTextureId("container/crafting_table");
     if (bgTex != 0) {
-        ImGui::GetForegroundDrawList()->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
-            glBindSampler(0, 0);
-        }, nullptr);
+        addNearestSamplerCallback(ImGui::GetForegroundDrawList());
         ImGui::GetForegroundDrawList()->AddImage(
-            (ImTextureID)(intptr_t)bgTex,
+            bgTex,
             ImVec2(containerX, containerY),
             ImVec2(containerX + containerW, containerY + containerH),
             ImVec2(0, 0),
@@ -490,15 +485,13 @@ void InventoryScreen::renderCraftingTable(float w, float h) {
         if (!slot.present || slot.itemId <= 0) return;
         std::string itemName = ClientEngine::getInstance()->getBlockRegistry()->getItemName(slot.itemId);
         if (itemName.empty()) return;
-        GLuint tex = ResourcepackManager::getInstance().getItemTexture(itemName);
+        ImTextureID tex = getItemIconTexture(itemName);
         if (tex == 0) return;
-        ImGui::GetForegroundDrawList()->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
-            glBindSampler(0, 0);
-        }, nullptr);
+        addNearestSamplerCallback(ImGui::GetForegroundDrawList());
         float pad = 5.0f;
         float iconSize = INV_SLOT - pad * 2;
         ImGui::GetForegroundDrawList()->AddImage(
-            (ImTextureID)(intptr_t)tex,
+            tex,
             ImVec2(sx + pad, sy + pad + ITEM_Y_OFFSET),
             ImVec2(sx + pad + iconSize, sy + pad + iconSize + ITEM_Y_OFFSET));
         if (slot.count > 1) {

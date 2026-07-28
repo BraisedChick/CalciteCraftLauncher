@@ -45,6 +45,10 @@ public:
     // 内存 PNG 字节解码上传（如服务器 favicon），按 cacheKey 缓存
     VkDescriptorSet getMemoryTexture(const std::string& cacheKey, const uint8_t* pngData, size_t pngSize);
 
+    // 物品图标（hotbar/物品栏）：优先 BlockIconRasterizer CPU 光栅化 3D 方块图标，
+    // 回退 item/、block/ 2D 贴图（对应 GL 侧 ResourcepackManager::getItemTexture）
+    VkDescriptorSet getItemTexture(const std::string& itemName);
+
     // 切屏后 Surface 释放/重建（防止向失效 Surface 提交）
     void invalidateSurface() { surfaceValid = false; }
     bool recreateSurface(ANativeWindow* window, int width, int height);
