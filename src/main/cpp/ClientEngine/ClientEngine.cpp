@@ -80,6 +80,8 @@ void ClientEngine::setupUICallbacks() {
                 client->getRenderer()->setRenderDistance(ui.getRenderDistance());
                 client->getRenderer()->setMipmapLevel(ui.getMipmapLevel());
                 client->getRenderer()->setMaxFps(ui.getMaxFps());
+            } else if (client->getVulkanRenderer()) {
+                client->getVulkanRenderer()->setRenderDistance(GameUI::getInstance().getRenderDistance());
             }
 
             // 保持 CONNECTING 状态（显示 ConnectingScreen），登录成功后由

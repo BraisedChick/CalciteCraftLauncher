@@ -56,6 +56,10 @@ public:
     // 断连时清空全部区块渲染数据（任意线程可调，实际清理在渲染线程执行）
     void clearChunks() { pendingChunkClear.store(true); }
 
+    // 渲染距离（视频设置，单位区块；换算与 GLRenderer 一致：farPlane = chunks * 16）
+    void setRenderDistance(int chunks) { chunkFar = chunks * 16.0f; }
+    int getRenderDistance() const { return static_cast<int>(chunkFar / 16.0f); }
+
 private:
     // ===== 区块渲染（消费图形 API 无关的 ChunkMeshScheduler 产出）=====
     // 与 GLRenderer 的 SectionRenderData 对位：每 section 一对 VB/IB，
@@ -159,9 +163,11 @@ private:
     // 区块渲染常量（与 GLRenderer 对齐）
     static constexpr float CHUNK_FOV = 70.0f;
     static constexpr float CHUNK_NEAR = 0.1f;
-    static constexpr float CHUNK_FAR = 500.0f;
     static constexpr int MAX_CHUNKS_PER_FRAME = 2;    // 每帧最多上传的区块数
     static constexpr int TEXTURES_PER_FRAME = 200;    // 图集每帧解码的纹理层数
+
+    // 远平面/渲染距离（视频设置驱动，setRenderDistance 修改，对应 GLRenderer::farPlane）
+    float chunkFar = 500.0f;
 
     // Core Vulkan objects
     VkInstance instance;

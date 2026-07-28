@@ -1491,7 +1491,7 @@ void VulkanRenderer::updateChunkUniforms(float cameraX, float cameraY, float cam
 
     glm::mat4 view = Camera::computeViewMatrix(cameraX, cameraY, cameraZ, pitch, yaw);
     float aspect = (float)swapchainExtent.width / (float)swapchainExtent.height;
-    glm::mat4 proj = Camera::computeProjectionMatrix(CHUNK_FOV, aspect, CHUNK_NEAR, CHUNK_FAR);
+    glm::mat4 proj = Camera::computeProjectionMatrix(CHUNK_FOV, aspect, CHUNK_NEAR, chunkFar);
 
     // 视锥从未修正的 proj*view 提取（平面提取公式基于 GL 惯例 clip 空间）
     glm::mat4 viewProj = proj * view;
@@ -1511,8 +1511,8 @@ void VulkanRenderer::updateChunkUniforms(float cameraX, float cameraY, float cam
     ubo.fogColor[1] = skyG;
     ubo.fogColor[2] = skyB;
     ubo.fogColor[3] = 1.0f;
-    ubo.fogParams[0] = CHUNK_FAR * 0.7f;  // FogStart
-    ubo.fogParams[1] = CHUNK_FAR;         // FogEnd
+    ubo.fogParams[0] = chunkFar * 0.7f;  // FogStart
+    ubo.fogParams[1] = chunkFar;         // FogEnd
     ubo.colorModulator[0] = 1.0f;
     ubo.colorModulator[1] = 1.0f;
     ubo.colorModulator[2] = 1.0f;
@@ -1746,7 +1746,7 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
             updateChunkLightmap();
             processChunkCompletedWork();
             if (auto* scheduler = ClientEngine::getInstance() ? ClientEngine::getInstance()->getMeshScheduler() : nullptr) {
-                scheduler->update(cameraX, cameraY, cameraZ, CHUNK_FAR);
+                scheduler->update(cameraX, cameraY, cameraZ, chunkFar);
             }
             auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
             if (game && game->getLight()) {

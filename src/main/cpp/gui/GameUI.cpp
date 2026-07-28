@@ -20,6 +20,7 @@
 #include "Collision.h"
 #include "PlayerInventory.h"
 #include "Renderer/GLRenderer.h"
+#include "Renderer/VulkanRenderer.h"
 #include "ClientEngine/ClientEngine.h"
 #include "ClientEngine/GameEngine.h"
 #include "JniBridge.h"
@@ -206,6 +207,8 @@ bool GameUI::init() {
         auto* engine = ClientEngine::getInstance();
         if (engine && engine->getRenderer()) {
             engine->getRenderer()->setRenderDistance(chunks);
+        } else if (engine && engine->getVulkanRenderer()) {
+            engine->getVulkanRenderer()->setRenderDistance(chunks);
         }
     });
 
