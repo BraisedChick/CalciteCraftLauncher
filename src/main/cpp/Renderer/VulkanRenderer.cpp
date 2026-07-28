@@ -4,6 +4,8 @@
 #include <cstring>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstddef>  // offsetof
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include "imgui.h"
@@ -12,6 +14,11 @@
 #include "TextureLoader.h"
 #include "Camera.h"
 #include "stb_image.h"
+#include "TextureAtlas.h"
+#include "Light.h"
+#include "ChunkMeshScheduler.h"
+#include "ClientEngine/ClientEngine.h"
+#include "ClientEngine/GameEngine.h"
 
 // VMA 实现（全项目唯一展开点）：直链 libvulkan 故用静态函数；
 // 实例是 Vulkan 1.0，锁定函数集避免引用旧设备不存在的 1.1+ 入口
@@ -189,6 +196,7 @@ void VulkanRenderer::cleanup() {
     // GUI 纹理引用了 ImGui 后端描述符池，必须先于 ImGui_ImplVulkan_Shutdown 释放
     destroyGuiTextures();
     destroyPanoramaResources();
+    destroyChunkResources();
     if (imguiInitialized) {
         GameUI::getInstance().shutdown();  // 内部调用 ImGui_ImplVulkan_Shutdown
         imguiInitialized = false;
@@ -267,6 +275,9 @@ void VulkanRenderer::cleanup() {
 }
 
 void VulkanRenderer::cleanupSwapchain() {
+    // 区块管线依赖 renderPass，随 swapchain 一起销毁（recreate 路径按需重建）
+    destroyChunkPipelines();
+
     if (graphicsPipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(device, graphicsPipeline, nullptr);
         graphicsPipeline = VK_NULL_HANDLE;
@@ -318,6 +329,7 @@ void VulkanRenderer::recreateSwapchain(int width, int height) {
     createDepthResources();  // 重新创建深度资源
     createRenderPass();
     createGraphicsPipeline();
+    if (chunkResourcesReady) createChunkPipelines();
     createFramebuffers();
     createCommandBuffers();
 }
@@ -343,6 +355,7 @@ bool VulkanRenderer::recreateSurface(ANativeWindow* window, int width, int heigh
     if (!createDepthResources()) return false;
     if (!createRenderPass()) return false;
     if (!createGraphicsPipeline()) return false;
+    if (chunkResourcesReady) createChunkPipelines();
     if (!createFramebuffers()) return false;
     if (!createCommandBuffers()) return false;
 
@@ -918,6 +931,669 @@ void VulkanRenderer::destroyPanoramaResources() {
     panoramaReady = false;
 }
 
+// ============================================================
+// 区块渲染（消费图形 API 无关的 ChunkMeshScheduler 产出）
+// 三段绘制与 GLRenderer 对位：cutout 基体（写深度）→ overlay（不写）
+// → water（translucent shader，不写），索引顺序 base | overlay | water
+// ============================================================
+
+// std140 布局，与 chunk.vert / chunk_*.frag 的 ChunkUBO 一致（176B）
+struct ChunkUBO {
+    float modelViewMat[16];
+    float projMat[16];       // 已含 Vulkan clip 空间 Y 翻转
+    float fogColor[4];
+    float fogParams[4];      // x = FogStart, y = FogEnd
+    float colorModulator[4];
+};
+
+bool VulkanRenderer::initChunkResources() {
+    auto* engine = ClientEngine::getInstance();
+    auto* atlas = engine ? engine->getTextureAtlas() : nullptr;
+    if (!atlas || atlas->getLayerCount() <= 0) {
+        LOGE("initChunkResources: TextureAtlas not initialized");
+        return false;
+    }
+    atlasLayerCount = atlas->getLayerCount();
+
+    // 首张纹理定图集层尺寸（缺失时用 16x16 占位）
+    {
+        TextureData firstTex = TextureLoader::loadImage(atlas->getTextureFileName(0));
+        if (firstTex.data) {
+            atlasWidth = firstTex.width;
+            atlasHeight = firstTex.height;
+        }
+    }
+    LOGI("Chunk atlas: %d layers, %dx%d", atlasLayerCount, atlasWidth, atlasHeight);
+
+    // 图集 2D array：先建 image/view，像素分帧解码到累积区后一次上传（processChunkAtlas）
+    atlasNextLayer = 0;
+    atlasReady = false;
+    atlasStagingPixels.assign((size_t)atlasWidth * atlasHeight * 4 * atlasLayerCount, 0);
+    if (!createDeviceImage((uint32_t)atlasWidth, (uint32_t)atlasHeight, (uint32_t)atlasLayerCount, 0,
+                           chunkAtlasImage, chunkAtlasMemory) ||
+        !createRgbaImageView(chunkAtlasImage, VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+                             (uint32_t)atlasLayerCount, chunkAtlasView)) {
+        LOGE("Failed to create chunk atlas image");
+        destroyChunkResources();
+        return false;
+    }
+
+    // 图集采样器：NEAREST + REPEAT（与 GL 侧方块纹理参数对齐，暂不做 mipmap）
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_NEAREST;
+    samplerInfo.minFilter = VK_FILTER_NEAREST;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    if (vkCreateSampler(device, &samplerInfo, nullptr, &chunkAtlasSampler) != VK_SUCCESS) {
+        destroyChunkResources();
+        return false;
+    }
+
+    // 光照贴图 16x16：先上传全白（转入 SHADER_READ_ONLY，保证首帧采样合法），
+    // 之后像素变化时整图重传（updateChunkLightmap）
+    {
+        std::vector<uint8_t> white(16 * 16 * 4, 255);
+        if (!createDeviceImage(16, 16, 1, 0, lightmapImage, lightmapMemory) ||
+            !uploadPixelsToImage(white.data(), 16, 16, 1, lightmapImage) ||
+            !createRgbaImageView(lightmapImage, VK_IMAGE_VIEW_TYPE_2D, 1, lightmapView)) {
+            LOGE("Failed to create lightmap image");
+            destroyChunkResources();
+            return false;
+        }
+        VkSamplerCreateInfo lmSampler{};
+        lmSampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        lmSampler.magFilter = VK_FILTER_LINEAR;
+        lmSampler.minFilter = VK_FILTER_LINEAR;
+        lmSampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        lmSampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        lmSampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        lmSampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        if (vkCreateSampler(device, &lmSampler, nullptr, &lightmapSampler) != VK_SUCCESS) {
+            destroyChunkResources();
+            return false;
+        }
+        // 失效缓存：保证首次 getLightmapPixelsIfChanged 必返回真实像素
+        auto* game = engine->getGame();
+        if (game && game->getLight()) game->getLight()->invalidateLightmapCache();
+    }
+
+    // 区块 UBO（VMA 持久映射，每帧 memcpy + flush）
+    {
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = sizeof(ChunkUBO);
+        bufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        VmaAllocationCreateInfo vmaInfo{};
+        vmaInfo.usage = VMA_MEMORY_USAGE_AUTO;
+        vmaInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                        VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        VmaAllocationInfo allocResult{};
+        if (vmaCreateBuffer(allocator, &bufferInfo, &vmaInfo, &chunkUniformBuffer,
+                            &chunkUniformMemory, &allocResult) != VK_SUCCESS) {
+            LOGE("Failed to create chunk uniform buffer");
+            destroyChunkResources();
+            return false;
+        }
+        chunkUniformMapped = allocResult.pMappedData;
+    }
+
+    // 描述符：b0=UBO(VERT|FRAG) b1=图集(FRAG) b2=lightmap(VERT，Mojang 在顶点阶段采样)
+    {
+        VkDescriptorSetLayoutBinding bindings[3]{};
+        bindings[0].binding = 0;
+        bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        bindings[0].descriptorCount = 1;
+        bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        bindings[1].binding = 1;
+        bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[1].descriptorCount = 1;
+        bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        bindings[2].binding = 2;
+        bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[2].descriptorCount = 1;
+        bindings[2].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        VkDescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = 3;
+        layoutInfo.pBindings = bindings;
+        if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &chunkSetLayout) != VK_SUCCESS) {
+            destroyChunkResources();
+            return false;
+        }
+
+        VkDescriptorPoolSize poolSizes[2] = {
+            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },
+            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 },
+        };
+        VkDescriptorPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.maxSets = 1;
+        poolInfo.poolSizeCount = 2;
+        poolInfo.pPoolSizes = poolSizes;
+        if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &chunkDescriptorPool) != VK_SUCCESS) {
+            destroyChunkResources();
+            return false;
+        }
+
+        VkDescriptorSetAllocateInfo dsAlloc{};
+        dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        dsAlloc.descriptorPool = chunkDescriptorPool;
+        dsAlloc.descriptorSetCount = 1;
+        dsAlloc.pSetLayouts = &chunkSetLayout;
+        if (vkAllocateDescriptorSets(device, &dsAlloc, &chunkDescriptorSet) != VK_SUCCESS) {
+            destroyChunkResources();
+            return false;
+        }
+
+        // 一次写齐三个绑定（图集此时 layout 还是 UNDEFINED，但 atlasReady 前不会发生 draw 引用，合法）
+        VkDescriptorBufferInfo uboInfo{ chunkUniformBuffer, 0, sizeof(ChunkUBO) };
+        VkDescriptorImageInfo atlasInfo{ chunkAtlasSampler, chunkAtlasView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        VkDescriptorImageInfo lightInfo{ lightmapSampler, lightmapView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        VkWriteDescriptorSet writes[3]{};
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = chunkDescriptorSet;
+        writes[0].dstBinding = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[0].pBufferInfo = &uboInfo;
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = chunkDescriptorSet;
+        writes[1].dstBinding = 1;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[1].pImageInfo = &atlasInfo;
+        writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet = chunkDescriptorSet;
+        writes[2].dstBinding = 2;
+        writes[2].descriptorCount = 1;
+        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[2].pImageInfo = &lightInfo;
+        vkUpdateDescriptorSets(device, 3, writes, 0, nullptr);
+    }
+
+    // 管线布局（三条管线共用）
+    {
+        VkPipelineLayoutCreateInfo plInfo{};
+        plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        plInfo.setLayoutCount = 1;
+        plInfo.pSetLayouts = &chunkSetLayout;
+        if (vkCreatePipelineLayout(device, &plInfo, nullptr, &chunkPipelineLayout) != VK_SUCCESS) {
+            destroyChunkResources();
+            return false;
+        }
+    }
+
+    if (!createChunkPipelines()) {
+        destroyChunkResources();
+        return false;
+    }
+
+    LOGI("Chunk resources initialized (Vulkan)");
+    return true;
+}
+
+bool VulkanRenderer::createChunkPipelines() {
+    destroyChunkPipelines();  // recreate 路径幂等
+
+    auto vertCode = readFile("shaders/chunk_vert.spv");
+    auto cutoutCode = readFile("shaders/chunk_cutout_frag.spv");
+    auto translucentCode = readFile("shaders/chunk_translucent_frag.spv");
+    if (vertCode.empty() || cutoutCode.empty() || translucentCode.empty()) {
+        LOGE("Chunk SPIR-V shaders missing (shaders/chunk_*.spv)");
+        return false;
+    }
+    VkShaderModule vertModule = createShaderModule(vertCode);
+    VkShaderModule cutoutModule = createShaderModule(cutoutCode);
+    VkShaderModule translucentModule = createShaderModule(translucentCode);
+    if (vertModule == VK_NULL_HANDLE || cutoutModule == VK_NULL_HANDLE || translucentModule == VK_NULL_HANDLE) {
+        if (vertModule) vkDestroyShaderModule(device, vertModule, nullptr);
+        if (cutoutModule) vkDestroyShaderModule(device, cutoutModule, nullptr);
+        if (translucentModule) vkDestroyShaderModule(device, translucentModule, nullptr);
+        return false;
+    }
+
+    // 顶点输入：PackedVertex 32B，normal 着色器未消费故省略；
+    // uv2 用 UINT（USCALED 非强制支持格式），shader 侧 uvec2 再转 float
+    VkVertexInputBindingDescription bindingDesc{};
+    bindingDesc.binding = 0;
+    bindingDesc.stride = sizeof(PackedVertex);
+    bindingDesc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    VkVertexInputAttributeDescription attrs[5]{};
+    attrs[0] = { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(PackedVertex, pos) };
+    attrs[1] = { 1, 0, VK_FORMAT_R16G16_UNORM,     offsetof(PackedVertex, uv) };
+    attrs[2] = { 2, 0, VK_FORMAT_R32_SFLOAT,       offsetof(PackedVertex, texIndex) };
+    attrs[3] = { 3, 0, VK_FORMAT_R8G8B8A8_UNORM,   offsetof(PackedVertex, color) };
+    attrs[4] = { 4, 0, VK_FORMAT_R16G16_UINT,      offsetof(PackedVertex, uv2) };
+    VkPipelineVertexInputStateCreateInfo vertexInput{};
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount = 1;
+    vertexInput.pVertexBindingDescriptions = &bindingDesc;
+    vertexInput.vertexAttributeDescriptionCount = 5;
+    vertexInput.pVertexAttributeDescriptions = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+    VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 2;
+    dynamicState.pDynamicStates = dynamicStates;
+
+    // 网格绕序是 GL 惯例 CCW；Vulkan 的朝向在 framebuffer 空间（Y 向下）判定，
+    // 符号约定已吸收 Y 轴差异：proj Y 翻转后 GL-CCW 几何仍是 COUNTER_CLOCKWISE 正面
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    // 三阶段均开 alpha blend（与 GL 侧一致：玻璃/树叶/水）
+    VkPipelineColorBlendAttachmentState blendAttachment{};
+    blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                     VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    blendAttachment.blendEnable = VK_TRUE;
+    blendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+    blendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &blendAttachment;
+
+    // 只有 frag module 与 depthWrite 不同，其余状态共享
+    auto buildPipeline = [&](VkShaderModule fragModule, VkBool32 depthWrite, VkPipeline& outPipeline) {
+        VkPipelineShaderStageCreateInfo stages[2]{};
+        stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+        stages[0].module = vertModule;
+        stages[0].pName = "main";
+        stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        stages[1].module = fragModule;
+        stages[1].pName = "main";
+
+        // 对齐原版 RenderSystem 全局 LEQUAL：共面几何后画者确定性覆盖
+        VkPipelineDepthStencilStateCreateInfo depthStencil{};
+        depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        depthStencil.depthTestEnable = VK_TRUE;
+        depthStencil.depthWriteEnable = depthWrite;
+        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+
+        VkGraphicsPipelineCreateInfo pipelineInfo{};
+        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipelineInfo.stageCount = 2;
+        pipelineInfo.pStages = stages;
+        pipelineInfo.pVertexInputState = &vertexInput;
+        pipelineInfo.pInputAssemblyState = &inputAssembly;
+        pipelineInfo.pViewportState = &viewportState;
+        pipelineInfo.pRasterizationState = &rasterizer;
+        pipelineInfo.pMultisampleState = &multisampling;
+        pipelineInfo.pDepthStencilState = &depthStencil;
+        pipelineInfo.pColorBlendState = &colorBlending;
+        pipelineInfo.pDynamicState = &dynamicState;
+        pipelineInfo.layout = chunkPipelineLayout;
+        pipelineInfo.renderPass = renderPass;
+        pipelineInfo.subpass = 0;
+        return vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &outPipeline) == VK_SUCCESS;
+    };
+
+    bool ok = buildPipeline(cutoutModule, VK_TRUE, chunkPipelineCutout) &&
+              buildPipeline(cutoutModule, VK_FALSE, chunkPipelineOverlay) &&
+              buildPipeline(translucentModule, VK_FALSE, chunkPipelineWater);
+
+    vkDestroyShaderModule(device, vertModule, nullptr);
+    vkDestroyShaderModule(device, cutoutModule, nullptr);
+    vkDestroyShaderModule(device, translucentModule, nullptr);
+
+    if (!ok) {
+        LOGE("Failed to create chunk pipelines");
+        destroyChunkPipelines();
+        return false;
+    }
+    LOGI("Chunk pipelines created (cutout/overlay/water)");
+    return true;
+}
+
+void VulkanRenderer::destroyChunkPipelines() {
+    if (chunkPipelineCutout != VK_NULL_HANDLE)  { vkDestroyPipeline(device, chunkPipelineCutout, nullptr); chunkPipelineCutout = VK_NULL_HANDLE; }
+    if (chunkPipelineOverlay != VK_NULL_HANDLE) { vkDestroyPipeline(device, chunkPipelineOverlay, nullptr); chunkPipelineOverlay = VK_NULL_HANDLE; }
+    if (chunkPipelineWater != VK_NULL_HANDLE)   { vkDestroyPipeline(device, chunkPipelineWater, nullptr); chunkPipelineWater = VK_NULL_HANDLE; }
+}
+
+void VulkanRenderer::destroyChunkResources() {
+    destroyChunkPipelines();
+    if (chunkPipelineLayout != VK_NULL_HANDLE) { vkDestroyPipelineLayout(device, chunkPipelineLayout, nullptr); chunkPipelineLayout = VK_NULL_HANDLE; }
+    if (chunkDescriptorPool != VK_NULL_HANDLE) { vkDestroyDescriptorPool(device, chunkDescriptorPool, nullptr); chunkDescriptorPool = VK_NULL_HANDLE; }
+    chunkDescriptorSet = VK_NULL_HANDLE;  // 随池销毁
+    if (chunkSetLayout != VK_NULL_HANDLE)      { vkDestroyDescriptorSetLayout(device, chunkSetLayout, nullptr); chunkSetLayout = VK_NULL_HANDLE; }
+    if (chunkUniformBuffer != VK_NULL_HANDLE)  { vmaDestroyBuffer(allocator, chunkUniformBuffer, chunkUniformMemory); chunkUniformBuffer = VK_NULL_HANDLE; chunkUniformMemory = VK_NULL_HANDLE; chunkUniformMapped = nullptr; }
+    if (chunkAtlasSampler != VK_NULL_HANDLE)   { vkDestroySampler(device, chunkAtlasSampler, nullptr); chunkAtlasSampler = VK_NULL_HANDLE; }
+    if (chunkAtlasView != VK_NULL_HANDLE)      { vkDestroyImageView(device, chunkAtlasView, nullptr); chunkAtlasView = VK_NULL_HANDLE; }
+    if (chunkAtlasImage != VK_NULL_HANDLE)     { vmaDestroyImage(allocator, chunkAtlasImage, chunkAtlasMemory); chunkAtlasImage = VK_NULL_HANDLE; chunkAtlasMemory = VK_NULL_HANDLE; }
+    if (lightmapSampler != VK_NULL_HANDLE)     { vkDestroySampler(device, lightmapSampler, nullptr); lightmapSampler = VK_NULL_HANDLE; }
+    if (lightmapView != VK_NULL_HANDLE)        { vkDestroyImageView(device, lightmapView, nullptr); lightmapView = VK_NULL_HANDLE; }
+    if (lightmapImage != VK_NULL_HANDLE)       { vmaDestroyImage(allocator, lightmapImage, lightmapMemory); lightmapImage = VK_NULL_HANDLE; lightmapMemory = VK_NULL_HANDLE; }
+    for (auto& [chunkKey, renderData] : chunkRenderCache) {
+        for (auto& sec : renderData.sections) destroySectionBuffers(sec);
+    }
+    chunkRenderCache.clear();
+    atlasStagingPixels.clear();
+    atlasStagingPixels.shrink_to_fit();
+    atlasReady = false;
+    atlasNextLayer = 0;
+    chunkResourcesReady = false;
+    chunkInitAttempted = false;  // 允许下次进游戏重新初始化
+}
+
+void VulkanRenderer::destroySectionBuffers(ChunkSectionRenderData& sec) {
+    if (sec.vertexBuffer != VK_NULL_HANDLE) { vmaDestroyBuffer(allocator, sec.vertexBuffer, sec.vertexMemory); sec.vertexBuffer = VK_NULL_HANDLE; sec.vertexMemory = VK_NULL_HANDLE; }
+    if (sec.indexBuffer != VK_NULL_HANDLE)  { vmaDestroyBuffer(allocator, sec.indexBuffer, sec.indexMemory); sec.indexBuffer = VK_NULL_HANDLE; sec.indexMemory = VK_NULL_HANDLE; }
+}
+
+// 分帧解码方块纹理到 CPU 累积区（每帧 TEXTURES_PER_FRAME 张，避免卡顿），
+// 全部就绪后一次 staging 上传 2D array（对位 GL 侧 finishTextureInit）
+void VulkanRenderer::processChunkAtlas() {
+    if (atlasReady || chunkAtlasImage == VK_NULL_HANDLE || atlasNextLayer >= atlasLayerCount) return;
+    auto* atlas = ClientEngine::getInstance() ? ClientEngine::getInstance()->getTextureAtlas() : nullptr;
+    if (!atlas) return;
+
+    size_t layerBytes = (size_t)atlasWidth * atlasHeight * 4;
+    int end = std::min(atlasNextLayer + TEXTURES_PER_FRAME, atlasLayerCount);
+    for (int i = atlasNextLayer; i < end; i++) {
+        uint8_t* dst = atlasStagingPixels.data() + layerBytes * i;
+        TextureData texData = TextureLoader::loadImage(atlas->getTextureFileName(i));
+        if (texData.data && texData.width == atlasWidth && texData.height == atlasHeight) {
+            memcpy(dst, texData.data, layerBytes);
+        } else {
+            // 缺失/尺寸不符：占位色填充（与 GL 侧同策略）
+            uint8_t r, g, b;
+            atlas->getPlaceholderColor(i, r, g, b);
+            for (size_t p = 0; p < layerBytes; p += 4) {
+                dst[p + 0] = r;
+                dst[p + 1] = g;
+                dst[p + 2] = b;
+                dst[p + 3] = 255;
+            }
+        }
+    }
+    atlasNextLayer = end;
+
+    if (atlasNextLayer >= atlasLayerCount) {
+        if (uploadPixelsToImage(atlasStagingPixels.data(), (uint32_t)atlasWidth, (uint32_t)atlasHeight,
+                                (uint32_t)atlasLayerCount, chunkAtlasImage)) {
+            atlasReady = true;
+            LOGI("Chunk atlas uploaded: %d layers", atlasLayerCount);
+        } else {
+            LOGE("Chunk atlas upload failed");
+        }
+        atlasStagingPixels.clear();
+        atlasStagingPixels.shrink_to_fit();
+    }
+}
+
+// 昼夜循环：Light 产出像素，变化时整图重传（16x16，小到可忽略；
+// oldLayout 用 UNDEFINED 合法因为全覆盖重写）
+void VulkanRenderer::updateChunkLightmap() {
+    auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+    if (!game || !game->getLight() || lightmapImage == VK_NULL_HANDLE) return;
+    auto* light = game->getLight();
+    light->update();
+
+    uint8_t lightmapPixels[16 * 16 * 4];
+    if (light->getLightmapPixelsIfChanged(lightmapPixels)) {
+        uploadPixelsToImage(lightmapPixels, 16, 16, 1, lightmapImage);
+    }
+}
+
+// pollRemovals + pollResults → section buffer 上传（镜像 GL processCompletedWork，
+// 仅渲染线程访问故无锁；帧首 fence 已过，删旧 buffer 安全）
+void VulkanRenderer::processChunkCompletedWork() {
+    auto* scheduler = ClientEngine::getInstance() ? ClientEngine::getInstance()->getMeshScheduler() : nullptr;
+    if (!scheduler) return;
+
+    // 先处理服务端要求卸载的区块（避免给已卸载区块白建资源）
+    std::vector<uint64_t> removeKeys;
+    if (scheduler->pollRemovals(removeKeys)) {
+        for (uint64_t chunkKey : removeKeys) {
+            auto it = chunkRenderCache.find(chunkKey);
+            if (it == chunkRenderCache.end()) continue;
+            for (auto& sec : it->second.sections) destroySectionBuffers(sec);
+            chunkRenderCache.erase(it);
+        }
+    }
+
+    std::vector<ChunkMeshResult> results;
+    if (scheduler->pollResults(results, MAX_CHUNKS_PER_FRAME) == 0) return;
+
+    for (auto& result : results) {
+        auto it = chunkRenderCache.find(result.chunkKey);
+        if (it == chunkRenderCache.end()) {
+            if (result.sections.empty()) continue;
+            int chunkX = (int)(result.chunkKey >> 32);
+            int chunkZ = (int)(result.chunkKey & 0xFFFFFFFF);
+            it = chunkRenderCache.try_emplace(result.chunkKey).first;
+            it->second.posX = chunkX * 16.0f;
+            it->second.posZ = chunkZ * 16.0f;
+        }
+        auto& renderData = it->second;
+
+        // 只删除掩码覆盖的旧 section 资源（部分替换，其余 section 不动）
+        for (auto secIt = renderData.sections.begin(); secIt != renderData.sections.end();) {
+            if (result.sectionMask & (1ULL << ((secIt->sectionY >> 4) & 63))) {
+                destroySectionBuffers(*secIt);
+                secIt = renderData.sections.erase(secIt);
+            } else {
+                ++secIt;
+            }
+        }
+        renderData.sections.reserve(renderData.sections.size() + result.sections.size());
+
+        // 整批上传掩码内重建的 section（同一帧内完成，保证视觉连续性；
+        // 移动端 UMA，host-visible 直传免 staging）
+        for (auto& secData : result.sections) {
+            ChunkSectionRenderData sec;
+            sec.sectionY = secData.sectionY;
+
+            std::vector<uint32_t> merged;
+            merged.reserve(secData.baseIndices.size() + secData.overlayIndices.size() + secData.waterIndices.size());
+            merged.insert(merged.end(), secData.baseIndices.begin(), secData.baseIndices.end());
+            merged.insert(merged.end(), secData.overlayIndices.begin(), secData.overlayIndices.end());
+            merged.insert(merged.end(), secData.waterIndices.begin(), secData.waterIndices.end());
+            if (merged.empty() || secData.packedVertices.empty()) continue;
+
+            sec.overlayIndexCount = static_cast<uint32_t>(secData.overlayIndices.size());
+            sec.waterIndexCount = static_cast<uint32_t>(secData.waterIndices.size());
+            sec.indexCount = static_cast<uint32_t>(merged.size());
+
+            if (!createHostBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, secData.packedVertices.data(),
+                                  secData.packedVertices.size() * sizeof(PackedVertex),
+                                  sec.vertexBuffer, sec.vertexMemory) ||
+                !createHostBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, merged.data(),
+                                  merged.size() * sizeof(uint32_t),
+                                  sec.indexBuffer, sec.indexMemory)) {
+                LOGE("Failed to create section buffers (sectionY=%d)", sec.sectionY);
+                destroySectionBuffers(sec);
+                continue;
+            }
+
+            renderData.sections.push_back(sec);
+        }
+    }
+}
+
+void VulkanRenderer::updateChunkUniforms(float cameraX, float cameraY, float cameraZ,
+                                         float pitch, float yaw, float skyR, float skyG, float skyB) {
+    if (!chunkUniformMapped) return;
+
+    glm::mat4 view = Camera::computeViewMatrix(cameraX, cameraY, cameraZ, pitch, yaw);
+    float aspect = (float)swapchainExtent.width / (float)swapchainExtent.height;
+    glm::mat4 proj = Camera::computeProjectionMatrix(CHUNK_FOV, aspect, CHUNK_NEAR, CHUNK_FAR);
+
+    // 视锥从未修正的 proj*view 提取（平面提取公式基于 GL 惯例 clip 空间）
+    glm::mat4 viewProj = proj * view;
+    computeFrustumPlanes(&viewProj[0][0]);
+
+    // glm::perspective 默认 GL 深度 [-1,1] → Vulkan [0,1]（z' = 0.5z + 0.5w）
+    glm::mat4 clipFix(1.0f);
+    clipFix[2][2] = 0.5f;
+    clipFix[3][2] = 0.5f;
+    proj = clipFix * proj;
+    proj[1][1] *= -1.0f;  // Vulkan NDC Y 轴向下
+
+    ChunkUBO ubo{};
+    memcpy(ubo.modelViewMat, &view[0][0], sizeof(float) * 16);
+    memcpy(ubo.projMat, &proj[0][0], sizeof(float) * 16);
+    ubo.fogColor[0] = skyR;
+    ubo.fogColor[1] = skyG;
+    ubo.fogColor[2] = skyB;
+    ubo.fogColor[3] = 1.0f;
+    ubo.fogParams[0] = CHUNK_FAR * 0.7f;  // FogStart
+    ubo.fogParams[1] = CHUNK_FAR;         // FogEnd
+    ubo.colorModulator[0] = 1.0f;
+    ubo.colorModulator[1] = 1.0f;
+    ubo.colorModulator[2] = 1.0f;
+    ubo.colorModulator[3] = 1.0f;
+
+    memcpy(chunkUniformMapped, &ubo, sizeof(ubo));
+    vmaFlushAllocation(allocator, chunkUniformMemory, 0, sizeof(ubo));
+}
+
+void VulkanRenderer::computeFrustumPlanes(const float* m) {
+    // 列主序 mat4：m[col*4+row]；六平面：左/右/底/顶/近/远（与 GL 侧同源）
+    for (int i = 0; i < 3; i++) {
+        for (int col = 0; col < 4; col++) {
+            frustumPlanes[i * 2 + 0][col] = m[col * 4 + 3] + m[col * 4 + i];
+            frustumPlanes[i * 2 + 1][col] = m[col * 4 + 3] - m[col * 4 + i];
+        }
+    }
+    for (auto& plane : frustumPlanes) {
+        float len = std::sqrt(plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2]);
+        if (len > 0.001f) {
+            for (float& v : plane) v /= len;
+        }
+    }
+}
+
+bool VulkanRenderer::isAABBInFrustum(float minX, float minY, float minZ,
+                                     float maxX, float maxY, float maxZ) const {
+    // p-vertex 测试：每平面只检法线方向投影最大的角点
+    for (const auto& pl : frustumPlanes) {
+        float px = (pl[0] > 0) ? maxX : minX;
+        float py = (pl[1] > 0) ? maxY : minY;
+        float pz = (pl[2] > 0) ? maxZ : minZ;
+        if (pl[0] * px + pl[1] * py + pl[2] * pz + pl[3] < 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void VulkanRenderer::renderChunks(VkCommandBuffer cmd) {
+    // 图集就绪前不绘制（描述符引用的图集 layout 还是 UNDEFINED）
+    if (!chunkResourcesReady || !atlasReady || chunkPipelineCutout == VK_NULL_HANDLE) return;
+
+    VkViewport viewport{};
+    viewport.width = (float)swapchainExtent.width;
+    viewport.height = (float)swapchainExtent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    VkRect2D scissor{ {0, 0}, swapchainExtent };
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, chunkPipelineLayout,
+                            0, 1, &chunkDescriptorSet, 0, nullptr);
+
+    VkDeviceSize vbOffset = 0;
+
+    // ---- Phase 1a: 基体几何（cutout，写深度）----
+    bool cutoutBound = false;
+    for (auto& [chunkKey, renderData] : chunkRenderCache) {
+        float minX = renderData.posX;
+        float maxX = minX + 16.0f;
+        float minZ = renderData.posZ;
+        float maxZ = minZ + 16.0f;
+        for (auto& sec : renderData.sections) {
+            uint32_t baseEnd = sec.indexCount - sec.overlayIndexCount - sec.waterIndexCount;
+            if (baseEnd == 0) continue;
+            float secMinY = (float)sec.sectionY;
+            if (!isAABBInFrustum(minX, secMinY, minZ, maxX, secMinY + 16.0f, maxZ)) continue;
+
+            if (!cutoutBound) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, chunkPipelineCutout);
+                cutoutBound = true;
+            }
+            vkCmdBindVertexBuffers(cmd, 0, 1, &sec.vertexBuffer, &vbOffset);
+            vkCmdBindIndexBuffer(cmd, sec.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, baseEnd, 1, 0, 0, 0);
+        }
+    }
+
+    // ---- Phase 1b: 覆盖层（cutout shader，LEQUAL 不写深度）----
+    bool overlayBound = false;
+    for (auto& [chunkKey, renderData] : chunkRenderCache) {
+        float minX = renderData.posX;
+        float maxX = minX + 16.0f;
+        float minZ = renderData.posZ;
+        float maxZ = minZ + 16.0f;
+        for (auto& sec : renderData.sections) {
+            if (sec.overlayIndexCount == 0) continue;
+            float secMinY = (float)sec.sectionY;
+            if (!isAABBInFrustum(minX, secMinY, minZ, maxX, secMinY + 16.0f, maxZ)) continue;
+
+            if (!overlayBound) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, chunkPipelineOverlay);
+                overlayBound = true;
+            }
+            uint32_t baseEnd = sec.indexCount - sec.overlayIndexCount - sec.waterIndexCount;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &sec.vertexBuffer, &vbOffset);
+            vkCmdBindIndexBuffer(cmd, sec.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, sec.overlayIndexCount, 1, baseEnd, 0, 0);
+        }
+    }
+
+    // ---- Phase 2: 水（translucent shader，不写深度）----
+    bool waterBound = false;
+    for (auto& [chunkKey, renderData] : chunkRenderCache) {
+        float minX = renderData.posX;
+        float maxX = minX + 16.0f;
+        float minZ = renderData.posZ;
+        float maxZ = minZ + 16.0f;
+        for (auto& sec : renderData.sections) {
+            if (sec.waterIndexCount == 0) continue;
+            float secMinY = (float)sec.sectionY;
+            if (!isAABBInFrustum(minX, secMinY, minZ, maxX, secMinY + 16.0f, maxZ)) continue;
+
+            if (!waterBound) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, chunkPipelineWater);
+                waterBound = true;
+            }
+            uint32_t overlayEnd = sec.indexCount - sec.waterIndexCount;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &sec.vertexBuffer, &vbOffset);
+            vkCmdBindIndexBuffer(cmd, sec.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, sec.waterIndexCount, 1, overlayEnd, 0, 0);
+        }
+    }
+}
+
 void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
                             float pitch, float yaw) {
     static int frameCount = 0;
@@ -971,6 +1647,19 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
     vkResetFences(device, 1, &inFlightFence);
     vkResetCommandBuffer(commandBuffers[imageIndex], 0);
 
+    // 断连清屏请求（上帧 fence 已过，GPU 不再引用旧 buffer，删除安全；
+    // 必须在 menuMode 判断之前处理：断连后 UI 状态已切回主菜单）
+    if (pendingChunkClear.exchange(false)) {
+        if (auto* scheduler = ClientEngine::getInstance() ? ClientEngine::getInstance()->getMeshScheduler() : nullptr) {
+            scheduler->clearAll();
+        }
+        for (auto& [chunkKey, renderData] : chunkRenderCache) {
+            for (auto& sec : renderData.sections) destroySectionBuffers(sec);
+        }
+        chunkRenderCache.clear();
+        LOGI("Chunk render data cleared (Vulkan)");
+    }
+
     // 主界面模式：非游戏状态下构建 ImGui 绘制数据（命令录制前）
     bool menuMode = imguiInitialized &&
                     GameUI::getInstance().getState() != UIState::IN_GAME;
@@ -992,6 +1681,35 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
         GameUI::getInstance().render();  // Vulkan 模式下仅构建 draw data，不提交
     }
 
+    // 游戏内：区块资源懒初始化 + 图集/lightmap/网格上传 + 调度 + UBO 更新
+    //（内部的一次性上传命令必须在帧命令录制之前提交）
+    float skyR = 0.53f, skyG = 0.81f, skyB = 0.92f;
+    bool inGame = GameUI::getInstance().getState() == UIState::IN_GAME;
+    if (inGame) {
+        if (!chunkInitAttempted) {
+            chunkInitAttempted = true;
+            chunkResourcesReady = initChunkResources();
+            if (!chunkResourcesReady) {
+                LOGE("Chunk resources init failed, chunk rendering disabled");
+            }
+        }
+        if (chunkResourcesReady) {
+            processChunkAtlas();
+            updateChunkLightmap();
+            processChunkCompletedWork();
+            if (auto* scheduler = ClientEngine::getInstance() ? ClientEngine::getInstance()->getMeshScheduler() : nullptr) {
+                scheduler->update(cameraX, cameraY, cameraZ, CHUNK_FAR);
+            }
+            auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+            if (game && game->getLight()) {
+                skyR = game->getLight()->getSkyColorR();
+                skyG = game->getLight()->getSkyColorG();
+                skyB = game->getLight()->getSkyColorB();
+            }
+            updateChunkUniforms(cameraX, cameraY, cameraZ, pitch, yaw, skyR, skyG, skyB);
+        }
+    }
+
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 
@@ -1008,10 +1726,10 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
     renderPassInfo.renderArea.extent = swapchainExtent;
 
     VkClearValue clearValues[2];
-    clearValues[0].color.float32[0] = 0.53f;  // R (天空蓝)
-    clearValues[0].color.float32[1] = 0.81f;  // G
-    clearValues[0].color.float32[2] = 0.92f;  // B
-    clearValues[0].color.float32[3] = 1.0f;   // A
+    clearValues[0].color.float32[0] = skyR;  // 天空色（游戏内随昼夜循环）
+    clearValues[0].color.float32[1] = skyG;
+    clearValues[0].color.float32[2] = skyB;
+    clearValues[0].color.float32[3] = 1.0f;
 
     clearValues[1].depthStencil.depth = 1.0f;     // 清除深度为最大值
     clearValues[1].depthStencil.stencil = 0;
@@ -1034,30 +1752,8 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
         }
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffers[imageIndex]);
     } else {
-        vkCmdBindPipeline(commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-
-        VkViewport viewport{};
-        viewport.x = 0.0f;
-        viewport.y = 0.0f;
-        viewport.width = (float)swapchainExtent.width;
-        viewport.height = (float)swapchainExtent.height;
-        viewport.minDepth = 0.0f;
-        viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(commandBuffers[imageIndex], 0, 1, &viewport);
-
-        VkRect2D scissor{};
-        scissor.offset = {0, 0};
-        scissor.extent = swapchainExtent;
-        vkCmdSetScissor(commandBuffers[imageIndex], 0, 1, &scissor);
-
-        VkBuffer vertexBuffers[] = {vertexBuffer};
-        VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(commandBuffers[imageIndex], 0, 1, vertexBuffers, offsets);
-        vkCmdBindIndexBuffer(commandBuffers[imageIndex], indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdBindDescriptorSets(commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                               pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
-
-        vkCmdDrawIndexed(commandBuffers[imageIndex], indexCount, 1, 0, 0, 0);
+        // 游戏内：区块三段绘制（图集就绪前只出天空色清屏）
+        renderChunks(commandBuffers[imageIndex]);
     }
 
     vkCmdEndRenderPass(commandBuffers[imageIndex]);

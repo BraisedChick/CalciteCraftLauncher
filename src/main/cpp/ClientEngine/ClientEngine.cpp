@@ -6,6 +6,7 @@
 #include "EntityRenderer.h"
 #include "TextureAtlas.h"
 #include "BlockRegistry.h"
+#include "BiomeColorManager.h"
 #include "TextureLoader.h"
 #include "utils.h"
 #include "Camera.h"
@@ -103,6 +104,8 @@ void ClientEngine::setupUICallbacks() {
             // 清空区块缓存
             if (client->getRenderer()) {
                 client->getRenderer()->clearChunks();
+            } else if (client->getVulkanRenderer()) {
+                client->getVulkanRenderer()->clearChunks();
             }
 
             // 销毁会话
@@ -143,8 +146,15 @@ bool ClientEngine::initializeRenderer(ANativeWindow* window) {
         return false;
     }
 
-    // Vulkan 路径（第一步：仅渲染主界面 ImGui）
+    // Vulkan 路径（主界面 ImGui + 区块渲染）
     if (s_rendererType == RendererType::Vulkan) {
+        // 网格生成依赖方块元数据/图集索引/群系着色（与 GL 路径同源初始化，
+        // GPU 纹理上传延迟到渲染线程分帧完成）
+        loadBlockRegistry();
+        m_textureAtlas->initialize();
+        m_blockRegistry->precomputeAll();
+        BiomeColorManager::getInstance().initialize();
+
         int w = ANativeWindow_getWidth(window);
         int h = ANativeWindow_getHeight(window);
         auto vkRenderer = std::make_unique<VulkanRenderer>();

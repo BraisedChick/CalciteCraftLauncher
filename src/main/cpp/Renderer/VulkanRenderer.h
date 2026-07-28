@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <atomic>
 #include <android/native_window.h>
 #include <android/asset_manager.h>
 #include "CommonTypes.h"
@@ -48,7 +49,43 @@ public:
     void invalidateSurface() { surfaceValid = false; }
     bool recreateSurface(ANativeWindow* window, int width, int height);
 
+    // 断连时清空全部区块渲染数据（任意线程可调，实际清理在渲染线程执行）
+    void clearChunks() { pendingChunkClear.store(true); }
+
 private:
+    // ===== 区块渲染（消费图形 API 无关的 ChunkMeshScheduler 产出）=====
+    // 与 GLRenderer 的 SectionRenderData 对位：每 section 一对 VB/IB，
+    // 索引顺序 base | overlay | water 三段合并
+    struct ChunkSectionRenderData {
+        int sectionY = 0;
+        VkBuffer vertexBuffer = VK_NULL_HANDLE;
+        VmaAllocation vertexMemory = VK_NULL_HANDLE;
+        VkBuffer indexBuffer = VK_NULL_HANDLE;
+        VmaAllocation indexMemory = VK_NULL_HANDLE;
+        uint32_t indexCount = 0;
+        uint32_t overlayIndexCount = 0;
+        uint32_t waterIndexCount = 0;
+    };
+    struct ChunkRenderData {
+        std::vector<ChunkSectionRenderData> sections;
+        float posX = 0.0f;   // 区块世界坐标（chunkX * 16）
+        float posZ = 0.0f;
+    };
+
+    bool initChunkResources();        // 首个游戏帧懒初始化：UBO/采样器/lightmap/描述符/管线
+    void destroyChunkResources();     // cleanup 时销毁全部区块资源（含缓存 buffer）
+    bool createChunkPipelines();      // 3 条管线：cutout(写深度)/overlay(不写)/water(translucent)
+    void destroyChunkPipelines();     // swapchain 重建路径销毁（renderPass 依赖）
+    void processChunkAtlas();         // 分批解码方块纹理，齐全后整体上传 2D array + 写描述符
+    void updateChunkLightmap();       // Light 像素变化时重传 16x16 lightmap
+    void processChunkCompletedWork(); // pollRemovals + pollResults → section buffer 上传
+    void destroySectionBuffers(ChunkSectionRenderData& sec);
+    void renderChunks(VkCommandBuffer cmd);  // 三段绘制（命令录制期调用）
+    void updateChunkUniforms(float cameraX, float cameraY, float cameraZ,
+                             float pitch, float yaw, float skyR, float skyG, float skyB);
+    void computeFrustumPlanes(const float* viewProj);  // 列主序 mat4
+    bool isAABBInFrustum(float minX, float minY, float minZ,
+                         float maxX, float maxY, float maxZ) const;
     struct SwapchainSupportDetails {
         VkSurfaceCapabilitiesKHR capabilities;
         std::vector<VkSurfaceFormatKHR> formats;
@@ -114,6 +151,13 @@ private:
                              uint32_t layers, VkImage image);
 
     static const int MAX_FRAMES_IN_FLIGHT = 1;
+
+    // 区块渲染常量（与 GLRenderer 对齐）
+    static constexpr float CHUNK_FOV = 70.0f;
+    static constexpr float CHUNK_NEAR = 0.1f;
+    static constexpr float CHUNK_FAR = 500.0f;
+    static constexpr int MAX_CHUNKS_PER_FRAME = 2;    // 每帧最多上传的区块数
+    static constexpr int TEXTURES_PER_FRAME = 200;    // 图集每帧解码的纹理层数
 
     // Core Vulkan objects
     VkInstance instance;
@@ -183,6 +227,43 @@ private:
     // ImGui 状态
     bool imguiInitialized = false;
     bool surfaceValid = true;
+
+    // ===== 区块渲染资源 =====
+    bool chunkInitAttempted = false;   // 懒初始化只尝试一次（失败不反复重试）
+    bool chunkResourcesReady = false;  // UBO/描述符/管线就绪
+    // 管线（依赖 renderPass，swapchain 重建时随之重建）
+    VkDescriptorSetLayout chunkSetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout chunkPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline chunkPipelineCutout = VK_NULL_HANDLE;    // 基体：写深度
+    VkPipeline chunkPipelineOverlay = VK_NULL_HANDLE;   // 覆盖层：cutout shader，不写深度
+    VkPipeline chunkPipelineWater = VK_NULL_HANDLE;     // 水：translucent shader，不写深度
+    // 描述符（binding0=UBO, binding1=图集, binding2=lightmap）
+    VkDescriptorPool chunkDescriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSet chunkDescriptorSet = VK_NULL_HANDLE;
+    // UBO（持久映射）
+    VkBuffer chunkUniformBuffer = VK_NULL_HANDLE;
+    VmaAllocation chunkUniformMemory = VK_NULL_HANDLE;
+    void* chunkUniformMapped = nullptr;
+    // 方块纹理数组（2D array，分批解码收集后一次上传）
+    VkImage chunkAtlasImage = VK_NULL_HANDLE;
+    VmaAllocation chunkAtlasMemory = VK_NULL_HANDLE;
+    VkImageView chunkAtlasView = VK_NULL_HANDLE;
+    VkSampler chunkAtlasSampler = VK_NULL_HANDLE;       // NEAREST + REPEAT
+    bool atlasReady = false;
+    int atlasLayerCount = 0;
+    int atlasWidth = 16;
+    int atlasHeight = 16;
+    int atlasNextLayer = 0;
+    std::vector<uint8_t> atlasStagingPixels;            // 分批解码累积区，上传后释放
+    // 光照贴图 16x16（LINEAR + CLAMP）
+    VkImage lightmapImage = VK_NULL_HANDLE;
+    VmaAllocation lightmapMemory = VK_NULL_HANDLE;
+    VkImageView lightmapView = VK_NULL_HANDLE;
+    VkSampler lightmapSampler = VK_NULL_HANDLE;
+    // 区块渲染缓存（仅渲染线程访问）与视锥平面
+    std::unordered_map<uint64_t, ChunkRenderData> chunkRenderCache;
+    float frustumPlanes[6][4] = {};
+    std::atomic<bool> pendingChunkClear{false};  // 断连清屏请求（跨线程）
 
     // 全景背景资源（cubemap + 独立管线，仅菜单模式使用）
     PanoramaView panoramaView;
