@@ -27,24 +27,12 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
-void GLRenderer::setChunkManager(ChunkManager* manager) {
-    chunkManager.store(manager);
-
-    // 标记需要重建网格，在渲染线程中执行
-    // 注意：不要遍历旧缓存设置 needsUpdate = true，
-    // 新区块在 rebuildMeshFromChunks 中创建时已经自动标记了 needsUpdate
-    if (manager && display != EGL_NO_DISPLAY) {
-        needRebuildMesh.store(true);
-    }
-}
-
 GLRenderer::GLRenderer()
         : display(EGL_NO_DISPLAY), context(EGL_NO_CONTEXT), surface(EGL_NO_SURFACE),
           textureArrayID(0),
           vertexCount(0), indexCount(0), screenWidth(0), screenHeight(0) {
     memset(cameraMatrix, 0, sizeof(cameraMatrix));
     memset(projectionMatrix, 0, sizeof(projectionMatrix));
-    startWorker();
 }
 
 GLRenderer::~GLRenderer() {
@@ -364,165 +352,14 @@ bool GLRenderer::createBuffers() {
     return true;
 }
 
-bool GLRenderer::rebuildMeshFromChunks() {
-    auto* mgr = chunkManager.load();
-    if (!mgr) {
-        LOGW("ChunkManager not set!");
-        return false;
-    }
-
-    int chunksEnqueued = 0;
-
-    // 摄像机位置（使用帧开始时保存的实际坐标，而非从视图矩阵提取）
-    glm::vec3 cameraPos(lastCameraX, lastCameraY, lastCameraZ);
-
-    // ===== 第一步：处理脏区块（由 markChunkForUpdate 标记的）=====
-    std::unordered_set<uint64_t> localDirty;
-    {
-        std::lock_guard<std::mutex> lock(cacheMutex);
-        localDirty.swap(dirtyChunks);
-    }
-
-    for (uint64_t chunkKey : localDirty) {
-        int chunkX = (int)(chunkKey >> 32);
-        int chunkZ = (int)(chunkKey & 0xFFFFFFFF);
-
-        auto chunk = mgr->getChunk(chunkX, chunkZ);
-        if (!chunk || !chunk->isLoaded) continue;
-
-        // 距离计算
-        float chunkCenterX = chunk->pos.x * 16.0f + 8.0f;
-        float chunkCenterZ = chunk->pos.z * 16.0f + 8.0f;
-        float distX = chunkCenterX - cameraPos.x;
-        float distZ = chunkCenterZ - cameraPos.z;
-        float distance = sqrt(distX * distX + distZ * distZ);
-
-        ChunkRenderData* renderData = nullptr;
-
-        {
-            std::lock_guard<std::mutex> lock(cacheMutex);
-            auto [it, inserted] = chunkRenderCache.try_emplace(chunkKey);
-            if (inserted) {
-                if (distance > farPlane) {
-                    chunkRenderCache.erase(it);
-                    continue;
-                }
-                it->second.position = glm::vec3(chunk->pos.x * 16.0f, 0.0f, chunk->pos.z * 16.0f);
-                it->second.needsUpdate = true;
-            }
-            renderData = &it->second;
-        }
-
-        // 距离剔除
-        if (distance > farPlane) {
-            renderData->visible = false;
-            continue;
-        }
-        renderData->visible = true;
-
-        if (renderData->needsUpdate && !renderData->pending) {
-            {
-                std::lock_guard<std::mutex> lock(pendingMutex);
-                if (pendingChunks.find(chunkKey) != pendingChunks.end()) continue;
-                pendingChunks.insert(chunkKey);
-                renderData->pending = true;
-            }
-            enqueueWork({chunkKey, chunk->pos.x, chunk->pos.z, distance});
-            chunksEnqueued++;
-        }
-    }
-
-    // ===== 第二步：发现新区块（仅在区块数量变化时扫描）=====
-    size_t currentCount = mgr->getLoadedChunkCount();
-    if (currentCount != lastChunkCount) {
-        lastChunkCount = currentCount;
-        auto allChunks = mgr->getAllChunks();
-
-        for (const auto& chunk : allChunks) {
-            if (!chunk || !chunk->isLoaded) continue;
-
-            uint64_t chunkKey = ((uint64_t)(chunk->pos.x & 0xFFFFFFFF) << 32) | (chunk->pos.z & 0xFFFFFFFF);
-
-            bool exists;
-            {
-                std::lock_guard<std::mutex> lock(cacheMutex);
-                exists = chunkRenderCache.find(chunkKey) != chunkRenderCache.end();
-            }
-            if (exists) continue;
-
-            // 距离计算
-            float chunkCenterX = chunk->pos.x * 16.0f + 8.0f;
-            float chunkCenterZ = chunk->pos.z * 16.0f + 8.0f;
-            float distX = chunkCenterX - cameraPos.x;
-            float distZ = chunkCenterZ - cameraPos.z;
-            float distance = sqrt(distX * distX + distZ * distZ);
-            if (distance > farPlane) continue;
-
-            ChunkRenderData* renderData = nullptr;
-            {
-                std::lock_guard<std::mutex> lock(cacheMutex);
-                auto [it, inserted] = chunkRenderCache.try_emplace(chunkKey);
-                if (inserted) {
-                    it->second.position = glm::vec3(chunk->pos.x * 16.0f, 0.0f, chunk->pos.z * 16.0f);
-                    it->second.needsUpdate = true;
-                }
-                renderData = &it->second;
-            }
-
-            renderData->visible = true;
-
-            // 新区块立即入队网格生成
-            if (renderData->needsUpdate && !renderData->pending) {
-                {
-                    std::lock_guard<std::mutex> lock(pendingMutex);
-                    if (pendingChunks.find(chunkKey) != pendingChunks.end()) continue;
-                    pendingChunks.insert(chunkKey);
-                    renderData->pending = true;
-                }
-                enqueueWork({chunkKey, chunk->pos.x, chunk->pos.z, distance});
-                chunksEnqueued++;
-            }
-        }
-    }
-
-    if (chunksEnqueued > 0) {
-        LOGI("rebuildMeshFromChunks: enqueued %d dirty chunks", chunksEnqueued);
-    }
-
-    return false;  // 脏区块方式不需要反复调用
-}
-
-void GLRenderer::markChunkForUpdate(int chunkX, int chunkZ) {
-    uint64_t chunkKey = ((uint64_t)(chunkX & 0xFFFFFFFF) << 32) | (chunkZ & 0xFFFFFFFF);
-    {
-        std::lock_guard<std::mutex> lock(cacheMutex);
-        auto it = chunkRenderCache.find(chunkKey);
-        if (it != chunkRenderCache.end()) {
-            it->second.needsUpdate = true;
-        }
-        dirtyChunks.insert(chunkKey);
-    }
-    needRebuildMesh.store(true);
-}
-
-void GLRenderer::removeChunk(int chunkX, int chunkZ) {
-    uint64_t chunkKey = ((uint64_t)(chunkX & 0xFFFFFFFF) << 32) | (chunkZ & 0xFFFFFFFF);
-    {
-        std::lock_guard<std::mutex> lock(cacheMutex);
-        chunksToRemove.insert(chunkKey);
-        dirtyChunks.erase(chunkKey);   // 取消排队中的更新
-    }
-    {
-        std::lock_guard<std::mutex> lock(pendingMutex);
-        pendingChunks.erase(chunkKey);
-    }
-}
-
 void GLRenderer::processChunkRemovals() {
-    // 渲染线程调用（GL context 已 current）：安全删除 VAO/VBO/EBO
+    // 渲染线程调用（GL context 已 current）：领取调度器的待卸载 key，安全删除 VAO/VBO/EBO
+    auto* scheduler = ClientEngine::getInstance() ? ClientEngine::getInstance()->getMeshScheduler() : nullptr;
+    if (!scheduler) return;
+    std::vector<uint64_t> removeKeys;
+    if (!scheduler->pollRemovals(removeKeys)) return;
     std::lock_guard<std::mutex> lock(cacheMutex);
-    if (chunksToRemove.empty()) return;
-    for (uint64_t chunkKey : chunksToRemove) {
+    for (uint64_t chunkKey : removeKeys) {
         auto it = chunkRenderCache.find(chunkKey);
         if (it == chunkRenderCache.end()) continue;
         for (auto& sec : it->second.sections) {
@@ -532,31 +369,6 @@ void GLRenderer::processChunkRemovals() {
         }
         chunkRenderCache.erase(it);
     }
-    chunksToRemove.clear();
-}
-
-// ===== 工作线程：离线网格生成，不阻塞渲染线程 =====
-
-void GLRenderer::startWorker() {
-    workerRunning = true;
-    for (int i = 0; i < WORKER_THREAD_COUNT; i++) {
-        workerThreads.emplace_back(&GLRenderer::workerLoop, this);
-    }
-    LOGI("Started %d mesh worker threads", WORKER_THREAD_COUNT);
-}
-
-void GLRenderer::stopWorker() {
-    {
-        std::lock_guard<std::mutex> lock(workMutex);
-        workerRunning = false;
-    }
-    workCV.notify_all();
-    for (auto& t : workerThreads) {
-        if (t.joinable()) {
-            t.join();
-        }
-    }
-    workerThreads.clear();
 }
 
 void GLRenderer::clearChunks() {
@@ -566,24 +378,12 @@ void GLRenderer::clearChunks() {
 void GLRenderer::doClearChunks() {
     LOGI("doClearChunks: Clearing all chunk render data...");
 
-    // 1. 停止所有工作线程
-    stopWorker();
-
-    // 2. 清空所有队列
-    {
-        std::lock_guard<std::mutex> lock(workMutex);
-        while (!workQueue.empty()) workQueue.pop();
-    }
-    {
-        std::lock_guard<std::mutex> lock(resultMutex);
-        while (!resultQueue.empty()) resultQueue.pop();
-    }
-    {
-        std::lock_guard<std::mutex> lock(pendingMutex);
-        pendingChunks.clear();
+    // 1. 清空调度器全部状态（脏标记/队列/worker 重启，单点清理避免双清吞掉新脏标记）
+    if (auto* scheduler = ClientEngine::getInstance() ? ClientEngine::getInstance()->getMeshScheduler() : nullptr) {
+        scheduler->clearAll();
     }
 
-    // 3. 删除所有区块的 VAO/VBO/EBO（渲染线程，GL context 已 current）
+    // 2. 删除所有区块的 VAO/VBO/EBO（渲染线程，GL context 已 current）
     {
         std::lock_guard<std::mutex> lock(cacheMutex);
         for (auto& [chunkKey, renderData] : chunkRenderCache) {
@@ -595,302 +395,114 @@ void GLRenderer::doClearChunks() {
             renderData.sections.clear();
         }
         chunkRenderCache.clear();
-        dirtyChunks.clear();
-        chunksToRemove.clear();
-        lastChunkCount = 0;
     }
-
-    needRebuildMesh.store(false);
-
-    // 4. 重新启动工作线程
-    startWorker();
 
     LOGI("doClearChunks: All chunk render data cleared");
 }
 
-void GLRenderer::enqueueWork(ChunkWorkItem item) {
-    {
-        std::lock_guard<std::mutex> lock(workMutex);
-        workQueue.push(std::move(item));
-    }
-    workCV.notify_one();
-}
-
-// ===== Sodium 风格遮挡剔除：预计算 section 内部连通性 =====
-// 方向: 0=DOWN 1=UP 2=NORTH 3=SOUTH 4=WEST 5=EAST
-// 结果: bit(from*8+to)=1 表示 from 面→to 面在 section 内部可达
-static const int FACE_AXIS[6] = {1,1,2,2,0,0};
-static const int FACE_VAL[6]  = {0,15,0,15,0,15};
-
-static uint64_t computeSectionVisibility(const ChunkSection& section) {
-    auto toIdx = [](int x,int y,int z){ return (y<<8)|(z<<4)|x; };
-    bool isSolid[16*16*16]={false};
-    int solidCount=0;
-    for(int y=0;y<16;y++) for(int z=0;z<16;z++) for(int x=0;x<16;x++){
-        int idx=toIdx(x,y,z);
-        int32_t st=section.blockStates[idx];
-        if(!st) continue;
-        auto& meta=ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(st);
-        if(meta.isFullBlock&&meta.isOpaque) { isSolid[idx]=true; solidCount++; }
-    }
-    if(solidCount==4096) return 0;
-    if(solidCount<256) return ~0ULL;
-    static const int NB[6][3]={{0,-1,0},{0,1,0},{0,0,-1},{0,0,1},{-1,0,0},{1,0,0}};
-    uint64_t vis=0;
-    int queue[4096];
-    for(int of=0;of<6;of++){
-        bool visited[4096]={false};
-        int qH=0,qT=0;
-        int fix=FACE_AXIS[of],val=FACE_VAL[of],a1=(fix+1)%3,a2=(fix+2)%3;
-        for(int d1=0;d1<16;d1++) for(int d2=0;d2<16;d2++){
-            int c[3]; c[fix]=val; c[a1]=d1; c[a2]=d2;
-            int idx=toIdx(c[0],c[1],c[2]);
-            if(!isSolid[idx]&&!visited[idx]){ visited[idx]=true; queue[qT++]=idx; }
-        }
-        while(qH<qT){
-            int cur=queue[qH++],cx=cur&0xF,cy=(cur>>8)&0xF,cz=(cur>>4)&0xF;
-            for(int d=0;d<6;d++){
-                int nx=cx+NB[d][0],ny=cy+NB[d][1],nz=cz+NB[d][2];
-                if((unsigned)nx>=16||(unsigned)ny>=16||(unsigned)nz>=16) continue;
-                int ni=toIdx(nx,ny,nz);
-                if(!isSolid[ni]&&!visited[ni]){ visited[ni]=true; queue[qT++]=ni; }
-            }
-        }
-        vis|=1ULL<<(of*8+of);
-        for(int tf=0;tf<6;tf++){
-            if(tf==of) continue;
-            int tfx=FACE_AXIS[tf],tfv=FACE_VAL[tf],ta1=(tfx+1)%3,ta2=(tfx+2)%3;
-            bool ok=false;
-            for(int d1=0;d1<16&&!ok;d1++) for(int d2=0;d2<16&&!ok;d2++){
-                int c[3]; c[tfx]=tfv; c[ta1]=d1; c[ta2]=d2;
-                if(visited[toIdx(c[0],c[1],c[2])]) ok=true;
-            }
-            if(ok) vis|=1ULL<<(of*8+tf);
-        }
-    }
-    return vis;
-}
-
-void GLRenderer::workerLoop() {
-    LOGI("Mesh worker thread started");
-
-    // 线程局部的 scratch vectors，跨 section/chunk 复用避免反复分配
-    std::vector<Vertex> wl_baseVertices, wl_overlayVertices, wl_waterVertices;
-    std::vector<uint32_t> wl_baseIndices, wl_overlayIndices, wl_waterIndices;
-
-    while (workerRunning) {
-        ChunkWorkItem item;
-        {
-            std::unique_lock<std::mutex> lock(workMutex);
-            workCV.wait(lock, [this]() {
-                return !workQueue.empty() || !workerRunning;
-            });
-
-            if (!workerRunning) break;
-
-            item = workQueue.top();
-            workQueue.pop();
-        }
-
-        // 在工作线程中生成网格（CPU 密集，不涉及 OpenGL）
-        // shared_ptr 确保区块在工作期间不会被网络线程卸载
-        auto* mgr = chunkManager.load();
-        auto chunk = mgr ? mgr->getChunk(item.chunkX, item.chunkZ) : nullptr;
-        if (!chunk || !chunk->isLoaded) {
-            // 区块不存在，从 pending 中移除
-            std::lock_guard<std::mutex> lock(pendingMutex);
-            pendingChunks.erase(item.chunkKey);
-            continue;
-        }
-
-        ChunkMeshResult result;
-        result.chunkKey = item.chunkKey;
-
-        for (size_t sectionIdx = 0; sectionIdx < chunk->sections.size(); ++sectionIdx) {
-            const auto& section = chunk->sections[sectionIdx];
-            if (!section || section->isEmpty) continue;
-
-            auto meshOut = MeshGenerator::generateSectionMesh(
-                *section, item.chunkX, section->y, item.chunkZ, chunkManager,
-                wl_baseVertices, wl_baseIndices,
-                wl_overlayVertices, wl_overlayIndices,
-                wl_waterVertices, wl_waterIndices);
-
-            if (meshOut.vertices.empty()) continue;
-
-            ChunkMeshResult::SectionData secData;
-            secData.sectionY = section->y;
-            secData.visibilityData = computeSectionVisibility(*section);
-
-            // 在工作线程压缩 Vertex（48B）→ PackedVertex（32B），减轻渲染线程负担
-            auto& srcVerts = meshOut.vertices;
-            secData.packedVertices.resize(srcVerts.size());
-            for (size_t vi = 0; vi < srcVerts.size(); vi++) {
-                const auto& src = srcVerts[vi];
-                auto& dst = secData.packedVertices[vi];
-                // pos: 世界坐标，float 不压缩，无精度损失
-                memcpy(dst.pos, src.pos, sizeof(float) * 3);
-                dst.texIndex = src.texIndex;
-                memcpy(dst.color, src.color, 4);
-                // uv: [0,1] → [0,65535]
-                dst.uv[0] = (uint16_t)(src.texCoord[0] * 65535.0f + 0.5f);
-                dst.uv[1] = (uint16_t)(src.texCoord[1] * 65535.0f + 0.5f);
-                // normal: [-1,1] → [-127,127]
-                dst.normal[0] = (int8_t)(src.normal[0] * 127.0f);
-                dst.normal[1] = (int8_t)(src.normal[1] * 127.0f);
-                dst.normal[2] = (int8_t)(src.normal[2] * 127.0f);
-                dst.normal[3] = 0;
-                // uv2: lightmap [0,240] → [0,65535]
-                dst.uv2[0] = (uint16_t)(src.uv2[0] + 0.5f);
-                dst.uv2[1] = (uint16_t)(src.uv2[1] + 0.5f);
-            }
-
-            size_t regularCount = meshOut.indices.size()
-                - meshOut.overlayIndexCount - meshOut.waterIndexCount;
-
-            secData.baseIndices.assign(
-                meshOut.indices.begin(),
-                meshOut.indices.begin() + regularCount);
-
-            size_t ovStart = regularCount;
-            if (meshOut.overlayIndexCount > 0) {
-                secData.overlayIndices.assign(
-                    meshOut.indices.begin() + ovStart,
-                    meshOut.indices.begin() + ovStart + meshOut.overlayIndexCount);
-            }
-
-            size_t watStart = ovStart + meshOut.overlayIndexCount;
-            if (meshOut.waterIndexCount > 0) {
-                secData.waterIndices.assign(
-                    meshOut.indices.begin() + watStart,
-                    meshOut.indices.end());
-            }
-
-            result.sections.push_back(std::move(secData));
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(resultMutex);
-            resultQueue.push(std::move(result));
-        }
-    }
-
-    LOGI("Mesh worker thread stopped");
-}
-
 void GLRenderer::processCompletedWork() {
+    auto* scheduler = ClientEngine::getInstance() ? ClientEngine::getInstance()->getMeshScheduler() : nullptr;
+    if (!scheduler) return;
+
     // 先处理服务端要求卸载的区块（在上传新网格前，避免给已卸载区块白建资源）
     processChunkRemovals();
 
-    // 将新完成的结果追加到待处理队列
-    {
-        std::lock_guard<std::mutex> lock(resultMutex);
-        while (!resultQueue.empty()) {
-            pendingResults.push(std::move(resultQueue.front()));
-            resultQueue.pop();
+    // 每帧最多领取 MAX_CHUNKS_PER_FRAME 个 chunk（但每个 chunk 整批上传，避免闪光）
+    std::vector<ChunkMeshResult> results;
+    if (scheduler->pollResults(results, MAX_CHUNKS_PER_FRAME) == 0) return;
+
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    for (auto& result : results) {
+        auto it = chunkRenderCache.find(result.chunkKey);
+        if (it == chunkRenderCache.end()) {
+            // 空结果且无旧条目：无需创建缓存
+            if (result.sections.empty()) continue;
+            // 首个结果到达时创建缓存条目（position 从 chunkKey 解码）
+            int chunkX = (int)(result.chunkKey >> 32);
+            int chunkZ = (int)(result.chunkKey & 0xFFFFFFFF);
+            it = chunkRenderCache.try_emplace(result.chunkKey).first;
+            it->second.position = glm::vec3(chunkX * 16.0f, 0.0f, chunkZ * 16.0f);
         }
-    }
+        auto& renderData = it->second;
 
-    // 每帧最多处理 MAX_CHUNKS_PER_FRAME 个 chunk（但每个 chunk 整批上传，避免闪光）
-    int chunksProcessed = 0;
-
-    while (!pendingResults.empty() && chunksProcessed < MAX_CHUNKS_PER_FRAME) {
-        auto& result = pendingResults.front();
-        bool processed = false;
-
-        {
-            std::lock_guard<std::mutex> lock(cacheMutex);
-            auto it = chunkRenderCache.find(result.chunkKey);
-            if (it != chunkRenderCache.end()) {
-                processed = true;
-                auto& renderData = it->second;
-
-                // 删除旧的 section 资源（替换为新几何体）
-                for (auto& sec : renderData.sections) {
-                    if (sec.vao) glDeleteVertexArrays(1, &sec.vao);
-                    if (sec.vbo) glDeleteBuffers(1, &sec.vbo);
-                    if (sec.ebo) glDeleteBuffers(1, &sec.ebo);
-                }
-                renderData.sections.clear();
-                renderData.sections.reserve(result.sections.size());
-
-                // 整批上传所有 section（同一帧内完成，保证视觉连续性）
-                for (auto& secData : result.sections) {
-                    SectionRenderData sec;
-                    sec.sectionY = secData.sectionY;
-                    sec.visibilityData = secData.visibilityData;
-
-                    // 上传工作线程已压缩好的 VBO
-                    glGenBuffers(1, &sec.vbo);
-                    glBindBuffer(GL_ARRAY_BUFFER, sec.vbo);
-                    glBufferData(GL_ARRAY_BUFFER,
-                                secData.packedVertices.size() * sizeof(PackedVertex),
-                                secData.packedVertices.data(), GL_STATIC_DRAW);
-
-                    // 合并索引
-                    std::vector<uint32_t> merged;
-                    merged.reserve(secData.baseIndices.size() + secData.overlayIndices.size() + secData.waterIndices.size());
-                    merged.insert(merged.end(), secData.baseIndices.begin(), secData.baseIndices.end());
-                    merged.insert(merged.end(), secData.overlayIndices.begin(), secData.overlayIndices.end());
-                    merged.insert(merged.end(), secData.waterIndices.begin(), secData.waterIndices.end());
-
-                    sec.overlayIndexCount = static_cast<uint32_t>(secData.overlayIndices.size());
-                    sec.waterIndexCount = static_cast<uint32_t>(secData.waterIndices.size());
-                    sec.indexCount = static_cast<uint32_t>(merged.size());
-
-                    // 创建 EBO
-                    glGenBuffers(1, &sec.ebo);
-                    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sec.ebo);
-                    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-                                merged.size() * sizeof(uint32_t),
-                                merged.data(), GL_STATIC_DRAW);
-
-                    // 创建并配置 VAO
-                    glGenVertexArrays(1, &sec.vao);
-                    glBindVertexArray(sec.vao);
-                    glBindBuffer(GL_ARRAY_BUFFER, sec.vbo);
-                    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sec.ebo);
-                    // location 0: Position (GL_FLOAT, 3分量)
-                    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PackedVertex),
-                        (void*)offsetof(PackedVertex, pos));
-                    glEnableVertexAttribArray(0);
-                    // location 1: UV0 (GL_UNSIGNED_SHORT, 归一化)
-                    glVertexAttribPointer(1, 2, GL_UNSIGNED_SHORT, GL_TRUE, sizeof(PackedVertex),
-                        (void*)offsetof(PackedVertex, uv));
-                    glEnableVertexAttribArray(1);
-                    // location 2: TexIndex (GL_FLOAT)
-                    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(PackedVertex),
-                        (void*)offsetof(PackedVertex, texIndex));
-                    glEnableVertexAttribArray(2);
-                    // location 3: Color (GL_UNSIGNED_BYTE, 归一化)
-                    glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(PackedVertex),
-                        (void*)offsetof(PackedVertex, color));
-                    glEnableVertexAttribArray(3);
-                    // location 4: Normal (GL_BYTE, 归一化, 4分量→第4个未用)
-                    glVertexAttribPointer(4, 4, GL_BYTE, GL_TRUE, sizeof(PackedVertex),
-                        (void*)offsetof(PackedVertex, normal));
-                    glEnableVertexAttribArray(4);
-                    // location 5: UV2 (GL_UNSIGNED_SHORT, 原始值，shader 内除以 256)
-                    glVertexAttribPointer(5, 2, GL_UNSIGNED_SHORT, GL_FALSE, sizeof(PackedVertex),
-                        (void*)offsetof(PackedVertex, uv2));
-                    glEnableVertexAttribArray(5);
-                    glBindVertexArray(0);
-
-                    renderData.sections.push_back(std::move(sec));
-                }
-
-                renderData.needsUpdate = false;
-                renderData.pending = false;
+        // 只删除掩码覆盖的旧 section 资源（部分替换，其余 section 不动）
+        // 掩码内但新结果里没有的 section = 重建后变空，直接移除
+        for (auto secIt = renderData.sections.begin(); secIt != renderData.sections.end();) {
+            if (result.sectionMask & (1ULL << ((secIt->sectionY >> 4) & 63))) {
+                if (secIt->vao) glDeleteVertexArrays(1, &secIt->vao);
+                if (secIt->vbo) glDeleteBuffers(1, &secIt->vbo);
+                if (secIt->ebo) glDeleteBuffers(1, &secIt->ebo);
+                secIt = renderData.sections.erase(secIt);
+            } else {
+                ++secIt;
             }
         }
+        renderData.sections.reserve(renderData.sections.size() + result.sections.size());
 
-        // chunk 成功处理 → 从 pending 清除
-        if (processed) {
-            std::lock_guard<std::mutex> lock(pendingMutex);
-            pendingChunks.erase(result.chunkKey);
+        // 整批上传掩码内重建的 section（同一帧内完成，保证视觉连续性）
+        for (auto& secData : result.sections) {
+            SectionRenderData sec;
+            sec.sectionY = secData.sectionY;
+            sec.visibilityData = secData.visibilityData;
+
+            // 上传工作线程已压缩好的 VBO
+            glGenBuffers(1, &sec.vbo);
+            glBindBuffer(GL_ARRAY_BUFFER, sec.vbo);
+            glBufferData(GL_ARRAY_BUFFER,
+                        secData.packedVertices.size() * sizeof(PackedVertex),
+                        secData.packedVertices.data(), GL_STATIC_DRAW);
+
+            // 合并索引
+            std::vector<uint32_t> merged;
+            merged.reserve(secData.baseIndices.size() + secData.overlayIndices.size() + secData.waterIndices.size());
+            merged.insert(merged.end(), secData.baseIndices.begin(), secData.baseIndices.end());
+            merged.insert(merged.end(), secData.overlayIndices.begin(), secData.overlayIndices.end());
+            merged.insert(merged.end(), secData.waterIndices.begin(), secData.waterIndices.end());
+
+            sec.overlayIndexCount = static_cast<uint32_t>(secData.overlayIndices.size());
+            sec.waterIndexCount = static_cast<uint32_t>(secData.waterIndices.size());
+            sec.indexCount = static_cast<uint32_t>(merged.size());
+
+            // 创建 EBO
+            glGenBuffers(1, &sec.ebo);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sec.ebo);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                        merged.size() * sizeof(uint32_t),
+                        merged.data(), GL_STATIC_DRAW);
+
+            // 创建并配置 VAO
+            glGenVertexArrays(1, &sec.vao);
+            glBindVertexArray(sec.vao);
+            glBindBuffer(GL_ARRAY_BUFFER, sec.vbo);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sec.ebo);
+            // location 0: Position (GL_FLOAT, 3分量)
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PackedVertex),
+                (void*)offsetof(PackedVertex, pos));
+            glEnableVertexAttribArray(0);
+            // location 1: UV0 (GL_UNSIGNED_SHORT, 归一化)
+            glVertexAttribPointer(1, 2, GL_UNSIGNED_SHORT, GL_TRUE, sizeof(PackedVertex),
+                (void*)offsetof(PackedVertex, uv));
+            glEnableVertexAttribArray(1);
+            // location 2: TexIndex (GL_FLOAT)
+            glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(PackedVertex),
+                (void*)offsetof(PackedVertex, texIndex));
+            glEnableVertexAttribArray(2);
+            // location 3: Color (GL_UNSIGNED_BYTE, 归一化)
+            glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(PackedVertex),
+                (void*)offsetof(PackedVertex, color));
+            glEnableVertexAttribArray(3);
+            // location 4: Normal (GL_BYTE, 归一化, 4分量→第4个未用)
+            glVertexAttribPointer(4, 4, GL_BYTE, GL_TRUE, sizeof(PackedVertex),
+                (void*)offsetof(PackedVertex, normal));
+            glEnableVertexAttribArray(4);
+            // location 5: UV2 (GL_UNSIGNED_SHORT, 原始值，shader 内除以 256)
+            glVertexAttribPointer(5, 2, GL_UNSIGNED_SHORT, GL_FALSE, sizeof(PackedVertex),
+                (void*)offsetof(PackedVertex, uv2));
+            glEnableVertexAttribArray(5);
+            glBindVertexArray(0);
+
+            renderData.sections.push_back(std::move(sec));
         }
-        pendingResults.pop();
-        chunksProcessed++;
     }
 }
 
@@ -999,11 +611,6 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         return;
     }
 
-    // 保存当前帧的相机位置（供 rebuildMeshFromChunks 等使用）
-    lastCameraX = cx;
-    lastCameraY = cy;
-    lastCameraZ = cz;
-
     auto& ui = GameUI::getInstance();
 
     // 菜单状态：渲染全景背景 + ImGui
@@ -1034,9 +641,9 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         finishTextureInit();
     }
 
-    // 如果需要重建网格，在渲染线程中入队新任务
-    if (needRebuildMesh) {
-        needRebuildMesh = rebuildMeshFromChunks();
+    // 区块网格调度（公共组件：脏标记消化 + 新区块发现 + worker 派发）
+    if (auto* scheduler = ClientEngine::getInstance() ? ClientEngine::getInstance()->getMeshScheduler() : nullptr) {
+        scheduler->update(cx, cy, cz, farPlane);
     }
 
     // ===== 昼夜循环：更新天空颜色 + 光照贴图上传（GL 纹理归渲染器所有，Light 只产出像素）=====
@@ -1151,7 +758,7 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
 
     // ---- Phase 1a: 基体几何（纯深度测试，写深度）----
     for (auto& [chunkKey, renderData] : chunkRenderCache) {
-        if (!renderData.visible || renderData.sections.empty()) continue;
+        if (renderData.sections.empty()) continue;
 
         float minX = renderData.position.x;
         float maxX = minX + 16.0f;
@@ -1179,7 +786,6 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     {
         bool blendEnabled = false;
         for (auto& [chunkKey, renderData] : chunkRenderCache) {
-            if (!renderData.visible) continue;
             float minX = renderData.position.x;
             float maxX = minX + 16.0f;
             float minZ = renderData.position.z;
@@ -1216,7 +822,6 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     if (shaderTranslucent.program != 0) {
         bool waterStateSet = false;
         for (auto& [chunkKey, renderData] : chunkRenderCache) {
-            if (!renderData.visible) continue;
             float minX = renderData.position.x;
             float maxX = minX + 16.0f;
             float minZ = renderData.position.z;
@@ -1800,23 +1405,6 @@ void GLRenderer::renderPanoramaToFBO() {
 }
 
 void GLRenderer::cleanup() {
-    // 先停止工作线程
-    stopWorker();
-
-    // 清空工作队列
-    {
-        std::lock_guard<std::mutex> lock(workMutex);
-        while (!workQueue.empty()) workQueue.pop();
-    }
-    {
-        std::lock_guard<std::mutex> lock(resultMutex);
-        while (!resultQueue.empty()) resultQueue.pop();
-    }
-    {
-        std::lock_guard<std::mutex> lock(pendingMutex);
-        pendingChunks.clear();
-    }
-
     // 重置纹理初始化状态
     textureInitPending = true;
 

@@ -6,7 +6,9 @@
 #include <thread>
 #include <condition_variable>
 #include <unordered_set>
+#include <unordered_map>
 #include <vector>
+#include <tuple>
 #include <utility>
 
 class ChunkManager;
@@ -44,7 +46,8 @@ public:
     void queueLightRecalc(int worldX, int worldY, int worldZ);
 
     /// 取走光照更新波及的脏 chunk 列表（渲染线程调用，用于精准 remesh）
-    bool pollDirtyLightChunks(std::vector<std::pair<int, int>>& outChunks);
+    /// 每项为 (chunkX, chunkZ, sectionMask)，掩码 bit = (sectionY >> 4) & 63
+    bool pollDirtyLightChunks(std::vector<std::tuple<int, int, uint64_t>>& outChunks);
 
     /// 根据方块名称获取发光等级（0-15），仅供 BlockRegistry 加载时预计算 emission
     static int getBlockEmission(const char* blockName);
@@ -74,7 +77,7 @@ private:
     std::condition_variable inputCV;
     std::unordered_set<uint64_t> pendingNodes;
 
-    // 输出（工作线程 → 渲染线程）：本轮传播波及的脏 chunk key 集合
+    // 输出（工作线程 → 渲染线程）：本轮传播波及的脏 chunk key → section 掩码
     std::mutex outputMutex;
-    std::unordered_set<uint64_t> dirtyChunkKeys;
+    std::unordered_map<uint64_t, uint64_t> dirtyChunkKeys;
 };

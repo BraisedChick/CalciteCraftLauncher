@@ -5,6 +5,7 @@
 #include "Compression.h"
 #include "ChunkManager.h"
 #include "Renderer/GLRenderer.h"
+#include "Renderer/ChunkMeshScheduler.h"
 #include "utils.h"
 #include "MinecraftVersion.h"
 #include "Camera.h"
@@ -109,7 +110,7 @@ GameEngine::~GameEngine() {
     if (chunkManager) {
         m_collision->setChunkManager(nullptr);
         m_light->setChunkManager(nullptr);
-        if (getRenderer()) getRenderer()->setChunkManager(nullptr);
+        if (getMeshScheduler()) getMeshScheduler()->setChunkManager(nullptr);
     }
 
     // 3. 智能指针自动清理其余资源
@@ -117,6 +118,10 @@ GameEngine::~GameEngine() {
 
 GLRenderer* GameEngine::getRenderer() {
     return m_client ? m_client->getRenderer() : nullptr;
+}
+
+ChunkMeshScheduler* GameEngine::getMeshScheduler() {
+    return m_client ? m_client->getMeshScheduler() : nullptr;
 }
 
 void GameEngine::setAuthInfo(const std::string& accessToken, const std::string& uuid, const std::string& tokenType) {
@@ -260,12 +265,12 @@ bool GameEngine::start(const std::string& host, int port) {
     chunkManager = std::make_unique<ChunkManager>();
 
     // chunkManager 刚创建，通知相关模块更新指针
-    if (getRenderer()) {
-        getRenderer()->setChunkManager(chunkManager.get());
+    if (getMeshScheduler()) {
+        getMeshScheduler()->setChunkManager(chunkManager.get());
     }
     m_collision->setChunkManager(chunkManager.get());
     m_light->setChunkManager(chunkManager.get());
-    LOGI("ChunkManager created and linked to renderer/collision/light");
+    LOGI("ChunkManager created and linked to scheduler/collision/light");
 
     net = std::make_unique<NetworkManager>();
     if (!net->connect(host, port)) {

@@ -6,7 +6,7 @@
 #include "ClientEngine/GameEngine.h"
 #include "NetworkManager/handlers/PacketHandlerBase.h"
 #include "ChunkManager.h"
-#include "Renderer/GLRenderer.h"
+#include "Renderer/ChunkMeshScheduler.h"
 #include "Light.h"
 #include "EntityManager.h"
 #include "gui/GameUI.h"
@@ -360,8 +360,8 @@ void NetworkManager::chunkWorkerFunc() {
             if (task.isUnload) {
                 // 服务端 ForgetLevelChunk：释放区块数据 + 渲染资源
                 m_engine->chunkManager->unloadChunk(task.chunkX, task.chunkZ);
-                if (m_engine->getRenderer()) {
-                    m_engine->getRenderer()->removeChunk(task.chunkX, task.chunkZ);
+                if (m_engine->getMeshScheduler()) {
+                    m_engine->getMeshScheduler()->removeChunk(task.chunkX, task.chunkZ);
                 }
             } else {
                 parseChunkDataPacket(task.rawData, 0);
@@ -453,8 +453,8 @@ void NetworkManager::parseChunkDataPacket(const std::vector<uint8_t>& data, size
             }
         }
 
-        if (m_engine && m_engine->getRenderer()) {
-            m_engine->getRenderer()->markChunkForUpdate(cx, cz);
+        if (m_engine && m_engine->getMeshScheduler()) {
+            m_engine->getMeshScheduler()->markChunkForUpdate(cx, cz);
         }
     } catch (const std::exception& e) {
         LOGW("Chunk worker: failed to load chunk (%d,%d): %s", cx, cz, e.what());

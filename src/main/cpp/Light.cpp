@@ -251,13 +251,13 @@ void Light::queueLightRecalc(int worldX, int worldY, int worldZ) {
     inputCV.notify_one();
 }
 
-bool Light::pollDirtyLightChunks(std::vector<std::pair<int, int>>& outChunks) {
+bool Light::pollDirtyLightChunks(std::vector<std::tuple<int, int, uint64_t>>& outChunks) {
     std::lock_guard<std::mutex> lock(outputMutex);
     if (dirtyChunkKeys.empty()) return false;
     outChunks.clear();
     outChunks.reserve(dirtyChunkKeys.size());
-    for (uint64_t key : dirtyChunkKeys) {
-        outChunks.emplace_back((int)(int32_t)(key >> 32), (int)(int32_t)(key & 0xFFFFFFFFu));
+    for (const auto& [key, mask] : dirtyChunkKeys) {
+        outChunks.emplace_back((int)(int32_t)(key >> 32), (int)(int32_t)(key & 0xFFFFFFFFu), mask);
     }
     dirtyChunkKeys.clear();
     return true;
@@ -314,31 +314,37 @@ void Light::runLightUpdates(ChunkManager* chunkMgr, const std::vector<uint64_t>&
         return sec->getSkyLight(worldX & 15, worldY, worldZ & 15);
     };
 
-    // 脏 chunk 收集：写入点所在 chunk + 跨界采样波及的相邻 chunk（平滑光照 remesh 需要）
-    std::unordered_set<uint64_t> localDirty;
-    auto markDirty = [&](int cx, int cz) {
-        localDirty.insert(((uint64_t)(uint32_t)cx << 32) | (uint32_t)cz);
+    // 脏 section 收集：写入点所在 section + 跨界采样波及的相邻 chunk/section（平滑光照 remesh 需要）
+    // 掩码 bit = (sectionY >> 4) & 63，与 GLRenderer::markSectionsForUpdate 约定一致
+    std::unordered_map<uint64_t, uint64_t> localDirty;
+    auto markDirty = [&](int cx, int cz, uint64_t mask) {
+        localDirty[((uint64_t)(uint32_t)cx << 32) | (uint32_t)cz] |= mask;
     };
-    auto markDirtyAround = [&](int worldX, int worldZ) {
+    auto markDirtyAround = [&](int worldX, int worldY, int worldZ) {
         int cx = worldX >> 4, cz = worldZ >> 4;
-        markDirty(cx, cz);
+        // 本 section + 垂直边界波及的上下 section（同柱内邻 section 网格采样跨界）
+        uint64_t mask = 1ULL << ((worldY >> 4) & 63);
+        int ly = worldY & 15;
+        if (ly == 0) mask |= 1ULL << (((worldY - 1) >> 4) & 63);
+        else if (ly == 15) mask |= 1ULL << (((worldY + 1) >> 4) & 63);
+        markDirty(cx, cz, mask);
         int lx = worldX & 15, lz = worldZ & 15;
-        if (lx == 0) markDirty(cx - 1, cz);
-        else if (lx == 15) markDirty(cx + 1, cz);
-        if (lz == 0) markDirty(cx, cz - 1);
-        else if (lz == 15) markDirty(cx, cz + 1);
+        if (lx == 0) markDirty(cx - 1, cz, mask);
+        else if (lx == 15) markDirty(cx + 1, cz, mask);
+        if (lz == 0) markDirty(cx, cz - 1, mask);
+        else if (lz == 15) markDirty(cx, cz + 1, mask);
     };
     auto setBL = [&](int worldX, int worldY, int worldZ, uint8_t val) {
         auto* sec = getSectionAt(worldX, worldY, worldZ);
         if (!sec) return;
         sec->setBlockLight(worldX & 15, worldY, worldZ & 15, val);
-        markDirtyAround(worldX, worldZ);
+        markDirtyAround(worldX, worldY, worldZ);
     };
     auto setSL = [&](int worldX, int worldY, int worldZ, uint8_t val) {
         auto* sec = getSectionAt(worldX, worldY, worldZ);
         if (!sec) return;
         sec->setSkyLight(worldX & 15, worldY, worldZ & 15, val);
-        markDirtyAround(worldX, worldZ);
+        markDirtyAround(worldX, worldY, worldZ);
     };
 
     // 方块属性查询：发光等级 / 是否挡光（均为预计算元数据，O(1)）
@@ -470,10 +476,12 @@ void Light::runLightUpdates(ChunkManager* chunkMgr, const std::vector<uint64_t>&
     processLayer(false);  // 方块光
     processLayer(true);   // 天空光
 
-    // 脏 chunk 合并到输出集合，渲染线程 poll 后精准 remesh
+    // 脏 section 合并到输出集合，渲染线程 poll 后精准 remesh
     if (!localDirty.empty()) {
         std::lock_guard<std::mutex> lock(outputMutex);
-        dirtyChunkKeys.insert(localDirty.begin(), localDirty.end());
+        for (const auto& [key, mask] : localDirty) {
+            dirtyChunkKeys[key] |= mask;
+        }
     }
 }
 

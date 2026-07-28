@@ -3,7 +3,7 @@
 #include "utils.h"
 #include "ChunkManager.h"
 #include "Light.h"
-#include "Renderer/GLRenderer.h"
+#include "Renderer/ChunkMeshScheduler.h"
 
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundLevelChunkWithLightPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundBlockUpdatePacket.hpp"
@@ -54,8 +54,19 @@ void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data,
                 if (chunk) {
                     chunk->setBlockState(localX, blockY, localZ, blockState);
                     m_engine->getLight()->queueLightRecalc(blockX, blockY, blockZ);
-                    if (m_engine->getRenderer()) {
-                        m_engine->getRenderer()->markChunkForUpdate(chunkX, chunkZ);
+                    if (auto* scheduler = m_engine->getMeshScheduler()) {
+                        // section 级脏粒度：本 section + 垂直边界波及的邻 section
+                        uint64_t mask = 1ULL << ((blockY >> 4) & 63);
+                        int localY = blockY & 15;
+                        if (localY == 0) mask |= 1ULL << (((blockY - 1) >> 4) & 63);
+                        else if (localY == 15) mask |= 1ULL << (((blockY + 1) >> 4) & 63);
+                        scheduler->markSectionsForUpdate(chunkX, chunkZ, mask);
+                        // 水平边界连带邻区：跨界面剔除依赖邻区数据，光照零变化时
+                        // （纯黑暗矿洞）Light 的 markDirtyAround 不会兑底，否则边界出洞
+                        if (localX == 0) scheduler->markSectionsForUpdate(chunkX - 1, chunkZ, mask);
+                        else if (localX == 15) scheduler->markSectionsForUpdate(chunkX + 1, chunkZ, mask);
+                        if (localZ == 0) scheduler->markSectionsForUpdate(chunkX, chunkZ - 1, mask);
+                        else if (localZ == 15) scheduler->markSectionsForUpdate(chunkX, chunkZ + 1, mask);
                     }
                 } else {
                     LOGW("BlockUpdate: chunk (%d, %d) not loaded", chunkX, chunkZ);
@@ -138,7 +149,7 @@ void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data,
                                 sec->blockLight.assign(2048, 0);
                             }
                         }
-                        if (m_engine->getRenderer()) m_engine->getRenderer()->markChunkForUpdate(lx, lz);
+                        if (m_engine->getMeshScheduler()) m_engine->getMeshScheduler()->markChunkForUpdate(lx, lz);
                     }
                 }
             } catch (const std::exception& e) {
@@ -176,6 +187,9 @@ void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data,
             }
 
             const auto& posState = sectionPacket.GetPosState();
+            // section 级脏粒度：基础掩码 = 本 section，垂直/水平边界变更连带邻 section/邻区
+            uint64_t mask = 1ULL << (sectionY & 63);
+            uint64_t maskWest = 0, maskEast = 0, maskNorth = 0, maskSouth = 0;
             for (const auto& entry : posState) {
                 uint64_t entryVal = (uint64_t)entry;
                 int sectionLocalIndex = (int)(entryVal & 0xFFF);
@@ -187,10 +201,23 @@ void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data,
                 chunk->setBlockState(localX, blockY, localZ, blockState);
                 // 批量方块变更同样要触发光照重算（与 BlockUpdate 对齐，修复此前缺口）
                 m_engine->getLight()->queueLightRecalc(chunkX * 16 + localX, blockY, chunkZ * 16 + localZ);
+
+                uint64_t blockMask = 1ULL << ((blockY >> 4) & 63);
+                if (localY == 0) blockMask |= 1ULL << (((blockY - 1) >> 4) & 63);
+                else if (localY == 15) blockMask |= 1ULL << (((blockY + 1) >> 4) & 63);
+                mask |= blockMask;
+                if (localX == 0) maskWest |= blockMask;
+                else if (localX == 15) maskEast |= blockMask;
+                if (localZ == 0) maskNorth |= blockMask;
+                else if (localZ == 15) maskSouth |= blockMask;
             }
 
-            if (m_engine->getRenderer()) {
-                m_engine->getRenderer()->markChunkForUpdate(chunkX, chunkZ);
+            if (auto* scheduler = m_engine->getMeshScheduler()) {
+                scheduler->markSectionsForUpdate(chunkX, chunkZ, mask);
+                if (maskWest) scheduler->markSectionsForUpdate(chunkX - 1, chunkZ, maskWest);
+                if (maskEast) scheduler->markSectionsForUpdate(chunkX + 1, chunkZ, maskEast);
+                if (maskNorth) scheduler->markSectionsForUpdate(chunkX, chunkZ - 1, maskNorth);
+                if (maskSouth) scheduler->markSectionsForUpdate(chunkX, chunkZ + 1, maskSouth);
             }
             break;
         }

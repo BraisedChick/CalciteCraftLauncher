@@ -10,6 +10,7 @@ struct ANativeWindow;  // 前向声明，避免引入 android/native_window.h
 
 class GLRenderer;
 class VulkanRenderer;
+class ChunkMeshScheduler;
 class GameEngine;
 class EntityRenderer;
 class TextureAtlas;
@@ -59,6 +60,9 @@ public:
     std::unique_ptr<GLRenderer> releaseRenderer();
     GLRenderer* getRenderer() { return m_renderer.get(); }
 
+    // ===== 区块网格调度器（图形 API 无关，GL/Vulkan 共用，全局生命周期） =====
+    ChunkMeshScheduler* getMeshScheduler() { return m_meshScheduler.get(); }
+
     // ===== Vulkan 渲染器（与 GLRenderer 互斥，第一步仅渲染主界面） =====
     VulkanRenderer* getVulkanRenderer() { return m_vulkanRenderer.get(); }
 
@@ -93,6 +97,7 @@ private:
 
     std::unique_ptr<GLRenderer> m_renderer;
     std::unique_ptr<VulkanRenderer> m_vulkanRenderer;
+    std::unique_ptr<ChunkMeshScheduler> m_meshScheduler;
     std::unique_ptr<EntityRenderer> m_entityRenderer;
     std::unique_ptr<TextureAtlas> m_textureAtlas;
     std::unique_ptr<BlockRegistry> m_blockRegistry;

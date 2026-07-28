@@ -36,6 +36,7 @@
 
 #include "CommonTypes.h"
 #include "ChunkManager.h"
+#include "ChunkMeshScheduler.h"
 #include "CrackOverlayMesh.h"
 #include "PanoramaView.h"
 
@@ -73,9 +74,6 @@ public:
     bool initImGui();
     void renderUI();
 
-    // 设置 ChunkManager 引用
-    void setChunkManager(ChunkManager* manager);
-
     // FOV 控制
     void setFov(float degrees);
     float getFov() const { return fov; }
@@ -93,15 +91,6 @@ public:
 
     // 纹理数组初始化是否已完成（渲染线程延迟初始化）
     bool isTextureInitComplete() const { return !textureInitPending; }
-
-    // 从区块数据重建网格，返回 true 表示还有更多区块需要处理
-    bool rebuildMeshFromChunks();
-
-    // 标记指定区块需要更新
-    void markChunkForUpdate(int chunkX, int chunkZ);
-
-    // 移除单个区块的渲染数据（服务端 ForgetLevelChunk，线程安全，GL 资源在渲染线程删除）
-    void removeChunk(int chunkX, int chunkZ);
 
     // 在渲染线程上完成纹理数组初始化（避免 ANR）
     bool finishTextureInit();
@@ -134,67 +123,14 @@ public:
     }
 
 private:
-    // ===== 压缩顶点格式（GPU 上传用，48→32 bytes）=====
-    struct PackedVertex {
-        float    pos[3];      //  0: 12 bytes (GL_FLOAT, 世界坐标，不压缩)
-        float    texIndex;    // 12:  4 bytes (GL_FLOAT)
-        uint8_t  color[4];    // 16:  4 bytes (GL_UNSIGNED_BYTE, 归一化)
-        uint16_t uv[2];       // 20:  4 bytes (GL_UNSIGNED_SHORT, 归一化 [0,1]→[0,65535])
-        uint16_t uv2[2];      // 24:  4 bytes (GL_UNSIGNED_SHORT, 归一化 [0,1]→[0,65535])
-        int8_t   normal[4];   // 28:  4 bytes (GL_BYTE, 归一化 [-1,1]→[-127,127], w未用)
-    }; // Total: 32 bytes
-
-    // ===== 工作线程（离线网格生成）=====
-    struct ChunkWorkItem {
-        uint64_t chunkKey;
-        int chunkX;
-        int chunkZ;
-        float distance;  // 距离玩家距离，优先级队列排序用
-
-        bool operator<(const ChunkWorkItem& other) const {
-            return distance > other.distance;  // 小顶堆：距离近的优先级高
-        }
-    };
-
-    struct ChunkMeshResult {
-        uint64_t chunkKey;
-        // 改为每个 section 独立数据，不合并
-        struct SectionData {
-            int sectionY;
-            std::vector<PackedVertex> packedVertices;  // 在工作线程压缩好，渲染线程直接上传
-            std::vector<uint32_t> baseIndices;
-            std::vector<uint32_t> overlayIndices;
-            std::vector<uint32_t> waterIndices;
-            uint64_t visibilityData = 0;  // 该 section 的方向连通性数据
-        };
-        std::vector<SectionData> sections;
-    };
-
-    void workerLoop();
-    void startWorker();
-    void stopWorker();
-    void enqueueWork(ChunkWorkItem item);
+    // 网格生成/调度已迁至 ChunkMeshScheduler（公共组件），这里只消费其产出：
+    // pollResults → GL 上传，pollRemovals → GL 删除
     void processCompletedWork();
     void processChunkRemovals();  // 渲染线程：删除已卸载区块的 GL 资源
 
-    // 工作线程池（多个线程并行生成网格）
-    static constexpr int WORKER_THREAD_COUNT = 4;
-    std::vector<std::thread> workerThreads;
-    std::mutex workMutex;
-    std::condition_variable workCV;
-    std::priority_queue<ChunkWorkItem> workQueue;
-    bool workerRunning = false;
-
-    // 完成结果队列（worker→render 线程）
-    std::mutex resultMutex;
-    std::queue<ChunkMeshResult> resultQueue;
-    // 待处理队列：每帧处理少量 chunk（但每个 chunk 整批上传），避免一帧内创建大量 GL 资源导致卡顿
-    std::queue<ChunkMeshResult> pendingResults;
+    // 每帧最多上传的 chunk 数（每个 chunk 整批上传），避免一帧内创建大量 GL 资源导致卡顿
     static constexpr int MAX_CHUNKS_PER_FRAME = 2;
 
-    // 避免重复入队同一区块
-    std::unordered_set<uint64_t> pendingChunks;
-    std::mutex pendingMutex;
     bool createEGLContext(ANativeWindow* window);
     bool createShaders();
     bool createBuffers();
@@ -231,16 +167,7 @@ private:
     int screenWidth = 0;
     int screenHeight = 0;
 
-    // 区块管理（原子指针，跨线程安全）
-    std::atomic<ChunkManager*> chunkManager{nullptr};
-    std::atomic<bool> needRebuildMesh{false};  // 标记是否需要重建网格
     std::atomic<bool> pendingClear{false};     // 标记是否需要清除所有区块（断连时）
-
-    // 脏区块集合（只记录需要更新网格的区块，避免每次遍历所有区块）
-    std::unordered_set<uint64_t> dirtyChunks;  // 由 cacheMutex 保护
-    // 待卸载区块集合（ForgetLevelChunk，渲染线程消费）
-    std::unordered_set<uint64_t> chunksToRemove;  // 由 cacheMutex 保护
-    size_t lastChunkCount = 0;                  // 上次已知区块数，用于发现新区块
 
     // 帧计数器
     uint32_t frameCount = 0;
@@ -279,9 +206,6 @@ private:
     struct ChunkRenderData {
         std::vector<SectionRenderData> sections;
         glm::vec3 position;      // 区块世界坐标
-        bool visible = true;
-        bool needsUpdate = false; // 是否需要重建
-        bool pending = false;    // 是否已在工作队列中
     };
     
     // 缓存每个区块的渲染数据 (key: chunkX << 16 | chunkZ)
@@ -292,9 +216,6 @@ private:
     float fov = 70.0f;
     float nearPlane = 0.1f;
     float farPlane = 500.0f;  // 渲染距离
-
-    // 上一帧的相机位置（用于区块加载距离计算）
-    float lastCameraX = 0.0f, lastCameraY = 0.0f, lastCameraZ = 0.0f;
 
     // 纹理数组延迟初始化标志（在渲染线程上分批完成，避免 ANR）
     bool textureInitPending = true;

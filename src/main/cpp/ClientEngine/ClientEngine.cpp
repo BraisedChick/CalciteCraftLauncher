@@ -2,6 +2,7 @@
 #include "GameEngine.h"
 #include "Renderer/GLRenderer.h"
 #include "Renderer/VulkanRenderer.h"
+#include "Renderer/ChunkMeshScheduler.h"
 #include "EntityRenderer.h"
 #include "TextureAtlas.h"
 #include "BlockRegistry.h"
@@ -28,6 +29,7 @@ ClientEngine::RendererType ClientEngine::s_rendererType = ClientEngine::Renderer
 
 ClientEngine::ClientEngine() {
     instance = this;
+    m_meshScheduler = std::make_unique<ChunkMeshScheduler>();
     m_textureAtlas = std::make_unique<TextureAtlas>();
     m_blockRegistry = std::make_unique<BlockRegistry>();
     m_entityRenderer = std::make_unique<EntityRenderer>();
@@ -258,17 +260,18 @@ void ClientEngine::renderLoop() {
             float pitch = Camera::getInstance().getPitch();
             float yaw = Camera::getInstance().getYaw();
 
-            if (auto* renderer = getRenderer()) {
-                // 取走光照更新波及的脏 chunk，精准 remesh（替代旧版 5×5 无差别重建）
-                {
-                    static std::vector<std::pair<int, int>> dirtyLightChunks;
-                    if (game->getLight()->pollDirtyLightChunks(dirtyLightChunks)) {
-                        for (const auto& [cx, cz] : dirtyLightChunks) {
-                            renderer->markChunkForUpdate(cx, cz);
-                        }
+            // 取走光照更新波及的脏 section，精准 remesh（section 级脏粒度）
+            // 调度器与图形 API 无关，GL/Vulkan 后端共用
+            {
+                static std::vector<std::tuple<int, int, uint64_t>> dirtyLightChunks;
+                if (game->getLight()->pollDirtyLightChunks(dirtyLightChunks)) {
+                    for (const auto& [cx, cz, mask] : dirtyLightChunks) {
+                        m_meshScheduler->markSectionsForUpdate(cx, cz, mask);
                     }
                 }
+            }
 
+            if (auto* renderer = getRenderer()) {
                 renderer->render(pos.x, pos.y, pos.z, pitch, yaw);
             } else if (auto* vkRenderer = getVulkanRenderer()) {
                 vkRenderer->render(pos.x, pos.y, pos.z, pitch, yaw);

@@ -12,6 +12,7 @@
 class ChunkManager;
 class NetworkManager;
 class GLRenderer;
+class ChunkMeshScheduler;
 class ClientEngine;
 class AESEncrypter;
 class PlayerInventory;
@@ -84,6 +85,9 @@ public:
 
     // ===== 获取渲染器（通过 ClientEngine 转发） =====
     GLRenderer* getRenderer();
+
+    // ===== 获取区块网格调度器（通过 ClientEngine 转发，图形 API 无关） =====
+    ChunkMeshScheduler* getMeshScheduler();
 
     // ===== 玩家位置 =====
     double getPlayerX() const { return playerX; }
