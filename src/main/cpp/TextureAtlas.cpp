@@ -345,6 +345,8 @@ bool TextureAtlas::resolveBlockModelElements(
 
     if (hasOwnElements) {
         jsonExtractElement(model.elements, j, resolvedTextures, texturePathToLayer);
+        // ambientocclusion 随 elements 所在 JSON 一起取（门/cross 等在根模型声明 false）
+        model.ambientocclusion = j.value("ambientocclusion", true);
     } else {
         // 继承父的 elements
         std::string parentModel = normalizeTexturePath(j.value("parent", ""));
@@ -364,6 +366,7 @@ bool TextureAtlas::resolveBlockModelElements(
         if (!parentJson.is_null()) {
             model.elements.clear();
             jsonExtractElement(model.elements, parentJson, resolvedTextures, texturePathToLayer);
+            model.ambientocclusion = parentJson.value("ambientocclusion", true);
         }
     }
 
@@ -472,7 +475,9 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
 
         // 解析模型 elements
         if (j.contains("elements") && j["elements"].is_array()) {
-            jsonExtractElement(blockModelCache[blockName].elements, j, resolved, texturePathToLayer);
+            auto& mdl = blockModelCache[blockName];
+            jsonExtractElement(mdl.elements, j, resolved, texturePathToLayer);
+            mdl.ambientocclusion = j.value("ambientocclusion", true);
         } else {
             std::string parent = j.value("parent", "");
             if (!parent.empty()) {
@@ -489,7 +494,9 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
                 json currentJson = parentJson;
                 while (!currentJson.is_null()) {
                     if (currentJson.contains("elements") && currentJson["elements"].is_array()) {
-                        jsonExtractElement(blockModelCache[blockName].elements, currentJson, resolved, texturePathToLayer);
+                        auto& mdl = blockModelCache[blockName];
+                        jsonExtractElement(mdl.elements, currentJson, resolved, texturePathToLayer);
+                        mdl.ambientocclusion = currentJson.value("ambientocclusion", true);
                         break;
                     }
                     std::string nextParent = currentJson.value("parent", "");

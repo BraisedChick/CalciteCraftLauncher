@@ -397,8 +397,10 @@ static void generateFromModel(
                 faceVerts[v].normal[0] = FACEDIR_NORMALS[dir][0];
                 faceVerts[v].normal[1] = FACEDIR_NORMALS[dir][1];
                 faceVerts[v].normal[2] = FACEDIR_NORMALS[dir][2];
-                // shade=false（cross 植物等）的面光照阶段走平光
-                faceVerts[v].shade = face.shade ? 1 : 0;
+                // shade 三态：0=平光（cross 植物 shade=false）；1=平滑光照+AO；
+                // 2=平滑光照但无 AO（模型声明 ambientocclusion=false，如门——
+                //   对齐原版 tesselateWithoutAO：薄板边角不被 AO 压暗）
+                faceVerts[v].shade = !face.shade ? 0 : (model.ambientocclusion ? 1 : 2);
                 // uv2 默认全亮 (240, 240)
             }
 
@@ -1014,7 +1016,9 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     getSmoothLight(vert.pos[0], vert.pos[1], vert.pos[2],
                                    vert.normal[0], vert.normal[1], vert.normal[2],
                                    sky, block, ao);
-                    if (ao < 1.0f) {  // AO 亮度乘进顶点 color（着色器 Color×lightmap）
+                    // shade=2（ambientocclusion=false 模型）只取平滑 lightmap，
+                    // 跳过 AO 乘数（原版无 AO 路径不叠加任何遮蔽暗化）
+                    if (vert.shade == 1 && ao < 1.0f) {  // AO 亮度乘进顶点 color（着色器 Color×lightmap）
                         vert.color[0] = (uint8_t)(vert.color[0] * ao + 0.5f);
                         vert.color[1] = (uint8_t)(vert.color[1] * ao + 0.5f);
                         vert.color[2] = (uint8_t)(vert.color[2] * ao + 0.5f);
