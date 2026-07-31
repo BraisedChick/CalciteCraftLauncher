@@ -687,6 +687,10 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                 // 草方块雪覆盖由服务器 blockstate 的 snowy 属性驱动（snowy=true →
                 // grass_block_snow 模型），无需客户端探测顶部邻居
                 if (!blockMeta.isWater) {
+                    // translucent 层方块（染色玻璃/冰等）网格重定向进水段：
+                    // 与水共用 blend 开、不写深度的管线，基体 cutout 段不开 blend 无法呈现半透明
+                    auto& outVertices = blockMeta.isTranslucent ? waterVertices : baseVertices;
+                    auto& outIndices  = blockMeta.isTranslucent ? waterIndices  : baseIndices;
                     // Blockstate 变体查找
                     const BlockStateVariant* variant = atlas->getBlockStateVariant(
                             blockMeta.name, blockState, blockMeta.minStateId);
@@ -713,7 +717,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                                 renderedModels.push_back({blockModel, modelEntry.rotX, modelEntry.rotY});
 
                                 generateFromModel(
-                                        baseVertices, baseIndices,
+                                        outVertices, outIndices,
                                         *blockModel,
                                         posX, posY, posZ,
                                         n,
@@ -731,7 +735,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                     const auto* blockModel = getModel(blockMeta.name);
                     if (blockModel && !blockModel->elements.empty()) {
                         generateFromModel(
-                                baseVertices, baseIndices,
+                                outVertices, outIndices,
                                 *blockModel,
                                 posX, posY, posZ,
                                 n,

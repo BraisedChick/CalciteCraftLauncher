@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <map>
 #include <atomic>
 #include <time.h>
 #include <android/native_window.h>
@@ -65,17 +66,35 @@ public:
 
 private:
     // ===== 区块渲染（消费图形 API 无关的 ChunkMeshScheduler 产出）=====
-    // 与 GLRenderer 的 SectionRenderData 对位：每 section 一对 VB/IB，
+    // 与 GLRenderer 的 SectionRenderData 对位，但网格不独占 buffer：
+    // 顶点/索引存于共享网格池（meshPool）块内区间，绘制用 firstIndex/vertexOffset 寻址，
     // 索引顺序 base | overlay | water 三段合并
     struct ChunkSectionRenderData {
         int sectionY = 0;
-        VkBuffer vertexBuffer = VK_NULL_HANDLE;
-        VmaAllocation vertexMemory = VK_NULL_HANDLE;
-        VkBuffer indexBuffer = VK_NULL_HANDLE;
-        VmaAllocation indexMemory = VK_NULL_HANDLE;
+        int poolBlock = -1;               // 所属网格池块下标
+        VkDeviceSize vertexOffset = 0;    // 块内字节偏移（PackedVertex 尺寸天然对齐）
+        VkDeviceSize vertexSize = 0;
+        VkDeviceSize indexOffset = 0;
+        VkDeviceSize indexSize = 0;
         uint32_t indexCount = 0;
         uint32_t overlayIndexCount = 0;
         uint32_t waterIndexCount = 0;
+    };
+
+    // 共享网格池块：大块 VB/IB + first-fit 子分配（空闲表 offset→size，释放邻接合并）。
+    // 所有 section 网格合入少量大 buffer，每块一次绑定 + 逐 section 直绘
+    // （MDI 合批已回滚：Adreno 610 实测负优化）
+    struct MeshPoolBlock {
+        VkBuffer vertexBuffer = VK_NULL_HANDLE;
+        VmaAllocation vertexMemory = VK_NULL_HANDLE;
+        void* vertexMapped = nullptr;     // 持久映射（UMA 直写免 staging）
+        VkDeviceSize vertexCapacity = 0;
+        VkBuffer indexBuffer = VK_NULL_HANDLE;
+        VmaAllocation indexMemory = VK_NULL_HANDLE;
+        void* indexMapped = nullptr;
+        VkDeviceSize indexCapacity = 0;
+        std::map<VkDeviceSize, VkDeviceSize> vertexFree;  // offset → size
+        std::map<VkDeviceSize, VkDeviceSize> indexFree;
     };
     struct ChunkRenderData {
         std::vector<ChunkSectionRenderData> sections;
@@ -89,8 +108,17 @@ private:
     void destroyChunkPipelines();     // swapchain 重建路径销毁（renderPass 依赖）
     void processChunkAtlas();         // 分批解码方块纹理，齐全后整体上传 2D array + 写描述符
     void updateChunkLightmap();       // Light 像素变化时重传 16x16 lightmap
-    void processChunkCompletedWork(); // pollRemovals + pollResults → section buffer 上传
-    void destroySectionBuffers(ChunkSectionRenderData& sec);
+    void processChunkCompletedWork(); // pollRemovals + pollResults → 网格池上传
+    bool uploadSectionMesh(const void* vtxData, VkDeviceSize vtxSize,
+                           const void* idxData, VkDeviceSize idxSize,
+                           ChunkSectionRenderData& sec);   // 池内分配 + 持久映射直写
+    void freeSectionMesh(ChunkSectionRenderData& sec);     // 归还池内区间（邻接合并）
+    bool createMeshPoolBlock(VkDeviceSize vtxSize, VkDeviceSize idxSize);
+    void destroyMeshPool();   // 断连/cleanup：缓存已清空后整池销毁
+    static bool poolRangeAlloc(std::map<VkDeviceSize, VkDeviceSize>& freeMap,
+                               VkDeviceSize size, VkDeviceSize& outOffset);
+    static void poolRangeFree(std::map<VkDeviceSize, VkDeviceSize>& freeMap,
+                              VkDeviceSize offset, VkDeviceSize size);
     void renderChunks(VkCommandBuffer cmd);  // 三段绘制（命令录制期调用）
     void updateChunkUniforms(float cameraX, float cameraY, float cameraZ,
                              float pitch, float yaw, float skyR, float skyG, float skyB);
@@ -161,6 +189,9 @@ private:
     static constexpr float CHUNK_NEAR = 0.1f;
     static constexpr int MAX_CHUNKS_PER_FRAME = 2;    // 每帧最多上传的区块数
     static constexpr int TEXTURES_PER_FRAME = 200;    // 图集每帧解码的纹理层数
+    // 网格池块容量（顶点:索引 ≈ 4:1——每 quad 4 顶点 128 字节 vs 6 索引 24 字节，留冗余）
+    static constexpr VkDeviceSize MESH_POOL_VERTEX_BLOCK_SIZE = 16 * 1024 * 1024;
+    static constexpr VkDeviceSize MESH_POOL_INDEX_BLOCK_SIZE = 4 * 1024 * 1024;
 
     // 远平面/渲染距离（视频设置驱动，setRenderDistance 修改，对应 GLRenderer::farPlane）
     float chunkFar = 500.0f;
@@ -252,6 +283,11 @@ private:
     VmaAllocation lightmapMemory = VK_NULL_HANDLE;
     VkImageView lightmapView = VK_NULL_HANDLE;
     VkSampler lightmapSampler = VK_NULL_HANDLE;
+    // renderChunks 每帧暂存（按池块归组；成员持有以保留 capacity；
+    // 复用 VkDrawIndexedIndirectCommand 仅作普通绘制参数容器，不走 indirect 提交）
+    std::vector<std::vector<VkDrawIndexedIndirectCommand>> drawsCutout, drawsOverlay, drawsWater;
+    // 共享网格池（host 可见持久映射；单帧 in-flight，帧首 fence 后重写安全）
+    std::vector<MeshPoolBlock> meshPool;
     // 区块渲染缓存（仅渲染线程访问）与视锥平面
     std::unordered_map<uint64_t, ChunkRenderData> chunkRenderCache;
     float frustumPlanes[6][4] = {};

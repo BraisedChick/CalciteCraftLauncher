@@ -1146,11 +1146,11 @@ bool VulkanRenderer::createChunkPipelines() {
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-    // 三阶段均开 alpha blend（与 GL 侧一致：玻璃/树叶/水）
+    // blend 按阶段区分（对齐原版 RenderType）：cutout/overlay 二值 alpha 由 discard 处理不开 blend，
+    // 仅 translucent（水）开——移动 GPU 上 blend 是逐片元读改写，基体几何全开会白烧带宽
     VkPipelineColorBlendAttachmentState blendAttachment{};
     blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    blendAttachment.blendEnable = VK_TRUE;
     blendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
     blendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     blendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
@@ -1162,8 +1162,9 @@ bool VulkanRenderer::createChunkPipelines() {
     colorBlending.attachmentCount = 1;
     colorBlending.pAttachments = &blendAttachment;
 
-    // 只有 frag module 与 depthWrite 不同，其余状态共享
-    auto buildPipeline = [&](VkShaderModule fragModule, VkBool32 depthWrite, VkPipeline& outPipeline) {
+    // frag module / depthWrite / blend 三者不同，其余状态共享
+    auto buildPipeline = [&](VkShaderModule fragModule, VkBool32 depthWrite, VkBool32 blendEnable, VkPipeline& outPipeline) {
+        blendAttachment.blendEnable = blendEnable;
         VkPipelineShaderStageCreateInfo stages[2]{};
         stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -1199,9 +1200,9 @@ bool VulkanRenderer::createChunkPipelines() {
         return vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &outPipeline) == VK_SUCCESS;
     };
 
-    bool ok = buildPipeline(cutoutModule, VK_TRUE, chunkPipelineCutout) &&
-              buildPipeline(cutoutModule, VK_FALSE, chunkPipelineOverlay) &&
-              buildPipeline(translucentModule, VK_FALSE, chunkPipelineWater);
+    bool ok = buildPipeline(cutoutModule, VK_TRUE, VK_FALSE, chunkPipelineCutout) &&
+              buildPipeline(cutoutModule, VK_FALSE, VK_FALSE, chunkPipelineOverlay) &&
+              buildPipeline(translucentModule, VK_FALSE, VK_TRUE, chunkPipelineWater);
 
     vkDestroyShaderModule(device, vertModule, nullptr);
     vkDestroyShaderModule(device, cutoutModule, nullptr);
@@ -1236,9 +1237,10 @@ void VulkanRenderer::destroyChunkResources() {
     if (lightmapView != VK_NULL_HANDLE)        { vkDestroyImageView(device, lightmapView, nullptr); lightmapView = VK_NULL_HANDLE; }
     if (lightmapImage != VK_NULL_HANDLE)       { vmaDestroyImage(allocator, lightmapImage, lightmapMemory); lightmapImage = VK_NULL_HANDLE; lightmapMemory = VK_NULL_HANDLE; }
     for (auto& [chunkKey, renderData] : chunkRenderCache) {
-        for (auto& sec : renderData.sections) destroySectionBuffers(sec);
+        for (auto& sec : renderData.sections) freeSectionMesh(sec);
     }
     chunkRenderCache.clear();
+    destroyMeshPool();  // 网格随池整体释放
     atlasStagingPixels.clear();
     atlasStagingPixels.shrink_to_fit();
     atlasReady = false;
@@ -1247,9 +1249,140 @@ void VulkanRenderer::destroyChunkResources() {
     chunkInitAttempted = false;  // 允许下次进游戏重新初始化
 }
 
-void VulkanRenderer::destroySectionBuffers(ChunkSectionRenderData& sec) {
-    if (sec.vertexBuffer != VK_NULL_HANDLE) { vmaDestroyBuffer(allocator, sec.vertexBuffer, sec.vertexMemory); sec.vertexBuffer = VK_NULL_HANDLE; sec.vertexMemory = VK_NULL_HANDLE; }
-    if (sec.indexBuffer != VK_NULL_HANDLE)  { vmaDestroyBuffer(allocator, sec.indexBuffer, sec.indexMemory); sec.indexBuffer = VK_NULL_HANDLE; sec.indexMemory = VK_NULL_HANDLE; }
+// ============================================================
+// 共享网格池：大块 VB/IB + first-fit 子分配（空闲表 offset→size）
+// 所有 section 网格合入少量大 buffer，减少逐 section 的 VB/IB 绑定切换
+// ============================================================
+
+bool VulkanRenderer::poolRangeAlloc(std::map<VkDeviceSize, VkDeviceSize>& freeMap,
+                                    VkDeviceSize size, VkDeviceSize& outOffset) {
+    for (auto it = freeMap.begin(); it != freeMap.end(); ++it) {
+        if (it->second < size) continue;
+        outOffset = it->first;
+        VkDeviceSize remain = it->second - size;
+        VkDeviceSize remainOffset = it->first + size;
+        freeMap.erase(it);
+        if (remain > 0) freeMap.emplace(remainOffset, remain);
+        return true;
+    }
+    return false;
+}
+
+void VulkanRenderer::poolRangeFree(std::map<VkDeviceSize, VkDeviceSize>& freeMap,
+                                   VkDeviceSize offset, VkDeviceSize size) {
+    // 与前后邻接空闲区间合并，防长期运行碎片化
+    auto next = freeMap.lower_bound(offset);
+    if (next != freeMap.begin()) {
+        auto prev = std::prev(next);
+        if (prev->first + prev->second == offset) {
+            offset = prev->first;
+            size += prev->second;
+            freeMap.erase(prev);
+        }
+    }
+    if (next != freeMap.end() && offset + size == next->first) {
+        size += next->second;
+        freeMap.erase(next);
+    }
+    freeMap.emplace(offset, size);
+}
+
+bool VulkanRenderer::createMeshPoolBlock(VkDeviceSize vtxSize, VkDeviceSize idxSize) {
+    MeshPoolBlock block;
+    block.vertexCapacity = std::max(MESH_POOL_VERTEX_BLOCK_SIZE, vtxSize);
+    block.indexCapacity = std::max(MESH_POOL_INDEX_BLOCK_SIZE, idxSize);
+
+    VkBufferCreateInfo bufInfo{};
+    bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    // 持久映射（MAPPED_BIT）：移动端 UMA 直写免 staging，与旧 per-section 路径同策略
+    VmaAllocationCreateInfo vmaInfo{};
+    vmaInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    vmaInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                    VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+    VmaAllocationInfo allocResult{};
+    bufInfo.size = block.vertexCapacity;
+    bufInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    if (vmaCreateBuffer(allocator, &bufInfo, &vmaInfo, &block.vertexBuffer, &block.vertexMemory, &allocResult) != VK_SUCCESS) {
+        LOGE("Mesh pool: vertex block alloc failed (%llu bytes)", (unsigned long long)block.vertexCapacity);
+        return false;
+    }
+    block.vertexMapped = allocResult.pMappedData;
+
+    bufInfo.size = block.indexCapacity;
+    bufInfo.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+    if (vmaCreateBuffer(allocator, &bufInfo, &vmaInfo, &block.indexBuffer, &block.indexMemory, &allocResult) != VK_SUCCESS) {
+        vmaDestroyBuffer(allocator, block.vertexBuffer, block.vertexMemory);
+        LOGE("Mesh pool: index block alloc failed (%llu bytes)", (unsigned long long)block.indexCapacity);
+        return false;
+    }
+    block.indexMapped = allocResult.pMappedData;
+
+    block.vertexFree.emplace(0, block.vertexCapacity);
+    block.indexFree.emplace(0, block.indexCapacity);
+    meshPool.push_back(std::move(block));
+    LOGI("Mesh pool block %zu created (VB %.1f MB, IB %.1f MB)", meshPool.size() - 1,
+         meshPool.back().vertexCapacity / (1024.0 * 1024.0),
+         meshPool.back().indexCapacity / (1024.0 * 1024.0));
+    return true;
+}
+
+bool VulkanRenderer::uploadSectionMesh(const void* vtxData, VkDeviceSize vtxSize,
+                                       const void* idxData, VkDeviceSize idxSize,
+                                       ChunkSectionRenderData& sec) {
+    // 分配尺寸天然是顶点 32 字节/索引 4 字节的整数倍，因此块内偏移永远能
+    // 整除换算为绘制用的 vertexOffset（顶点粒度）与 firstIndex（索引粒度）
+    int blockIdx = -1;
+    VkDeviceSize vOff = 0, iOff = 0;
+    for (int i = 0; i < (int)meshPool.size(); i++) {
+        if (!poolRangeAlloc(meshPool[i].vertexFree, vtxSize, vOff)) continue;
+        if (!poolRangeAlloc(meshPool[i].indexFree, idxSize, iOff)) {
+            poolRangeFree(meshPool[i].vertexFree, vOff, vtxSize);  // VB 成功 IB 不够：回滚换下一块
+            continue;
+        }
+        blockIdx = i;
+        break;
+    }
+    if (blockIdx < 0) {
+        // 现有块都放不下：开新块再分（超大 section 时块按需扩容）
+        if (!createMeshPoolBlock(vtxSize, idxSize)) return false;
+        blockIdx = (int)meshPool.size() - 1;
+        if (!poolRangeAlloc(meshPool[blockIdx].vertexFree, vtxSize, vOff) ||
+            !poolRangeAlloc(meshPool[blockIdx].indexFree, idxSize, iOff)) {
+            return false;  // 新块容量 >= 请求，理论不可达
+        }
+    }
+
+    auto& block = meshPool[blockIdx];
+    memcpy((uint8_t*)block.vertexMapped + vOff, vtxData, vtxSize);
+    memcpy((uint8_t*)block.indexMapped + iOff, idxData, idxSize);
+    vmaFlushAllocation(allocator, block.vertexMemory, vOff, vtxSize);
+    vmaFlushAllocation(allocator, block.indexMemory, iOff, idxSize);
+
+    sec.poolBlock = blockIdx;
+    sec.vertexOffset = vOff;
+    sec.vertexSize = vtxSize;
+    sec.indexOffset = iOff;
+    sec.indexSize = idxSize;
+    return true;
+}
+
+void VulkanRenderer::freeSectionMesh(ChunkSectionRenderData& sec) {
+    if (sec.poolBlock < 0 || sec.poolBlock >= (int)meshPool.size()) return;
+    auto& block = meshPool[sec.poolBlock];
+    poolRangeFree(block.vertexFree, sec.vertexOffset, sec.vertexSize);
+    poolRangeFree(block.indexFree, sec.indexOffset, sec.indexSize);
+    sec.poolBlock = -1;
+}
+
+// 整池销毁（断连/cleanup，调用前提：帧首 fence 已过或 deviceWaitIdle，GPU 无引用）
+void VulkanRenderer::destroyMeshPool() {
+    for (auto& block : meshPool) {
+        if (block.vertexBuffer != VK_NULL_HANDLE) vmaDestroyBuffer(allocator, block.vertexBuffer, block.vertexMemory);
+        if (block.indexBuffer != VK_NULL_HANDLE)  vmaDestroyBuffer(allocator, block.indexBuffer, block.indexMemory);
+    }
+    meshPool.clear();
 }
 
 // 分帧解码方块纹理到 CPU 累积区（每帧 TEXTURES_PER_FRAME 张，避免卡顿），
@@ -1319,7 +1452,7 @@ void VulkanRenderer::processChunkCompletedWork() {
         for (uint64_t chunkKey : removeKeys) {
             auto it = chunkRenderCache.find(chunkKey);
             if (it == chunkRenderCache.end()) continue;
-            for (auto& sec : it->second.sections) destroySectionBuffers(sec);
+            for (auto& sec : it->second.sections) freeSectionMesh(sec);
             chunkRenderCache.erase(it);
         }
     }
@@ -1339,10 +1472,10 @@ void VulkanRenderer::processChunkCompletedWork() {
         }
         auto& renderData = it->second;
 
-        // 只删除掩码覆盖的旧 section 资源（部分替换，其余 section 不动）
+        // 只释放掩码覆盖的旧 section 网格区间（部分替换，其余 section 不动）
         for (auto secIt = renderData.sections.begin(); secIt != renderData.sections.end();) {
             if (result.sectionMask & (1ULL << ((secIt->sectionY >> 4) & 63))) {
-                destroySectionBuffers(*secIt);
+                freeSectionMesh(*secIt);
                 secIt = renderData.sections.erase(secIt);
             } else {
                 ++secIt;
@@ -1351,7 +1484,7 @@ void VulkanRenderer::processChunkCompletedWork() {
         renderData.sections.reserve(renderData.sections.size() + result.sections.size());
 
         // 整批上传掩码内重建的 section（同一帧内完成，保证视觉连续性；
-        // 移动端 UMA，host-visible 直传免 staging）
+        // 写入共享网格池：移动端 UMA，持久映射直写免 staging）
         for (auto& secData : result.sections) {
             ChunkSectionRenderData sec;
             sec.sectionY = secData.sectionY;
@@ -1367,14 +1500,10 @@ void VulkanRenderer::processChunkCompletedWork() {
             sec.waterIndexCount = static_cast<uint32_t>(secData.waterIndices.size());
             sec.indexCount = static_cast<uint32_t>(merged.size());
 
-            if (!createHostBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, secData.packedVertices.data(),
-                                  secData.packedVertices.size() * sizeof(PackedVertex),
-                                  sec.vertexBuffer, sec.vertexMemory) ||
-                !createHostBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, merged.data(),
-                                  merged.size() * sizeof(uint32_t),
-                                  sec.indexBuffer, sec.indexMemory)) {
-                LOGE("Failed to create section buffers (sectionY=%d)", sec.sectionY);
-                destroySectionBuffers(sec);
+            if (!uploadSectionMesh(secData.packedVertices.data(),
+                                   secData.packedVertices.size() * sizeof(PackedVertex),
+                                   merged.data(), merged.size() * sizeof(uint32_t), sec)) {
+                LOGE("Failed to upload section mesh (sectionY=%d)", sec.sectionY);
                 continue;
             }
 
@@ -1453,6 +1582,51 @@ bool VulkanRenderer::isAABBInFrustum(float minX, float minY, float minZ,
 void VulkanRenderer::renderChunks(VkCommandBuffer cmd) {
     // 图集就绪前不绘制（描述符引用的图集 layout 还是 UNDEFINED）
     if (!chunkResourcesReady || !atlasReady || chunkPipelineCutout == VK_NULL_HANDLE) return;
+    size_t blockCount = meshPool.size();
+    if (blockCount == 0) return;
+
+    // 单次遍历完成视锥剔除，三段命令按池块归组（同块共享一次 VB/IB 绑定；
+    // 段内寻址：firstIndex = 块内索引偏移 + 段起点，vertexOffset = 块内顶点偏移）
+    drawsCutout.resize(blockCount);
+    drawsOverlay.resize(blockCount);
+    drawsWater.resize(blockCount);
+    for (size_t i = 0; i < blockCount; i++) {
+        drawsCutout[i].clear();
+        drawsOverlay[i].clear();
+        drawsWater[i].clear();
+    }
+
+    uint32_t totalDraws = 0;
+    for (auto& [chunkKey, renderData] : chunkRenderCache) {
+        float minX = renderData.posX;
+        float maxX = minX + 16.0f;
+        float minZ = renderData.posZ;
+        float maxZ = minZ + 16.0f;
+        for (auto& sec : renderData.sections) {
+            if (sec.poolBlock < 0) continue;
+            float secMinY = (float)sec.sectionY;
+            if (!isAABBInFrustum(minX, secMinY, minZ, maxX, secMinY + 16.0f, maxZ)) continue;
+
+            uint32_t firstIndex = (uint32_t)(sec.indexOffset / sizeof(uint32_t));
+            int32_t vertexOffset = (int32_t)(sec.vertexOffset / sizeof(PackedVertex));
+            uint32_t baseEnd = sec.indexCount - sec.overlayIndexCount - sec.waterIndexCount;
+
+            if (baseEnd > 0) {
+                drawsCutout[sec.poolBlock].push_back({baseEnd, 1, firstIndex, vertexOffset, 0});
+                totalDraws++;
+            }
+            if (sec.overlayIndexCount > 0) {
+                drawsOverlay[sec.poolBlock].push_back({sec.overlayIndexCount, 1, firstIndex + baseEnd, vertexOffset, 0});
+                totalDraws++;
+            }
+            if (sec.waterIndexCount > 0) {
+                drawsWater[sec.poolBlock].push_back({sec.waterIndexCount, 1,
+                        firstIndex + sec.indexCount - sec.waterIndexCount, vertexOffset, 0});
+                totalDraws++;
+            }
+        }
+    }
+    if (totalDraws == 0) return;
 
     VkViewport viewport{};
     viewport.width = (float)swapchainExtent.width;
@@ -1466,76 +1640,29 @@ void VulkanRenderer::renderChunks(VkCommandBuffer cmd) {
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, chunkPipelineLayout,
                             0, 1, &chunkDescriptorSet, 0, nullptr);
 
-    VkDeviceSize vbOffset = 0;
-
-    // ---- Phase 1a: 基体几何（cutout，写深度）----
-    bool cutoutBound = false;
-    for (auto& [chunkKey, renderData] : chunkRenderCache) {
-        float minX = renderData.posX;
-        float maxX = minX + 16.0f;
-        float minZ = renderData.posZ;
-        float maxZ = minZ + 16.0f;
-        for (auto& sec : renderData.sections) {
-            uint32_t baseEnd = sec.indexCount - sec.overlayIndexCount - sec.waterIndexCount;
-            if (baseEnd == 0) continue;
-            float secMinY = (float)sec.sectionY;
-            if (!isAABBInFrustum(minX, secMinY, minZ, maxX, secMinY + 16.0f, maxZ)) continue;
-
-            if (!cutoutBound) {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, chunkPipelineCutout);
-                cutoutBound = true;
+    // 逐条 vkCmdDrawIndexed 直绘（每块一次 VB/IB 绑定；MDI 已回滚——Adreno 610 实测负优化）
+    auto drawPhase = [&](VkPipeline pipeline, std::vector<std::vector<VkDrawIndexedIndirectCommand>>& draws) {
+        bool pipelineBound = false;
+        VkDeviceSize vbOffset = 0;
+        for (size_t b = 0; b < blockCount; b++) {
+            auto& cmds = draws[b];
+            if (cmds.empty()) continue;
+            if (!pipelineBound) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                pipelineBound = true;
             }
-            vkCmdBindVertexBuffers(cmd, 0, 1, &sec.vertexBuffer, &vbOffset);
-            vkCmdBindIndexBuffer(cmd, sec.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd, baseEnd, 1, 0, 0, 0);
-        }
-    }
-
-    // ---- Phase 1b: 覆盖层（cutout shader，LEQUAL 不写深度）----
-    bool overlayBound = false;
-    for (auto& [chunkKey, renderData] : chunkRenderCache) {
-        float minX = renderData.posX;
-        float maxX = minX + 16.0f;
-        float minZ = renderData.posZ;
-        float maxZ = minZ + 16.0f;
-        for (auto& sec : renderData.sections) {
-            if (sec.overlayIndexCount == 0) continue;
-            float secMinY = (float)sec.sectionY;
-            if (!isAABBInFrustum(minX, secMinY, minZ, maxX, secMinY + 16.0f, maxZ)) continue;
-
-            if (!overlayBound) {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, chunkPipelineOverlay);
-                overlayBound = true;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &meshPool[b].vertexBuffer, &vbOffset);
+            vkCmdBindIndexBuffer(cmd, meshPool[b].indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            for (auto& dc : cmds) {
+                vkCmdDrawIndexed(cmd, dc.indexCount, 1, dc.firstIndex, dc.vertexOffset, 0);
             }
-            uint32_t baseEnd = sec.indexCount - sec.overlayIndexCount - sec.waterIndexCount;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &sec.vertexBuffer, &vbOffset);
-            vkCmdBindIndexBuffer(cmd, sec.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd, sec.overlayIndexCount, 1, baseEnd, 0, 0);
         }
-    }
+    };
 
-    // ---- Phase 2: 水（translucent shader，不写深度）----
-    bool waterBound = false;
-    for (auto& [chunkKey, renderData] : chunkRenderCache) {
-        float minX = renderData.posX;
-        float maxX = minX + 16.0f;
-        float minZ = renderData.posZ;
-        float maxZ = minZ + 16.0f;
-        for (auto& sec : renderData.sections) {
-            if (sec.waterIndexCount == 0) continue;
-            float secMinY = (float)sec.sectionY;
-            if (!isAABBInFrustum(minX, secMinY, minZ, maxX, secMinY + 16.0f, maxZ)) continue;
-
-            if (!waterBound) {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, chunkPipelineWater);
-                waterBound = true;
-            }
-            uint32_t overlayEnd = sec.indexCount - sec.waterIndexCount;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &sec.vertexBuffer, &vbOffset);
-            vkCmdBindIndexBuffer(cmd, sec.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd, sec.waterIndexCount, 1, overlayEnd, 0, 0);
-        }
-    }
+    // 三段顺序不变：基体（写深度）→ 覆盖层（LEQUAL 不写）→ 水（translucent 不写）
+    drawPhase(chunkPipelineCutout, drawsCutout);
+    drawPhase(chunkPipelineOverlay, drawsOverlay);
+    drawPhase(chunkPipelineWater, drawsWater);
 }
 
 void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
@@ -1595,9 +1722,10 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
             scheduler->clearAll();
         }
         for (auto& [chunkKey, renderData] : chunkRenderCache) {
-            for (auto& sec : renderData.sections) destroySectionBuffers(sec);
+            for (auto& sec : renderData.sections) freeSectionMesh(sec);
         }
         chunkRenderCache.clear();
+        destroyMeshPool();  // 断连回菜单：整池归还内存（重进服自动重建）
         LOGI("Chunk render data cleared (Vulkan)");
     }
 
@@ -1902,6 +2030,15 @@ bool VulkanRenderer::selectPhysicalDevice() {
     vkGetPhysicalDeviceProperties(physicalDevice, &properties);
     LOGI("Selected GPU: %s", properties.deviceName);
 
+    // multiDrawIndirect 能力探测（评估区块绘制合批可行性）：
+    // 限制项 maxDrawIndirectCount=1 时即使 feature 为 true 也等于不支持合批
+    VkPhysicalDeviceFeatures features;
+    vkGetPhysicalDeviceFeatures(physicalDevice, &features);
+    LOGI("multiDrawIndirect: %s, drawIndirectFirstInstance: %s, maxDrawIndirectCount: %u",
+         features.multiDrawIndirect ? "true" : "false",
+         features.drawIndirectFirstInstance ? "true" : "false",
+         properties.limits.maxDrawIndirectCount);
+
     return true;
 }
 
@@ -1957,6 +2094,9 @@ bool VulkanRenderer::createLogicalDevice() {
     };
     createInfo.enabledExtensionCount = 1;
     createInfo.ppEnabledExtensionNames = deviceExtensions;
+
+    VkPhysicalDeviceFeatures enabledFeatures{};
+    createInfo.pEnabledFeatures = &enabledFeatures;
 
     if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
         LOGE("Failed to create logical device");

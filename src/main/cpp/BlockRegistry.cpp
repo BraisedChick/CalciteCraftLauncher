@@ -322,6 +322,14 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
         meta.isOpaque = false;
     }
 
+    // 原版 translucent 渲染层：纹理含中间 alpha，靠 blend 呈现而非 discard 镞空。
+    // 普通玻璃/玻璃板是二值 alpha 走 cutout；packed_ice/blue_ice 不透明，不在此列
+    meta.isTranslucent = (meta.name.find("stained_glass") != std::string::npos ||
+        meta.name == "tinted_glass" ||
+        meta.name == "ice" || meta.name == "frosted_ice" ||
+        meta.name == "slime_block" || meta.name == "honey_block" ||
+        meta.name == "nether_portal");
+
     // 发光等级预计算（字符串匹配仅在加载时执行一次，光照热路径 O(1) 读 meta.emission）
     meta.emission = (uint8_t)Light::getBlockEmission(meta.name.c_str());
 
