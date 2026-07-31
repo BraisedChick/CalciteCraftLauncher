@@ -94,18 +94,13 @@ static void addCubicFace(
 // ===== 模型驱动渲染辅助函数 =====
 
 // 绕轴旋转点（在元素 0-16 坐标空间中）
+// cosA/sinA 由调用方按元素预计算传入（每元素常量），避免每顶点重算三角函数
 static void rotateVertex(float& x, float& y, float& z,
-                          const ElementRotation& rot) {
-    if (rot.angle == 0.0f) return;
-
+                          const ElementRotation& rot, float cosA, float sinA) {
     // 平移到旋转原点
     float dx = x - rot.origin[0];
     float dy = y - rot.origin[1];
     float dz = z - rot.origin[2];
-
-    float rad = rot.angle * (3.14159265f / 180.0f);
-    float cosA = cosf(rad);
-    float sinA = sinf(rad);
 
     float nx, ny, nz;
     switch (rot.axis) {
@@ -224,11 +219,30 @@ static void generateFromModel(
         return meta.isFullBlock && meta.isOpaque;
     };
 
+    // bsRotX/bsRotY 是整块常量，其 cos/sin 预计算一次（避免下面每顶点重算）
+    // 与顶点代码一致：负角度
+    float bsCosX = 1.0f, bsSinX = 0.0f, bsCosY = 1.0f, bsSinY = 0.0f;
+    if (bsRotX != 0) {
+        float rad = -bsRotX * (3.14159265f / 180.0f);
+        bsCosX = cosf(rad); bsSinX = sinf(rad);
+    }
+    if (bsRotY != 0) {
+        float rad = -bsRotY * (3.14159265f / 180.0f);
+        bsCosY = cosf(rad); bsSinY = sinf(rad);
+    }
+
     for (const auto& elem : model.elements) {
         float ew = elem.to[0] - elem.from[0];
         float eh = elem.to[1] - elem.from[1];
         float ed = elem.to[2] - elem.from[2];
         float fx = elem.from[0], fy = elem.from[1], fz = elem.from[2];
+
+        // elem 旋转的 cos/sin 是每元素常量，预计算一次（供 rotateVertex 复用）
+        float elemCosA = 1.0f, elemSinA = 0.0f;
+        if (elem.rotation.angle != 0.0f) {
+            float rad = elem.rotation.angle * (3.14159265f / 180.0f);
+            elemCosA = cosf(rad); elemSinA = sinf(rad);
+        }
 
         for (int dir = 0; dir < 6; dir++) {
             if (!elem.hasFaces[dir]) continue;
@@ -332,24 +346,20 @@ static void generateFromModel(
                 float lz = fz + fv[2] * ed;
 
                 if (elem.rotation.angle != 0.0f) {
-                    rotateVertex(lx, ly, lz, elem.rotation);
+                    rotateVertex(lx, ly, lz, elem.rotation, elemCosA, elemSinA);
                 }
 
                 // Blockstate 旋转（整个模型绕方块中心 8,8,8，顺时针）
                 if (bsRotX != 0 || bsRotY != 0) {
                     float cx = lx - 8.0f, cy = ly - 8.0f, cz = lz - 8.0f;
                     if (bsRotX != 0) {
-                        float rad = -bsRotX * (3.14159265f / 180.0f);
-                        float cosA = cosf(rad), sinA = sinf(rad);
-                        float ny = cy * cosA - cz * sinA;
-                        float nz = cy * sinA + cz * cosA;
+                        float ny = cy * bsCosX - cz * bsSinX;
+                        float nz = cy * bsSinX + cz * bsCosX;
                         cy = ny; cz = nz;
                     }
                     if (bsRotY != 0) {
-                        float rad = -bsRotY * (3.14159265f / 180.0f);
-                        float cosA = cosf(rad), sinA = sinf(rad);
-                        float nx = cx * cosA + cz * sinA;
-                        float nz = -cx * sinA + cz * cosA;
+                        float nx = cx * bsCosY + cz * bsSinY;
+                        float nz = -cx * bsSinY + cz * bsCosY;
                         cx = nx; cz = nz;
                     }
                     lx = cx + 8.0f;
