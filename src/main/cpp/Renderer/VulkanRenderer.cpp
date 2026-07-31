@@ -1397,7 +1397,9 @@ void VulkanRenderer::processChunkAtlas() {
     for (int i = atlasNextLayer; i < end; i++) {
         uint8_t* dst = atlasStagingPixels.data() + layerBytes * i;
         TextureData texData = TextureLoader::loadImage(atlas->getTextureFileName(i));
-        if (texData.data && texData.width == atlasWidth && texData.height == atlasHeight) {
+        if (texData.data && texData.width == atlasWidth && texData.height >= atlasHeight) {
+            // 高度超出的是动画帧带（如 nether_portal 16x512）：行主序下前 layerBytes
+            // 字节恰为第一帧，与 GL 侧 glTexSubImage3D 只读所需字节的行为一致
             memcpy(dst, texData.data, layerBytes);
         } else {
             // 缺失/尺寸不符：占位色填充（与 GL 侧同策略）
