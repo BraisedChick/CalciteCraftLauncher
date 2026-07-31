@@ -124,6 +124,23 @@ ChunkMeshScheduler* GameEngine::getMeshScheduler() {
     return m_client ? m_client->getMeshScheduler() : nullptr;
 }
 
+// 相机眼睛所在方块是否为实心不透明方块（对齐原版 LevelRenderer 旁观穿地兵底：
+// 相机嵌入地形时关闭遮挡剔除，只保留视锥剔除。实心口径与面剔除/遮光一致）
+bool GameEngine::isEyeInsideOpaqueBlock(double eyeX, double eyeY, double eyeZ) const {
+    if (!chunkManager) return false;
+    auto* reg = ClientEngine::getInstance() ? ClientEngine::getInstance()->getBlockRegistry() : nullptr;
+    if (!reg) return false;
+    int bx = (int)std::floor(eyeX);
+    int by = (int)std::floor(eyeY);
+    int bz = (int)std::floor(eyeZ);
+    auto chunk = chunkManager->getChunk(bx >> 4, bz >> 4);
+    if (!chunk) return false;
+    uint32_t st = chunk->getBlockState(bx & 15, by, bz & 15);
+    if (st == 0) return false;
+    const auto& meta = reg->getBlockMetadata(st);
+    return meta.isFullBlock && meta.isOpaque;
+}
+
 void GameEngine::setAuthInfo(const std::string& accessToken, const std::string& uuid, const std::string& tokenType) {
     this->accessToken = accessToken;
     playerUuid = uuid;

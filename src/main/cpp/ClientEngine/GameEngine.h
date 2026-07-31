@@ -124,6 +124,10 @@ public:
     int getDimensionMinY() const { return dimensionMinY; }
     int getDimensionHeight() const { return dimensionHeight; }
 
+    // 相机眼睛所在方块是否为实心不透明方块（供 BFS 遮挡剔除判断"相机嵌入地形"，
+    // 对齐原版 LevelRenderer 旁观穿地兜底：此时关闭遮挡剔除只保留视锥剔除）
+    bool isEyeInsideOpaqueBlock(double eyeX, double eyeY, double eyeZ) const;
+
     // ===== 世界时间 =====
     long long getWorldDayTime() const;
     float getSkyDarken() const;

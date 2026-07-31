@@ -37,6 +37,7 @@
 #include "CommonTypes.h"
 #include "ChunkManager.h"
 #include "ChunkMeshScheduler.h"
+#include "ChunkOcclusionCuller.h"
 #include "CrackOverlayMesh.h"
 #include "PanoramaView.h"
 
@@ -211,6 +212,10 @@ private:
     // 缓存每个区块的渲染数据 (key: chunkX << 16 | chunkZ)
     std::unordered_map<uint64_t, ChunkRenderData> chunkRenderCache;
     std::mutex cacheMutex;  // 保护 chunkRenderCache 的线程安全
+
+    // BFS 遮挡剔除（消费 section 连通性 visibilityData，与视锥剔除叠加）
+    ChunkOcclusionCuller occlusionCuller;
+    bool occlusionDirty = true;  // 渲染缓存增删后置位，触发重算
     
     // 视锥体参数
     float fov = 70.0f;

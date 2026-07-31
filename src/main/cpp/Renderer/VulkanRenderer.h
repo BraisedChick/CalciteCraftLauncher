@@ -12,6 +12,7 @@
 #include <android/asset_manager.h>
 #include "CommonTypes.h"
 #include "PanoramaView.h"
+#include "ChunkOcclusionCuller.h"
 
 // VMA 句柄前置声明（完整定义在 VulkanRenderer.cpp 随 VMA_IMPLEMENTATION 展开，
 // 与 vk_mem_alloc.h 内部的 VK_DEFINE_HANDLE 重复 typedef 同一类型，合法）
@@ -79,6 +80,7 @@ private:
         uint32_t indexCount = 0;
         uint32_t overlayIndexCount = 0;
         uint32_t waterIndexCount = 0;
+        uint64_t visibilityData = 0;      // section 方向连通性（BFS 遮挡剔除消费）
     };
 
     // 共享网格池块：大块 VB/IB + first-fit 子分配（空闲表 offset→size，释放邻接合并）。
@@ -292,6 +294,9 @@ private:
     std::unordered_map<uint64_t, ChunkRenderData> chunkRenderCache;
     float frustumPlanes[6][4] = {};
     std::atomic<bool> pendingChunkClear{false};  // 断连清屏请求（跨线程）
+    // Section 级 BFS 遮挡剔除（与 GL 后端共用同一实现）
+    ChunkOcclusionCuller occlusionCuller;
+    bool occlusionDirty = true;  // 渲染缓存增删后置位，触发下帧重算
 
     // 全景背景资源（cubemap + 独立管线，仅菜单模式使用）
     PanoramaView panoramaView;

@@ -1457,6 +1457,7 @@ void VulkanRenderer::processChunkCompletedWork() {
             for (auto& sec : it->second.sections) freeSectionMesh(sec);
             chunkRenderCache.erase(it);
         }
+        occlusionDirty = true;  // 缓存发生删除，下帧重算可见集
     }
 
     std::vector<ChunkMeshResult> results;
@@ -1490,6 +1491,7 @@ void VulkanRenderer::processChunkCompletedWork() {
         for (auto& secData : result.sections) {
             ChunkSectionRenderData sec;
             sec.sectionY = secData.sectionY;
+            sec.visibilityData = secData.visibilityData;
 
             std::vector<uint32_t> merged;
             merged.reserve(secData.baseIndices.size() + secData.overlayIndices.size() + secData.waterIndices.size());
@@ -1512,6 +1514,7 @@ void VulkanRenderer::processChunkCompletedWork() {
             renderData.sections.push_back(sec);
         }
     }
+    occlusionDirty = true;  // 缓存新增/重建 section，下帧重算可见集
 }
 
 void VulkanRenderer::updateChunkUniforms(float cameraX, float cameraY, float cameraZ,
@@ -1525,6 +1528,25 @@ void VulkanRenderer::updateChunkUniforms(float cameraX, float cameraY, float cam
     // 视锥从未修正的 proj*view 提取（平面提取公式基于 GL 惯例 clip 空间）
     glm::mat4 viewProj = proj * view;
     computeFrustumPlanes(&viewProj[0][0]);
+
+    // ===== BFS 遮挡剔除：相机跨 section 或缓存变动时重算可见集（与 GL 后端共用）=====
+    {
+        auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+        int worldMinY = game ? game->getDimensionMinY() : -64;
+        int worldMaxY = game ? (game->getDimensionMinY() + game->getDimensionHeight()) : 320;
+        // 旁观者相机嵌入实心方块穿地时关闭遮挡剔除（对齐原版 LevelRenderer），避免洞穴被误剔除消失
+        bool cullEnabled = !(game && game->getGameMode() == 3 && game->isEyeInsideOpaqueBlock(cameraX, cameraY + 1.62, cameraZ));
+        occlusionCuller.update(cameraX, cameraY, cameraZ, worldMinY, worldMaxY, chunkFar, occlusionDirty, cullEnabled,
+            [this](std::unordered_map<uint64_t, uint64_t>& out) {
+                for (auto& [ckey, rd] : chunkRenderCache) {
+                    int cX = (int)(ckey >> 32);
+                    int cZ = (int)(ckey & 0xFFFFFFFF);
+                    for (auto& s : rd.sections)
+                        out[ChunkOcclusionCuller::sectionKey(cX, cZ, s.sectionY >> 4)] = s.visibilityData;
+                }
+            });
+        occlusionDirty = false;
+    }
 
     // glm::perspective 默认 GL 深度 [-1,1] → Vulkan [0,1]（z' = 0.5z + 0.5w）
     glm::mat4 clipFix(1.0f);
@@ -1608,6 +1630,8 @@ void VulkanRenderer::renderChunks(VkCommandBuffer cmd) {
             if (sec.poolBlock < 0) continue;
             float secMinY = (float)sec.sectionY;
             if (!isAABBInFrustum(minX, secMinY, minZ, maxX, secMinY + 16.0f, maxZ)) continue;
+            if (occlusionCuller.hasResult() && !occlusionCuller.isVisible(ChunkOcclusionCuller::sectionKey(
+                    (int)(chunkKey >> 32), (int)(chunkKey & 0xFFFFFFFF), sec.sectionY >> 4))) continue;
 
             uint32_t firstIndex = (uint32_t)(sec.indexOffset / sizeof(uint32_t));
             int32_t vertexOffset = (int32_t)(sec.vertexOffset / sizeof(PackedVertex));

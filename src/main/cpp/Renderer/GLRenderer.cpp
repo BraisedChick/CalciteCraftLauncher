@@ -369,6 +369,7 @@ void GLRenderer::processChunkRemovals() {
         }
         chunkRenderCache.erase(it);
     }
+    occlusionDirty = true;  // 缓存发生删除，下帧重算可见集
 }
 
 void GLRenderer::clearChunks() {
@@ -504,6 +505,7 @@ void GLRenderer::processCompletedWork() {
             renderData.sections.push_back(std::move(sec));
         }
     }
+    occlusionDirty = true;  // 缓存新增/重建 section，下帧重算可见集
 }
 
 void GLRenderer::updateCamera(float cx, float cy, float cz, float pitch, float yaw) {
@@ -756,6 +758,26 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+    // BFS 遮挡剔除：相机跨 section 或缓存变动才重算，否则复用上次可见集
+    // 旁观者相机嵌入实心方块穿地时关闭遮挡剔除（对齐原版 LevelRenderer），避免洞穴被误剔除消失
+    bool cullEnabled = !(game && game->getGameMode() == 3 && game->isEyeInsideOpaqueBlock(cx, cy + 1.62, cz));
+    occlusionCuller.update(cx, cy, cz, (int)worldMinY, (int)worldMaxY, farPlane, occlusionDirty, cullEnabled,
+        [this](std::unordered_map<uint64_t, uint64_t>& out) {
+            for (auto& [ckey, rd] : chunkRenderCache) {
+                int cX = (int)(ckey >> 32);
+                int cZ = (int)(ckey & 0xFFFFFFFF);
+                for (auto& s : rd.sections)
+                    out[ChunkOcclusionCuller::sectionKey(cX, cZ, s.sectionY >> 4)] = s.visibilityData;
+            }
+        });
+    occlusionDirty = false;
+    // section 是否被遮挡剔除（无结果时不剔除，保证首帧/异常安全）
+    auto occluded = [this](uint64_t ckey, int sectionY) {
+        return occlusionCuller.hasResult() &&
+            !occlusionCuller.isVisible(ChunkOcclusionCuller::sectionKey(
+                (int)(ckey >> 32), (int)(ckey & 0xFFFFFFFF), sectionY >> 4));
+    };
+
     // ---- Phase 1a: 基体几何（纯深度测试，写深度）----
     for (auto& [chunkKey, renderData] : chunkRenderCache) {
         if (renderData.sections.empty()) continue;
@@ -770,6 +792,7 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
             float secMinY = (float)sec.sectionY;
             float secMaxY = secMinY + 16.0f;
             if (!isAABBInFrustum(minX, secMinY, minZ, maxX, secMaxY, maxZ)) continue;
+            if (occluded(chunkKey, sec.sectionY)) continue;
 
             uint32_t baseEnd = sec.indexCount - sec.overlayIndexCount - sec.waterIndexCount;
             if (baseEnd == 0) continue;
@@ -796,6 +819,7 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
                 float secMinY = (float)sec.sectionY;
                 float secMaxY = secMinY + 16.0f;
                 if (!isAABBInFrustum(minX, secMinY, minZ, maxX, secMaxY, maxZ)) continue;
+                if (occluded(chunkKey, sec.sectionY)) continue;
 
                 if (!blendEnabled) {
                     glEnable(GL_BLEND);
@@ -832,6 +856,7 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
                 float secMinY = (float)sec.sectionY;
                 float secMaxY = secMinY + 16.0f;
                 if (!isAABBInFrustum(minX, secMinY, minZ, maxX, secMaxY, maxZ)) continue;
+                if (occluded(chunkKey, sec.sectionY)) continue;
 
                 if (!waterStateSet) {
                     glUseProgram(shaderTranslucent.program);

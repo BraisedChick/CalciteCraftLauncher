@@ -285,11 +285,9 @@ void ChunkMeshScheduler::enqueueWork(ChunkWorkItem item) {
     workCV.notify_one();
 }
 
-// ===== Sodium 风格遮挡剔除：预计算 section 内部连通性 =====
+// ===== 原版 VisGraph 风格遮挡剔除：预计算 section 内部连通性 =====
 // 方向: 0=DOWN 1=UP 2=NORTH 3=SOUTH 4=WEST 5=EAST
 // 结果: bit(from*8+to)=1 表示 from 面→to 面在 section 内部可达
-static const int FACE_AXIS[6] = {1,1,2,2,0,0};
-static const int FACE_VAL[6]  = {0,15,0,15,0,15};
 
 static uint64_t computeSectionVisibility(const ChunkSection& section) {
     auto toIdx = [](int x,int y,int z){ return (y<<8)|(z<<4)|x; };
@@ -304,37 +302,38 @@ static uint64_t computeSectionVisibility(const ChunkSection& section) {
     }
     if(solidCount==4096) return 0;
     if(solidCount<256) return ~0ULL;
+    // 单次洪泛（原版 VisGraph 写法）：遍历边缘格，每个未访问的空心格发起一趟洪泛；
+    // visited 破坏性复用 isSolid（泛过标实心），同一连通域只泛一次，每格全局至多访问一次；
+    // 洪泛中顺手记录触及的面，连通域触及的面两两互通（含自身，全实心面无任何 bit）
     static const int NB[6][3]={{0,-1,0},{0,1,0},{0,0,-1},{0,0,1},{-1,0,0},{1,0,0}};
     uint64_t vis=0;
     int queue[4096];
-    for(int of=0;of<6;of++){
-        bool visited[4096]={false};
+    for(int y=0;y<16;y++) for(int z=0;z<16;z++) for(int x=0;x<16;x++){
+        if(x!=0&&x!=15&&y!=0&&y!=15&&z!=0&&z!=15) continue;  // 只从边缘格起泛（内部孤立气泡不影响面间连通）
+        int start=toIdx(x,y,z);
+        if(isSolid[start]) continue;
+        isSolid[start]=true;
         int qH=0,qT=0;
-        int fix=FACE_AXIS[of],val=FACE_VAL[of],a1=(fix+1)%3,a2=(fix+2)%3;
-        for(int d1=0;d1<16;d1++) for(int d2=0;d2<16;d2++){
-            int c[3]; c[fix]=val; c[a1]=d1; c[a2]=d2;
-            int idx=toIdx(c[0],c[1],c[2]);
-            if(!isSolid[idx]&&!visited[idx]){ visited[idx]=true; queue[qT++]=idx; }
-        }
+        queue[qT++]=start;
+        int faces=0;  // bit序同方向编号：bit0=DOWN ... bit5=EAST
         while(qH<qT){
             int cur=queue[qH++],cx=cur&0xF,cy=(cur>>8)&0xF,cz=(cur>>4)&0xF;
+            if(cy==0)  faces|=1<<0;
+            if(cy==15) faces|=1<<1;
+            if(cz==0)  faces|=1<<2;
+            if(cz==15) faces|=1<<3;
+            if(cx==0)  faces|=1<<4;
+            if(cx==15) faces|=1<<5;
             for(int d=0;d<6;d++){
                 int nx=cx+NB[d][0],ny=cy+NB[d][1],nz=cz+NB[d][2];
                 if((unsigned)nx>=16||(unsigned)ny>=16||(unsigned)nz>=16) continue;
                 int ni=toIdx(nx,ny,nz);
-                if(!isSolid[ni]&&!visited[ni]){ visited[ni]=true; queue[qT++]=ni; }
+                if(!isSolid[ni]){ isSolid[ni]=true; queue[qT++]=ni; }
             }
         }
-        vis|=1ULL<<(of*8+of);
-        for(int tf=0;tf<6;tf++){
-            if(tf==of) continue;
-            int tfx=FACE_AXIS[tf],tfv=FACE_VAL[tf],ta1=(tfx+1)%3,ta2=(tfx+2)%3;
-            bool ok=false;
-            for(int d1=0;d1<16&&!ok;d1++) for(int d2=0;d2<16&&!ok;d2++){
-                int c[3]; c[tfx]=tfv; c[ta1]=d1; c[ta2]=d2;
-                if(visited[toIdx(c[0],c[1],c[2])]) ok=true;
-            }
-            if(ok) vis|=1ULL<<(of*8+tf);
+        for(int a=0;a<6;a++){
+            if(!(faces&(1<<a))) continue;
+            for(int b=0;b<6;b++) if(faces&(1<<b)) vis|=1ULL<<(a*8+b);
         }
     }
     return vis;
