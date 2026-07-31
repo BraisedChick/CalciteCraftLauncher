@@ -286,6 +286,9 @@ void HudScreen::render(int mouseX, int mouseY) {
                 hudTexturesLoaded = true;
             }
 
+            // 心/食物图标为像素画，切 NEAREST 采样（不依赖前面物品图标已切，空快捷栏时也生效）
+            addNearestSamplerCallback(ImGui::GetWindowDrawList());
+
             for (int i = 0; i < 10; i++) {
                 float hx = hotbarX + i * (ICON_SIZE + GAP);
                 if (texHeartContainer) {

@@ -142,9 +142,15 @@ inline ImTextureID getHudTextureId(const std::string& path) {
     return (ImTextureID)(intptr_t)ResourcepackManager::getInstance().getHudTexture(path);
 }
 
-// GL 解绑 sampler 回退纹理自身 NEAREST 参数；Vulkan 用后端默认 Linear 采样器（跳过回调）
+// GL 解绑 sampler 回退纹理自身 NEAREST 参数；Vulkan 切到 ImGui 后端的 NEAREST 采样器描述符
+// （二者都切到 NEAREST 且持续到本帧后续 draw，像素画 HUD/物品图标不再被 Linear 采样糊化）
 inline void addNearestSamplerCallback(ImDrawList* dl) {
-    if (!GameUI::getInstance().isVulkanBackend()) {
+    if (GameUI::getInstance().isVulkanBackend()) {
+        // imgui_impl_vulkan 初始化时注册的标准回调，绑定 NEAREST 采样器描述符集（set 1）
+        if (auto cb = ImGui::GetPlatformIO().DrawCallback_SetSamplerNearest) {
+            dl->AddCallback(cb, nullptr);
+        }
+    } else {
         dl->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
             glBindSampler(0, 0);
         }, nullptr);
