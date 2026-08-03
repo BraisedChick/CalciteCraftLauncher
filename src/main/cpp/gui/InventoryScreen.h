@@ -14,6 +14,7 @@ public:
 private:
     void renderPlayerInventory(float w, float h);
     void renderCraftingTable(float w, float h);
+    void renderFurnace(float w, float h);
 
     // 背包拖拽（Quick Craft）状态
     int quickcraftStatus = 0;
