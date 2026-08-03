@@ -142,7 +142,7 @@ void ClientEngine::setupUICallbacks() {
 
     // 可以在此设置其他回调（退出、断开连接等），但目前它们已在 GameUI::init() 中设置
 }
-// ===== 新增：渲染器初始化 =====
+// ===== 渲染器初始化 =====
 bool ClientEngine::initializeRenderer(ANativeWindow* window) {
     if (!window) {
         LOGE("initializeRenderer: window is null");
