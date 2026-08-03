@@ -286,9 +286,16 @@ void GameUI::processTouchEvents() {
     }
     ImGuiIO& io = ImGui::GetIO();
     for (const auto& e : events) {
+        // 每个事件都更新鼠标位置（包括 MOVE），这样 ImGui 的 IsMouseDragging
+        // 才能拿到连续的坐标变化，用于拖动滚动等交互
         io.AddMousePosEvent(e.x, e.y);
-        if (e.action == 0) io.AddMouseButtonEvent(0, true);
-        else if (e.action == 1) io.AddMouseButtonEvent(0, false);
+        if (e.action == 0) {
+            io.AddMouseButtonEvent(0, true);
+        } else if (e.action == 1) {
+            io.AddMouseButtonEvent(0, false);
+        }
+        // action == 2 (MOVE) 时位置已通过 AddMousePosEvent 喂入，
+        // 不需要额外调用；ImGui 内部会识别为拖动
     }
 }
 

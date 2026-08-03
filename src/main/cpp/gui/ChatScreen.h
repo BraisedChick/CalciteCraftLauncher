@@ -43,4 +43,8 @@ private:
     void* chatFontPtr = nullptr;
     double chatLastMsgTime = 0.0;
     SendCallback sendCallback;
+    // 是否需要一次性自动滚到底部（新消息到来或打开聊天时置 true，触发一次后清 false）
+    bool chatNeedAutoScroll = false;
+    // 累计滚动偏移（拖动时累加，每帧通过 SetNextWindowScroll 应用到窗口）
+    float chatScrollOffset = 0.0f;
 };
