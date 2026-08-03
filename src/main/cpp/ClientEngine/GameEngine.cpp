@@ -991,53 +991,72 @@ std::string GameEngine::parseChatComponent(const std::string& raw) const {
         auto j = njson::parse(raw, nullptr, false);
         if (j.is_discarded() || !j.is_object()) return raw;
 
-        if (j.contains("text") && j["text"].is_string() && !j.contains("translate")) {
-            return j["text"].get<std::string>();
+        std::string result;
+
+        // 1. 处理 text / translate 主内容
+        if (j.contains("translate") && j["translate"].is_string()) {
+            std::string translateKey = j["translate"].get<std::string>();
+            const std::string* tr = m_client ? m_client->translate(translateKey) : nullptr;
+            if (tr) {
+                result = *tr;
+
+                // 递归解析 with 元素：每个元素本身就是一个完整的 Chat Component
+                std::vector<std::string> args;
+                if (j.contains("with") && j["with"].is_array()) {
+                    for (const auto& elem : j["with"]) {
+                        if (elem.is_string()) {
+                            args.push_back(elem.get<std::string>());
+                        } else if (elem.is_object()) {
+                            args.push_back(parseChatComponent(elem.dump()));
+                        } else {
+                            args.push_back("");
+                        }
+                    }
+                }
+
+                // 替换 %N$s 位置占位符
+                for (size_t i = 0; i < args.size(); i++) {
+                    std::string placeholder = "%" + std::to_string(i + 1) + "$s";
+                    size_t pos = 0;
+                    while ((pos = result.find(placeholder, pos)) != std::string::npos) {
+                        result.replace(pos, placeholder.length(), args[i]);
+                        pos += args[i].length();
+                    }
+                }
+
+                // 替换顺序 %s 占位符
+                size_t argIdx = 0;
+                size_t pos = 0;
+                while ((pos = result.find("%s", pos)) != std::string::npos && argIdx < args.size()) {
+                    result.replace(pos, 2, args[argIdx]);
+                    pos += args[argIdx].length();
+                    argIdx++;
+                }
+            } else if (j.contains("text") && j["text"].is_string()) {
+                // translate 找不到，回退到 text 字段
+                result = j["text"].get<std::string>();
+            } else {
+                // translate 找不到且无 text，回退原 JSON
+                return raw;
+            }
+        } else if (j.contains("text") && j["text"].is_string()) {
+            // 纯文本组件（无 translate）
+            result = j["text"].get<std::string>();
+        } else {
+            // 既无 text 也无 translate，回退原 JSON
+            return raw;
         }
 
-        if (!j.contains("translate") || !j["translate"].is_string()) return raw;
-
-        std::string translateKey = j["translate"].get<std::string>();
-        const std::string* tr = m_client ? m_client->translate(translateKey) : nullptr;
-        if (!tr) {
-            return j.contains("text") && j["text"].is_string()
-                ? j["text"].get<std::string>() : raw;
-        }
-
-        std::string result = *tr;
-
-        std::vector<std::string> args;
-        if (j.contains("with") && j["with"].is_array()) {
-            for (const auto& elem : j["with"]) {
-                if (elem.contains("text") && elem["text"].is_string()) {
-                    args.push_back(elem["text"].get<std::string>());
-                } else if (elem.contains("translate") && elem["translate"].is_string()) {
-                    std::string subKey = elem["translate"].get<std::string>();
-                    const std::string* subTr = m_client ? m_client->translate(subKey) : nullptr;
-                    args.push_back(subTr ? *subTr : subKey);
-                } else if (elem.is_string()) {
-                    args.push_back(elem.get<std::string>());
-                } else {
-                    args.push_back("");
+        // 2. 拼接 extra 数组（原版 Chat Component 标准子组件字段）
+        // 每个 extra 元素本身就是一个完整的 Chat Component，递归解析
+        if (j.contains("extra") && j["extra"].is_array()) {
+            for (const auto& elem : j["extra"]) {
+                if (elem.is_string()) {
+                    result += elem.get<std::string>();
+                } else if (elem.is_object()) {
+                    result += parseChatComponent(elem.dump());
                 }
             }
-        }
-
-        for (size_t i = 0; i < args.size(); i++) {
-            std::string placeholder = "%" + std::to_string(i + 1) + "$s";
-            size_t pos = 0;
-            while ((pos = result.find(placeholder, pos)) != std::string::npos) {
-                result.replace(pos, placeholder.length(), args[i]);
-                pos += args[i].length();
-            }
-        }
-
-        size_t argIdx = 0;
-        size_t pos = 0;
-        while ((pos = result.find("%s", pos)) != std::string::npos && argIdx < args.size()) {
-            result.replace(pos, 2, args[argIdx]);
-            pos += args[argIdx].length();
-            argIdx++;
         }
 
         return result;
