@@ -681,6 +681,31 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     glClearColor(skyR, skyG, skyB, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+    // 初始化天空渲染（首次调用）
+    initSky();
+
+    // 渲染天空（天空圆盘 + 太阳 + 月亮 + 星星）
+    {
+        // 获取昼夜时间和星星亮度
+        float timeOfDay = 6000.0f;  // 默认正午
+        float starBrightness = 0.0f;
+        if (gameForLight && gameForLight->getLight()) {
+            long long dayTime = gameForLight->getLight()->getWorldDayTime();
+            timeOfDay = (float)(dayTime % 24000);
+            if (timeOfDay < 0) timeOfDay += 24000.0f;
+            // 星星亮度：夜晚可见，白天消失
+            float normalizedTime = timeOfDay / 24000.0f;
+            if (normalizedTime > 0.5f) {
+                // 夜晚：从日落到午夜逐渐变亮，从午夜到日出逐渐变暗
+                float nightProgress = (normalizedTime - 0.5f) * 2.0f;  // 0-1
+                starBrightness = 1.0f - fabsf(nightProgress * 2.0f - 1.0f);
+            }
+        }
+        renderSky(glm::make_mat4(cameraMatrix), glm::make_mat4(projectionMatrix),
+                  skyR, skyG, skyB, timeOfDay, starBrightness);
+
+    }
+
     // 帧计数器递增
     frameCount++;
 
@@ -1429,6 +1454,271 @@ void GLRenderer::renderPanoramaToFBO() {
     glFrontFace(GL_CCW);
 }
 
+// ===== 天空渲染 =====
+
+void GLRenderer::initSky() {
+    if (skyInitialized) return;
+
+    // 1. 天空纯色着色器（position + color uniform）
+    const char* skyColorVsrc = R"(#version 300 es
+precision mediump float;
+layout(location = 0) in vec3 aPos;
+uniform mat4 uMVP;
+void main() {
+    gl_Position = uMVP * vec4(aPos, 1.0);
+}
+)";
+    const char* skyColorFsrc = R"(#version 300 es
+precision mediump float;
+out vec4 FragColor;
+uniform vec4 uColor;
+void main() {
+    FragColor = uColor;
+}
+)";
+
+    auto compileShader = [](GLenum type, const char* src) -> GLuint {
+        GLuint s = glCreateShader(type);
+        glShaderSource(s, 1, &src, nullptr);
+        glCompileShader(s);
+        GLint ok;
+        glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+        if (!ok) {
+            char log[512];
+            glGetShaderInfoLog(s, 512, nullptr, log);
+            LOGE("Sky shader compile error: %s", log);
+            glDeleteShader(s);
+            return 0;
+        }
+        return s;
+    };
+
+    GLuint vs = compileShader(GL_VERTEX_SHADER, skyColorVsrc);
+    GLuint fs = compileShader(GL_FRAGMENT_SHADER, skyColorFsrc);
+    if (!vs || !fs) {
+        LOGE("Sky shader compilation failed");
+        if (vs) glDeleteShader(vs);
+        if (fs) glDeleteShader(fs);
+        return;
+    }
+
+    skyColorProgram = glCreateProgram();
+    glAttachShader(skyColorProgram, vs);
+    glAttachShader(skyColorProgram, fs);
+    glLinkProgram(skyColorProgram);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+
+    GLint linkOk;
+    glGetProgramiv(skyColorProgram, GL_LINK_STATUS, &linkOk);
+    if (!linkOk) {
+        char log[512];
+        glGetProgramInfoLog(skyColorProgram, 512, nullptr, log);
+        LOGE("Sky program link error: %s", log);
+        glDeleteProgram(skyColorProgram);
+        skyColorProgram = 0;
+        return;
+    }
+
+    // 2. 创建天空圆盘 VAO/VBO
+    // 上半圆盘
+    const auto& topVerts = SkyRenderer::topSkyVertices();
+    glGenVertexArrays(1, &skyTopVAO);
+    glGenBuffers(1, &skyTopVBO);
+    glBindVertexArray(skyTopVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, skyTopVBO);
+    glBufferData(GL_ARRAY_BUFFER, topVerts.size() * sizeof(float), topVerts.data(), GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glBindVertexArray(0);
+
+    // 下半圆盘
+    const auto& bottomVerts = SkyRenderer::bottomSkyVertices();
+    glGenVertexArrays(1, &skyBottomVAO);
+    glGenBuffers(1, &skyBottomVBO);
+    glBindVertexArray(skyBottomVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, skyBottomVBO);
+    glBufferData(GL_ARRAY_BUFFER, bottomVerts.size() * sizeof(float), bottomVerts.data(), GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glBindVertexArray(0);
+
+    // 3. 太阳 VAO/VBO/EBO
+    const auto& sunVerts = SkyRenderer::sunVertices();
+    const auto& sunIdx = SkyRenderer::sunIndices();
+    glGenVertexArrays(1, &skySunVAO);
+    glGenBuffers(1, &skySunVBO);
+    glGenBuffers(1, &skySunEBO);
+    glBindVertexArray(skySunVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, skySunVBO);
+    glBufferData(GL_ARRAY_BUFFER, sunVerts.size() * sizeof(float), sunVerts.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, skySunEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sunIdx.size() * sizeof(uint16_t), sunIdx.data(), GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+    glBindVertexArray(0);
+
+    // 4. 月亮 VAO/VBO/EBO
+    const auto& moonVerts = SkyRenderer::moonVertices();
+    const auto& moonIdx = SkyRenderer::moonIndices();
+    glGenVertexArrays(1, &skyMoonVAO);
+    glGenBuffers(1, &skyMoonVBO);
+    glGenBuffers(1, &skyMoonEBO);
+    glBindVertexArray(skyMoonVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, skyMoonVBO);
+    glBufferData(GL_ARRAY_BUFFER, moonVerts.size() * sizeof(float), moonVerts.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, skyMoonEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, moonIdx.size() * sizeof(uint16_t), moonIdx.data(), GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+    glBindVertexArray(0);
+
+    // 5. 星星 billboard 着色器（center + offset，视图空间展开）
+    const char* starVsrc = R"(#version 300 es
+precision mediump float;
+layout(location = 0) in vec3 aCenter;
+layout(location = 1) in vec2 aOffset;
+uniform mat4 uViewCelestial;
+uniform mat4 uProj;
+void main() {
+    vec4 viewCenter = uViewCelestial * vec4(aCenter, 1.0);
+    viewCenter.xyz += vec3(aOffset, 0.0);
+    gl_Position = uProj * viewCenter;
+}
+)";
+    const char* starFsrc = R"(#version 300 es
+precision mediump float;
+out vec4 FragColor;
+uniform vec4 uColor;
+void main() {
+    FragColor = uColor;
+}
+)";
+
+    GLuint starVs = compileShader(GL_VERTEX_SHADER, starVsrc);
+    GLuint starFs = compileShader(GL_FRAGMENT_SHADER, starFsrc);
+    if (starVs && starFs) {
+        skyStarProgram = glCreateProgram();
+        glAttachShader(skyStarProgram, starVs);
+        glAttachShader(skyStarProgram, starFs);
+        glLinkProgram(skyStarProgram);
+        GLint ok;
+        glGetProgramiv(skyStarProgram, GL_LINK_STATUS, &ok);
+        if (!ok) {
+            char log[512];
+            glGetProgramInfoLog(skyStarProgram, 512, nullptr, log);
+            LOGE("Star program link error: %s", log);
+            glDeleteProgram(skyStarProgram);
+            skyStarProgram = 0;
+        }
+    }
+    if (starVs) glDeleteShader(starVs);
+    if (starFs) glDeleteShader(starFs);
+
+    // 6. 星星 VAO/VBO/EBO（billboard 格式：center + offset）
+    const auto& starVerts = SkyRenderer::starVertices();
+    const auto& starIdx = SkyRenderer::starIndices();
+    glGenVertexArrays(1, &skyStarsVAO);
+    glGenBuffers(1, &skyStarsVBO);
+    glGenBuffers(1, &skyStarsEBO);
+    glBindVertexArray(skyStarsVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, skyStarsVBO);
+    glBufferData(GL_ARRAY_BUFFER, starVerts.size() * sizeof(float), starVerts.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, skyStarsEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, starIdx.size() * sizeof(uint16_t), starIdx.data(), GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+    glBindVertexArray(0);
+
+    skyInitialized = true;
+    LOGI("Sky renderer initialized (program=%d, starProgram=%d, topVAO=%d, sunVAO=%d, moonVAO=%d, starsVAO=%d)",
+         skyColorProgram, skyStarProgram, skyTopVAO, skySunVAO, skyMoonVAO, skyStarsVAO);
+}
+
+void GLRenderer::renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMatrix,
+                            float skyR, float skyG, float skyB, float timeOfDay, float starBrightness) {
+    if (!skyInitialized || skyColorProgram == 0) return;
+    // 保存 GL 状态
+
+    glDisable(GL_DEPTH_TEST);  // 完全禁用深度测试，避免遮挡
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_CULL_FACE);
+
+    glUseProgram(skyColorProgram);
+    GLint uMVP = glGetUniformLocation(skyColorProgram, "uMVP");
+    GLint uColor = glGetUniformLocation(skyColorProgram, "uColor");
+
+    // 天空渲染使用只有旋转的 view matrix（无平移，天体跟随相机）
+    glm::mat4 skyView = glm::mat4(glm::mat3(viewMatrix));
+
+    // 1. 渲染天空圆盘（上半部分，天空色）
+    glm::mat4 skyMVP = projMatrix * skyView;
+    glUniformMatrix4fv(uMVP, 1, GL_FALSE, glm::value_ptr(skyMVP));
+    glUniform4f(uColor, skyR, skyG, skyB, 1.0f);
+    glBindVertexArray(skyTopVAO);
+    glDrawArrays(GL_TRIANGLE_FAN, 0, (GLsizei)(SkyRenderer::topSkyVertices().size() / 3));
+
+    // 2. 天体旋转矩阵
+    glm::mat4 celestialRot = SkyRenderer::celestialRotation(timeOfDay);
+    glm::mat4 celestialMVP = projMatrix * skyView * celestialRot;
+    glUniformMatrix4fv(uMVP, 1, GL_FALSE, glm::value_ptr(celestialMVP));
+
+    // 3. 渲染太阳（金黄色）
+    float sunAlpha = 1.0f;
+    // 白天可见，夜晚消失
+    float normalizedTime = timeOfDay / 24000.0f;
+    if (normalizedTime > 0.5f) {
+        sunAlpha = 0.0f;  // 夜晚不显示太阳
+    }
+    if (sunAlpha > 0.0f) {
+        glUniform4f(uColor, 1.0f, 0.9f, 0.3f, sunAlpha);
+        glBindVertexArray(skySunVAO);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, 0);
+    }
+
+    // 4. 渲染月亮（银白色）
+    float moonAlpha = 0.0f;
+    if (normalizedTime > 0.5f) {
+        moonAlpha = 1.0f;  // 夜晚显示月亮
+    }
+    if (moonAlpha > 0.0f) {
+        glUniform4f(uColor, 0.9f, 0.9f, 1.0f, moonAlpha);
+        glBindVertexArray(skyMoonVAO);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, 0);
+    }
+
+    // 5. 渲染星星（billboard，始终面向玩家）
+    if (starBrightness > 0.01f && skyStarProgram != 0) {
+        glUseProgram(skyStarProgram);
+        GLint uViewCelestial = glGetUniformLocation(skyStarProgram, "uViewCelestial");
+        GLint uProj = glGetUniformLocation(skyStarProgram, "uProj");
+        GLint uStarColor = glGetUniformLocation(skyStarProgram, "uColor");
+        glm::mat4 viewCelestial = skyView * celestialRot;
+        glUniformMatrix4fv(uViewCelestial, 1, GL_FALSE, glm::value_ptr(viewCelestial));
+        glUniformMatrix4fv(uProj, 1, GL_FALSE, glm::value_ptr(projMatrix));
+        glUniform4f(uStarColor, 1.0f, 1.0f, 1.0f, starBrightness);
+        glBindVertexArray(skyStarsVAO);
+        glDrawElements(GL_TRIANGLES, (GLsizei)SkyRenderer::starIndices().size(), GL_UNSIGNED_SHORT, 0);
+        glUseProgram(skyColorProgram);
+    }
+
+    glBindVertexArray(0);
+    glUseProgram(0);
+
+    // 恢复 GL 状态
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glFrontFace(GL_CCW);
+}
+
+
 void GLRenderer::cleanup() {
     // 重置纹理初始化状态
     textureInitPending = true;
@@ -1502,6 +1792,24 @@ void GLRenderer::cleanup() {
     if (crackVAO != 0) { glDeleteVertexArrays(1, &crackVAO); crackVAO = 0; }
     if (crackVBO != 0) { glDeleteBuffers(1, &crackVBO); crackVBO = 0; }
     if (crackEBO != 0) { glDeleteBuffers(1, &crackEBO); crackEBO = 0; }
+
+    // 清理天空渲染资源
+    if (skyColorProgram != 0) { glDeleteProgram(skyColorProgram); skyColorProgram = 0; }
+    if (skyStarProgram != 0) { glDeleteProgram(skyStarProgram); skyStarProgram = 0; }
+    if (skyTopVAO != 0) { glDeleteVertexArrays(1, &skyTopVAO); skyTopVAO = 0; }
+    if (skyTopVBO != 0) { glDeleteBuffers(1, &skyTopVBO); skyTopVBO = 0; }
+    if (skyBottomVAO != 0) { glDeleteVertexArrays(1, &skyBottomVAO); skyBottomVAO = 0; }
+    if (skyBottomVBO != 0) { glDeleteBuffers(1, &skyBottomVBO); skyBottomVBO = 0; }
+    if (skySunVAO != 0) { glDeleteVertexArrays(1, &skySunVAO); skySunVAO = 0; }
+    if (skySunVBO != 0) { glDeleteBuffers(1, &skySunVBO); skySunVBO = 0; }
+    if (skySunEBO != 0) { glDeleteBuffers(1, &skySunEBO); skySunEBO = 0; }
+    if (skyMoonVAO != 0) { glDeleteVertexArrays(1, &skyMoonVAO); skyMoonVAO = 0; }
+    if (skyMoonVBO != 0) { glDeleteBuffers(1, &skyMoonVBO); skyMoonVBO = 0; }
+    if (skyMoonEBO != 0) { glDeleteBuffers(1, &skyMoonEBO); skyMoonEBO = 0; }
+    if (skyStarsVAO != 0) { glDeleteVertexArrays(1, &skyStarsVAO); skyStarsVAO = 0; }
+    if (skyStarsVBO != 0) { glDeleteBuffers(1, &skyStarsVBO); skyStarsVBO = 0; }
+    if (skyStarsEBO != 0) { glDeleteBuffers(1, &skyStarsEBO); skyStarsEBO = 0; }
+    skyInitialized = false;
 
     if (display) {
         eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);

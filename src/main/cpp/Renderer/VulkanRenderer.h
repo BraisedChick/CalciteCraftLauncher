@@ -316,4 +316,45 @@ private:
     VkDescriptorSet panoramaDescriptorSet = VK_NULL_HANDLE;
     VkPipelineLayout panoramaPipelineLayout = VK_NULL_HANDLE;
     VkPipeline panoramaPipeline = VK_NULL_HANDLE;
+
+    // ===== 天空渲染资源（游戏内：天空圆盘 + 太阳 + 月亮 + 星星）=====
+    bool initSky();
+    void renderSky(VkCommandBuffer cmd, const glm::mat4& viewMatrix, const glm::mat4& projMatrix,
+                   float skyR, float skyG, float skyB, float timeOfDay, float starBrightness);
+    void destroySkyResources();
+    bool skyInitialized = false;
+
+    // 天空纯色管线（天空圆盘、太阳、月亮共用）
+    VkPipelineLayout skyColorPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline skyColorPipeline = VK_NULL_HANDLE;
+
+    // 星星 billboard 管线
+    VkPipelineLayout skyStarPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline skyStarPipeline = VK_NULL_HANDLE;
+
+    // 天空圆盘 VBO（上半部分，TRIANGLE_FAN）
+    VkBuffer skyTopVertexBuffer = VK_NULL_HANDLE;
+    VmaAllocation skyTopVertexMemory = VK_NULL_HANDLE;
+    uint32_t skyTopVertexCount = 0;
+
+    // 太阳 VBO + EBO
+    VkBuffer skySunVertexBuffer = VK_NULL_HANDLE;
+    VmaAllocation skySunVertexMemory = VK_NULL_HANDLE;
+    VkBuffer skySunIndexBuffer = VK_NULL_HANDLE;
+    VmaAllocation skySunIndexMemory = VK_NULL_HANDLE;
+    uint32_t skySunIndexCount = 0;
+
+    // 月亮 VBO + EBO
+    VkBuffer skyMoonVertexBuffer = VK_NULL_HANDLE;
+    VmaAllocation skyMoonVertexMemory = VK_NULL_HANDLE;
+    VkBuffer skyMoonIndexBuffer = VK_NULL_HANDLE;
+    VmaAllocation skyMoonIndexMemory = VK_NULL_HANDLE;
+    uint32_t skyMoonIndexCount = 0;
+
+    // 星星 VBO + EBO（billboard 格式：center + offset）
+    VkBuffer skyStarsVertexBuffer = VK_NULL_HANDLE;
+    VmaAllocation skyStarsVertexMemory = VK_NULL_HANDLE;
+    VkBuffer skyStarsIndexBuffer = VK_NULL_HANDLE;
+    VmaAllocation skyStarsIndexMemory = VK_NULL_HANDLE;
+    uint32_t skyStarsIndexCount = 0;
 };

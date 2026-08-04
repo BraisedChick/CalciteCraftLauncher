@@ -40,6 +40,7 @@
 #include "ChunkOcclusionCuller.h"
 #include "CrackOverlayMesh.h"
 #include "PanoramaView.h"
+#include "SkyRenderer.h"
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "GLRenderer", __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "GLRenderer", __VA_ARGS__)
@@ -255,4 +256,44 @@ private:
     GLuint crackEBO = 0;
 
     void renderCrackOverlay(const glm::mat4& viewMatrix, const glm::mat4& projMatrix, const ShaderProgramInfo& shader);
+
+    // ===== 天空渲染 =====
+    void initSky();
+    void renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMatrix,
+                   float skyR, float skyG, float skyB, float timeOfDay, float starBrightness);
+
+    // 天空着色器（纯色：天空圆盘 + 星星）
+    GLuint skyColorProgram = 0;
+    GLuint skyColorVAO = 0;
+    GLuint skyColorVBO = 0;
+
+    // 天体着色器（纹理：太阳 + 月亮）
+    GLuint skyCelestialProgram = 0;
+    GLuint skyCelestialVAO = 0;
+    GLuint skyCelestialVBO = 0;
+    GLuint skyCelestialEBO = 0;
+
+    // 天空 VAO/EBO（TRIANGLE_FAN）
+    GLuint skyTopVAO = 0;
+    GLuint skyTopVBO = 0;
+    GLuint skyBottomVAO = 0;
+    GLuint skyBottomVBO = 0;
+
+    // 太阳/月亮 VAO/EBO
+    GLuint skySunVAO = 0;
+    GLuint skySunVBO = 0;
+    GLuint skySunEBO = 0;
+    GLuint skyMoonVAO = 0;
+    GLuint skyMoonVBO = 0;
+    GLuint skyMoonEBO = 0;
+
+    // 星星 billboard 着色器
+    GLuint skyStarProgram = 0;
+
+    // 星星 VAO/EBO
+    GLuint skyStarsVAO = 0;
+    GLuint skyStarsVBO = 0;
+    GLuint skyStarsEBO = 0;
+
+    bool skyInitialized = false;
 };

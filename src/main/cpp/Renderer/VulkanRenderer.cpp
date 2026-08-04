@@ -20,6 +20,7 @@
 #include "BlockIconRasterizer.h"
 #include "ClientEngine/ClientEngine.h"
 #include "ClientEngine/GameEngine.h"
+#include "SkyRenderer.h"
 
 // VMA 实现（全项目唯一展开点）：直链 libvulkan 故用静态函数；
 // 实例是 Vulkan 1.0，锁定函数集避免引用旧设备不存在的 1.1+ 入口
@@ -130,6 +131,7 @@ void VulkanRenderer::cleanup() {
     // GUI 纹理引用了 ImGui 后端描述符池，必须先于 ImGui_ImplVulkan_Shutdown 释放
     destroyGuiTextures();
     destroyPanoramaResources();
+    destroySkyResources();
     destroyChunkResources();
     if (imguiInitialized) {
         GameUI::getInstance().shutdown();  // 内部调用 ImGui_ImplVulkan_Shutdown
@@ -873,6 +875,415 @@ void VulkanRenderer::destroyPanoramaResources() {
     if (panoramaImageView != VK_NULL_HANDLE)       { vkDestroyImageView(device, panoramaImageView, nullptr); panoramaImageView = VK_NULL_HANDLE; }
     if (panoramaImage != VK_NULL_HANDLE)           { vmaDestroyImage(allocator, panoramaImage, panoramaImageMemory); panoramaImage = VK_NULL_HANDLE; panoramaImageMemory = VK_NULL_HANDLE; }
     panoramaReady = false;
+}
+
+// ============================================================
+// 天空渲染（游戏内：天空圆盘 + 太阳 + 月亮 + 星星 billboard）
+// 对应 GLRenderer 的 initSky/renderSky
+// ============================================================
+
+// Push constant 布局（天空纯色管线）
+struct SkyColorPushConstant {
+    glm::mat4 mvp;      // 64 bytes
+    glm::vec4 color;    // 16 bytes
+};
+
+// Push constant 布局（星星 billboard 管线）
+struct SkyStarPushConstant {
+    glm::mat4 viewCelestial;  // 64 bytes
+    glm::mat4 proj;           // 64 bytes
+    glm::vec4 color;          // 16 bytes
+};
+
+bool VulkanRenderer::initSky() {
+    if (skyInitialized) return true;
+
+    // 1. 天空纯色管线（天空圆盘、太阳、月亮共用）
+    auto vertCode = readFile("shaders/sky_color_vert.spv");
+    auto fragCode = readFile("shaders/sky_color_frag.spv");
+    if (vertCode.empty() || fragCode.empty()) {
+        LOGE("Sky color SPIR-V shaders missing");
+        return false;
+    }
+    VkShaderModule vertModule = createShaderModule(vertCode);
+    VkShaderModule fragModule = createShaderModule(fragCode);
+    if (vertModule == VK_NULL_HANDLE || fragModule == VK_NULL_HANDLE) {
+        if (vertModule) vkDestroyShaderModule(device, vertModule, nullptr);
+        if (fragModule) vkDestroyShaderModule(device, fragModule, nullptr);
+        return false;
+    }
+
+    // Push constant: mat4 MVP (64) + vec4 color (16) = 80 bytes
+    VkPushConstantRange pcRange{};
+    pcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    pcRange.offset = 0;
+    pcRange.size = sizeof(SkyColorPushConstant);
+
+    VkPipelineLayoutCreateInfo plInfo{};
+    plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plInfo.setLayoutCount = 0;
+    plInfo.pushConstantRangeCount = 1;
+    plInfo.pPushConstantRanges = &pcRange;
+    if (vkCreatePipelineLayout(device, &plInfo, nullptr, &skyColorPipelineLayout) != VK_SUCCESS) {
+        vkDestroyShaderModule(device, vertModule, nullptr);
+        vkDestroyShaderModule(device, fragModule, nullptr);
+        return false;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertModule;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragModule;
+    stages[1].pName = "main";
+
+    VkVertexInputBindingDescription bindingDesc{};
+    bindingDesc.binding = 0;
+    bindingDesc.stride = 3 * sizeof(float);
+    bindingDesc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    VkVertexInputAttributeDescription attrDesc{};
+    attrDesc.binding = 0;
+    attrDesc.location = 0;
+    attrDesc.format = VK_FORMAT_R32G32B32_SFLOAT;
+    attrDesc.offset = 0;
+    VkPipelineVertexInputStateCreateInfo vertexInput{};
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount = 1;
+    vertexInput.pVertexBindingDescriptions = &bindingDesc;
+    vertexInput.vertexAttributeDescriptionCount = 1;
+    vertexInput.pVertexAttributeDescriptions = &attrDesc;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+    VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 2;
+    dynamicState.pDynamicStates = dynamicStates;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    // 天空层：不读不写深度
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_FALSE;
+    depthStencil.depthWriteEnable = VK_FALSE;
+
+    // 启用 alpha 混合
+    VkPipelineColorBlendAttachmentState blendAttachment{};
+    blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                     VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    blendAttachment.blendEnable = VK_TRUE;
+    blendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+    blendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &blendAttachment;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = stages;
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = skyColorPipelineLayout;
+    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.subpass = 0;
+
+    VkResult pr = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &skyColorPipeline);
+    vkDestroyShaderModule(device, vertModule, nullptr);
+    vkDestroyShaderModule(device, fragModule, nullptr);
+    if (pr != VK_SUCCESS) {
+        LOGE("Failed to create sky color pipeline");
+        return false;
+    }
+
+    // 2. 星星 billboard 管线
+    auto starVertCode = readFile("shaders/sky_star_vert.spv");
+    auto starFragCode = readFile("shaders/sky_star_frag.spv");
+    if (starVertCode.empty() || starFragCode.empty()) {
+        LOGE("Sky star SPIR-V shaders missing");
+        return false;
+    }
+    VkShaderModule starVertModule = createShaderModule(starVertCode);
+    VkShaderModule starFragModule = createShaderModule(starFragCode);
+    if (starVertModule == VK_NULL_HANDLE || starFragModule == VK_NULL_HANDLE) {
+        if (starVertModule) vkDestroyShaderModule(device, starVertModule, nullptr);
+        if (starFragModule) vkDestroyShaderModule(device, starFragModule, nullptr);
+        return false;
+    }
+
+    // Push constant: mat4 viewCelestial (64) + mat4 proj (64) + vec4 color (16) = 144 bytes
+    VkPushConstantRange starPcRange{};
+    starPcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    starPcRange.offset = 0;
+    starPcRange.size = sizeof(SkyStarPushConstant);
+
+    VkPipelineLayoutCreateInfo starPlInfo{};
+    starPlInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    starPlInfo.setLayoutCount = 0;
+    starPlInfo.pushConstantRangeCount = 1;
+    starPlInfo.pPushConstantRanges = &starPcRange;
+    if (vkCreatePipelineLayout(device, &starPlInfo, nullptr, &skyStarPipelineLayout) != VK_SUCCESS) {
+        vkDestroyShaderModule(device, starVertModule, nullptr);
+        vkDestroyShaderModule(device, starFragModule, nullptr);
+        return false;
+    }
+
+    // 星星顶点格式：vec3 center + vec2 offset = 5 floats
+    VkVertexInputBindingDescription starBindingDescs[2]{};
+    starBindingDescs[0].binding = 0;
+    starBindingDescs[0].stride = 5 * sizeof(float);
+    starBindingDescs[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    VkVertexInputAttributeDescription starAttrDescs[2]{};
+    starAttrDescs[0].binding = 0;
+    starAttrDescs[0].location = 0;
+    starAttrDescs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+    starAttrDescs[0].offset = 0;
+    starAttrDescs[1].binding = 0;
+    starAttrDescs[1].location = 1;
+    starAttrDescs[1].format = VK_FORMAT_R32G32_SFLOAT;
+    starAttrDescs[1].offset = 3 * sizeof(float);
+    VkPipelineVertexInputStateCreateInfo starVertexInput{};
+    starVertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    starVertexInput.vertexBindingDescriptionCount = 1;
+    starVertexInput.pVertexBindingDescriptions = starBindingDescs;
+    starVertexInput.vertexAttributeDescriptionCount = 2;
+    starVertexInput.pVertexAttributeDescriptions = starAttrDescs;
+
+    VkPipelineShaderStageCreateInfo starStages[2]{};
+    starStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    starStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    starStages[0].module = starVertModule;
+    starStages[0].pName = "main";
+    starStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    starStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    starStages[1].module = starFragModule;
+    starStages[1].pName = "main";
+
+    VkGraphicsPipelineCreateInfo starPipelineInfo{};
+    starPipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    starPipelineInfo.stageCount = 2;
+    starPipelineInfo.pStages = starStages;
+    starPipelineInfo.pVertexInputState = &starVertexInput;
+    starPipelineInfo.pInputAssemblyState = &inputAssembly;
+    starPipelineInfo.pViewportState = &viewportState;
+    starPipelineInfo.pRasterizationState = &rasterizer;
+    starPipelineInfo.pMultisampleState = &multisampling;
+    starPipelineInfo.pDepthStencilState = &depthStencil;
+    starPipelineInfo.pColorBlendState = &colorBlending;
+    starPipelineInfo.pDynamicState = &dynamicState;
+    starPipelineInfo.layout = skyStarPipelineLayout;
+    starPipelineInfo.renderPass = renderPass;
+    starPipelineInfo.subpass = 0;
+
+    pr = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &starPipelineInfo, nullptr, &skyStarPipeline);
+    vkDestroyShaderModule(device, starVertModule, nullptr);
+    vkDestroyShaderModule(device, starFragModule, nullptr);
+    if (pr != VK_SUCCESS) {
+        LOGE("Failed to create sky star pipeline");
+        return false;
+    }
+
+    // 3. 创建天空圆盘 VBO（上半部分，TRIANGLE_FAN 转为 TRIANGLE_LIST）
+    const auto& topVerts = SkyRenderer::topSkyVertices();
+    skyTopVertexCount = (uint32_t)(topVerts.size() / 3);
+    // 将 TRIANGLE_FAN 转为 TRIANGLE_LIST
+    std::vector<float> topTriList;
+    if (skyTopVertexCount >= 3) {
+        // 中心点索引 0，环形顶点索引 1..N
+        for (uint32_t i = 1; i < skyTopVertexCount - 1; i++) {
+            // 中心点
+            topTriList.push_back(topVerts[0]); topTriList.push_back(topVerts[1]); topTriList.push_back(topVerts[2]);
+            // 当前环形顶点
+            topTriList.push_back(topVerts[i * 3]); topTriList.push_back(topVerts[i * 3 + 1]); topTriList.push_back(topVerts[i * 3 + 2]);
+            // 下一个环形顶点
+            topTriList.push_back(topVerts[(i + 1) * 3]); topTriList.push_back(topVerts[(i + 1) * 3 + 1]); topTriList.push_back(topVerts[(i + 1) * 3 + 2]);
+        }
+    }
+    skyTopVertexCount = (uint32_t)(topTriList.size() / 3);
+    if (!createHostBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, topTriList.data(),
+                          topTriList.size() * sizeof(float), skyTopVertexBuffer, skyTopVertexMemory)) {
+        return false;
+    }
+
+    // 4. 太阳 VBO + EBO
+    const auto& sunVerts = SkyRenderer::sunVertices();
+    const auto& sunIdx = SkyRenderer::sunIndices();
+    skySunIndexCount = (uint32_t)sunIdx.size();
+    if (!createHostBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sunVerts.data(),
+                          sunVerts.size() * sizeof(float), skySunVertexBuffer, skySunVertexMemory) ||
+        !createHostBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, sunIdx.data(),
+                          sunIdx.size() * sizeof(uint16_t), skySunIndexBuffer, skySunIndexMemory)) {
+        return false;
+    }
+
+    // 5. 月亮 VBO + EBO
+    const auto& moonVerts = SkyRenderer::moonVertices();
+    const auto& moonIdx = SkyRenderer::moonIndices();
+    skyMoonIndexCount = (uint32_t)moonIdx.size();
+    if (!createHostBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, moonVerts.data(),
+                          moonVerts.size() * sizeof(float), skyMoonVertexBuffer, skyMoonVertexMemory) ||
+        !createHostBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, moonIdx.data(),
+                          moonIdx.size() * sizeof(uint16_t), skyMoonIndexBuffer, skyMoonIndexMemory)) {
+        return false;
+    }
+
+    // 6. 星星 VBO + EBO（billboard 格式：center + offset）
+    const auto& starVerts = SkyRenderer::starVertices();
+    const auto& starIdx = SkyRenderer::starIndices();
+    skyStarsIndexCount = (uint32_t)starIdx.size();
+    if (!createHostBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, starVerts.data(),
+                          starVerts.size() * sizeof(float), skyStarsVertexBuffer, skyStarsVertexMemory) ||
+        !createHostBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, starIdx.data(),
+                          starIdx.size() * sizeof(uint16_t), skyStarsIndexBuffer, skyStarsIndexMemory)) {
+        return false;
+    }
+
+    skyInitialized = true;
+    LOGI("Sky renderer initialized (Vulkan): colorPipeline=%p, starPipeline=%p",
+         (void*)skyColorPipeline, (void*)skyStarPipeline);
+    return true;
+}
+
+void VulkanRenderer::renderSky(VkCommandBuffer cmd, const glm::mat4& viewMatrix, const glm::mat4& projMatrix,
+                                float skyR, float skyG, float skyB, float timeOfDay, float starBrightness) {
+    if (!skyInitialized || skyColorPipeline == VK_NULL_HANDLE) return;
+
+    // Vulkan clip 空间 Y 翻转修正
+    glm::mat4 yFlip(1.0f);
+    yFlip[1][1] = -1.0f;
+    glm::mat4 vkProj = yFlip * projMatrix;
+
+    // 天空渲染使用只有旋转的 view matrix（无平移，天体跟随相机）
+    glm::mat4 skyView = glm::mat4(glm::mat3(viewMatrix));
+
+    // 设置 viewport 和 scissor
+    VkViewport viewport{};
+    viewport.width = (float)swapchainExtent.width;
+    viewport.height = (float)swapchainExtent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    VkRect2D scissor{ {0, 0}, swapchainExtent };
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    // 1. 渲染天空圆盘（上半部分，天空色）
+    {
+        glm::mat4 skyMVP = vkProj * skyView;
+        SkyColorPushConstant pc{};
+        pc.mvp = skyMVP;
+        pc.color = glm::vec4(skyR, skyG, skyB, 1.0f);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skyColorPipeline);
+        vkCmdPushConstants(cmd, skyColorPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                          0, sizeof(SkyColorPushConstant), &pc);
+
+        VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &skyTopVertexBuffer, &offset);
+        vkCmdDraw(cmd, skyTopVertexCount, 1, 0, 0);
+    }
+
+    // 2. 天体旋转矩阵
+    glm::mat4 celestialRot = SkyRenderer::celestialRotation(timeOfDay);
+    glm::mat4 celestialMVP = vkProj * skyView * celestialRot;
+
+    // 3. 渲染太阳（金黄色，白天可见）
+    float normalizedTime = timeOfDay / 24000.0f;
+    float sunAlpha = (normalizedTime <= 0.5f) ? 1.0f : 0.0f;
+    if (sunAlpha > 0.0f) {
+        SkyColorPushConstant pc{};
+        pc.mvp = celestialMVP;
+        pc.color = glm::vec4(1.0f, 0.9f, 0.3f, sunAlpha);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skyColorPipeline);
+        vkCmdPushConstants(cmd, skyColorPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                          0, sizeof(SkyColorPushConstant), &pc);
+
+        VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &skySunVertexBuffer, &offset);
+        vkCmdBindIndexBuffer(cmd, skySunIndexBuffer, 0, VK_INDEX_TYPE_UINT16);
+        vkCmdDrawIndexed(cmd, skySunIndexCount, 1, 0, 0, 0);
+    }
+
+    // 4. 渲染月亮（银白色，夜晚可见）
+    float moonAlpha = (normalizedTime > 0.5f) ? 1.0f : 0.0f;
+    if (moonAlpha > 0.0f) {
+        SkyColorPushConstant pc{};
+        pc.mvp = celestialMVP;
+        pc.color = glm::vec4(0.9f, 0.9f, 1.0f, moonAlpha);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skyColorPipeline);
+        vkCmdPushConstants(cmd, skyColorPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                          0, sizeof(SkyColorPushConstant), &pc);
+
+        VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &skyMoonVertexBuffer, &offset);
+        vkCmdBindIndexBuffer(cmd, skyMoonIndexBuffer, 0, VK_INDEX_TYPE_UINT16);
+        vkCmdDrawIndexed(cmd, skyMoonIndexCount, 1, 0, 0, 0);
+    }
+
+    // 5. 渲染星星（billboard，夜晚可见）
+    if (starBrightness > 0.01f && skyStarPipeline != VK_NULL_HANDLE) {
+        glm::mat4 viewCelestial = skyView * celestialRot;
+        SkyStarPushConstant pc{};
+        pc.viewCelestial = viewCelestial;
+        pc.proj = vkProj;
+        pc.color = glm::vec4(1.0f, 1.0f, 1.0f, starBrightness);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skyStarPipeline);
+        vkCmdPushConstants(cmd, skyStarPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                          0, sizeof(SkyStarPushConstant), &pc);
+
+        VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &skyStarsVertexBuffer, &offset);
+        vkCmdBindIndexBuffer(cmd, skyStarsIndexBuffer, 0, VK_INDEX_TYPE_UINT16);
+        vkCmdDrawIndexed(cmd, skyStarsIndexCount, 1, 0, 0, 0);
+    }
+}
+
+void VulkanRenderer::destroySkyResources() {
+    if (skyColorPipeline != VK_NULL_HANDLE)      { vkDestroyPipeline(device, skyColorPipeline, nullptr); skyColorPipeline = VK_NULL_HANDLE; }
+    if (skyColorPipelineLayout != VK_NULL_HANDLE) { vkDestroyPipelineLayout(device, skyColorPipelineLayout, nullptr); skyColorPipelineLayout = VK_NULL_HANDLE; }
+    if (skyStarPipeline != VK_NULL_HANDLE)        { vkDestroyPipeline(device, skyStarPipeline, nullptr); skyStarPipeline = VK_NULL_HANDLE; }
+    if (skyStarPipelineLayout != VK_NULL_HANDLE)  { vkDestroyPipelineLayout(device, skyStarPipelineLayout, nullptr); skyStarPipelineLayout = VK_NULL_HANDLE; }
+    if (skyTopVertexBuffer != VK_NULL_HANDLE)     { vmaDestroyBuffer(allocator, skyTopVertexBuffer, skyTopVertexMemory); skyTopVertexBuffer = VK_NULL_HANDLE; skyTopVertexMemory = VK_NULL_HANDLE; }
+    if (skySunVertexBuffer != VK_NULL_HANDLE)     { vmaDestroyBuffer(allocator, skySunVertexBuffer, skySunVertexMemory); skySunVertexBuffer = VK_NULL_HANDLE; skySunVertexMemory = VK_NULL_HANDLE; }
+    if (skySunIndexBuffer != VK_NULL_HANDLE)      { vmaDestroyBuffer(allocator, skySunIndexBuffer, skySunIndexMemory); skySunIndexBuffer = VK_NULL_HANDLE; skySunIndexMemory = VK_NULL_HANDLE; }
+    if (skyMoonVertexBuffer != VK_NULL_HANDLE)    { vmaDestroyBuffer(allocator, skyMoonVertexBuffer, skyMoonVertexMemory); skyMoonVertexBuffer = VK_NULL_HANDLE; skyMoonVertexMemory = VK_NULL_HANDLE; }
+    if (skyMoonIndexBuffer != VK_NULL_HANDLE)     { vmaDestroyBuffer(allocator, skyMoonIndexBuffer, skyMoonIndexMemory); skyMoonIndexBuffer = VK_NULL_HANDLE; skyMoonIndexMemory = VK_NULL_HANDLE; }
+    if (skyStarsVertexBuffer != VK_NULL_HANDLE)   { vmaDestroyBuffer(allocator, skyStarsVertexBuffer, skyStarsVertexMemory); skyStarsVertexBuffer = VK_NULL_HANDLE; skyStarsVertexMemory = VK_NULL_HANDLE; }
+    if (skyStarsIndexBuffer != VK_NULL_HANDLE)    { vmaDestroyBuffer(allocator, skyStarsIndexBuffer, skyStarsIndexMemory); skyStarsIndexBuffer = VK_NULL_HANDLE; skyStarsIndexMemory = VK_NULL_HANDLE; }
+    skyInitialized = false;
 }
 
 // ============================================================
@@ -1781,6 +2192,8 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
     // 游戏内：区块资源懒初始化 + 图集/lightmap/网格上传 + 调度 + UBO 更新
     //（内部的一次性上传命令必须在帧命令录制之前提交）
     float skyR = 0.53f, skyG = 0.81f, skyB = 0.92f;
+    float timeOfDay = 6000.0f;  // 默认正午
+    float starBrightness = 0.0f;
     bool inGame = GameUI::getInstance().getState() == UIState::IN_GAME;
     if (inGame) {
         if (!chunkInitAttempted) {
@@ -1789,6 +2202,10 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
             if (!chunkResourcesReady) {
                 LOGE("Chunk resources init failed, chunk rendering disabled");
             }
+        }
+        // 天空渲染懒初始化
+        if (!skyInitialized) {
+            initSky();
         }
         if (chunkResourcesReady) {
             processChunkAtlas();
@@ -1802,6 +2219,15 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
                 skyR = game->getLight()->getSkyColorR();
                 skyG = game->getLight()->getSkyColorG();
                 skyB = game->getLight()->getSkyColorB();
+                // 昼夜时间和星星亮度
+                long long dayTime = game->getLight()->getWorldDayTime();
+                timeOfDay = (float)(dayTime % 24000);
+                if (timeOfDay < 0) timeOfDay += 24000.0f;
+                float normalizedTime = timeOfDay / 24000.0f;
+                if (normalizedTime > 0.5f) {
+                    float nightProgress = (normalizedTime - 0.5f) * 2.0f;
+                    starBrightness = 1.0f - fabsf(nightProgress * 2.0f - 1.0f);
+                }
             }
             updateChunkUniforms(cameraX, cameraY, cameraZ, pitch, yaw, skyR, skyG, skyB);
         }
@@ -1848,7 +2274,14 @@ void VulkanRenderer::render(float cameraX, float cameraY, float cameraZ,
             renderPanorama(commandBuffers[imageIndex]);
         }
     } else {
-        // 游戏内：区块三段绘制（图集就绪前只出天空色清屏）
+        // 游戏内：先渲染天空（天空圆盘 + 太阳 + 月亮 + 星星），再渲染区块
+        if (skyInitialized) {
+            float aspect = (float)swapchainExtent.width / (float)swapchainExtent.height;
+            glm::mat4 viewMatrix = Camera::computeViewMatrix(cameraX, cameraY, cameraZ, pitch, yaw);
+            glm::mat4 projMatrix = Camera::computeProjectionMatrix(70.0f, aspect, 0.1f, chunkFar);
+            renderSky(commandBuffers[imageIndex], viewMatrix, projMatrix, skyR, skyG, skyB, timeOfDay, starBrightness);
+        }
+        // 区块三段绘制（图集就绪前只出天空色清屏）
         renderChunks(commandBuffers[imageIndex]);
     }
     // ImGui 最后叠加（主界面菜单 / 游戏内 HUD）
