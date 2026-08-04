@@ -1136,8 +1136,15 @@ bool VulkanRenderer::initSky() {
         return false;
     }
 
-    // 4. 太阳 VBO + EBO
-    const auto& sunVerts = SkyRenderer::sunVertices();
+    // 4. 太阳 VBO + EBO（只上传 xyz，丢弃 uv — 纯色管线不需要纹理坐标）
+    const auto& sunVertsRaw = SkyRenderer::sunVertices();
+    std::vector<float> sunVerts;
+    sunVerts.reserve(sunVertsRaw.size() / 5 * 3);
+    for (size_t i = 0; i < sunVertsRaw.size(); i += 5) {
+        sunVerts.push_back(sunVertsRaw[i]);
+        sunVerts.push_back(sunVertsRaw[i + 1]);
+        sunVerts.push_back(sunVertsRaw[i + 2]);
+    }
     const auto& sunIdx = SkyRenderer::sunIndices();
     skySunIndexCount = (uint32_t)sunIdx.size();
     if (!createHostBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sunVerts.data(),
@@ -1147,8 +1154,15 @@ bool VulkanRenderer::initSky() {
         return false;
     }
 
-    // 5. 月亮 VBO + EBO
-    const auto& moonVerts = SkyRenderer::moonVertices();
+    // 5. 月亮 VBO + EBO（只上传 xyz，丢弃 uv — 纯色管线不需要纹理坐标）
+    const auto& moonVertsRaw = SkyRenderer::moonVertices();
+    std::vector<float> moonVerts;
+    moonVerts.reserve(moonVertsRaw.size() / 5 * 3);
+    for (size_t i = 0; i < moonVertsRaw.size(); i += 5) {
+        moonVerts.push_back(moonVertsRaw[i]);
+        moonVerts.push_back(moonVertsRaw[i + 1]);
+        moonVerts.push_back(moonVertsRaw[i + 2]);
+    }
     const auto& moonIdx = SkyRenderer::moonIndices();
     skyMoonIndexCount = (uint32_t)moonIdx.size();
     if (!createHostBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, moonVerts.data(),
