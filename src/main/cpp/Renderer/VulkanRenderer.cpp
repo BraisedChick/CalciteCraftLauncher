@@ -892,7 +892,7 @@ struct SkyColorPushConstant {
 struct SkyStarPushConstant {
     glm::mat4 viewCelestial;  // 64 bytes
     glm::mat4 proj;           // 64 bytes
-    glm::vec4 color;          // 16 bytes
+    // 总计 128 bytes — 兼容所有设备 maxPushConstantsSize
 };
 
 bool VulkanRenderer::initSky() {
@@ -1042,7 +1042,7 @@ bool VulkanRenderer::initSky() {
         return false;
     }
 
-    // Push constant: mat4 viewCelestial (64) + mat4 proj (64) + vec4 color (16) = 144 bytes
+    // Push constant: mat4 viewCelestial (64) + mat4 proj (64) = 128 bytes
     VkPushConstantRange starPcRange{};
     starPcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     starPcRange.offset = 0;
@@ -1258,7 +1258,6 @@ void VulkanRenderer::renderSky(VkCommandBuffer cmd, const glm::mat4& viewMatrix,
         SkyStarPushConstant pc{};
         pc.viewCelestial = viewCelestial;
         pc.proj = vkProj;
-        pc.color = glm::vec4(1.0f, 1.0f, 1.0f, starBrightness);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skyStarPipeline);
         vkCmdPushConstants(cmd, skyStarPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
