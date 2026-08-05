@@ -287,10 +287,7 @@ private:
     GLuint skyMoonVBO = 0;
     GLuint skyMoonEBO = 0;
 
-    // 星星 billboard 着色器
-    GLuint skyStarProgram = 0;
-
-    // 星星 VAO/EBO
+    // 星星 VAO/EBO（与太阳/月亮共用 skyColorProgram）
     GLuint skyStarsVAO = 0;
     GLuint skyStarsVBO = 0;
     GLuint skyStarsEBO = 0;

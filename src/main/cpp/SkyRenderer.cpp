@@ -2,6 +2,7 @@
 #include <cmath>
 #include <random>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -79,50 +80,81 @@ const std::vector<uint16_t>& SkyRenderer::moonIndices() {
     return idx;
 }
 
-// ===== 星星 =====
+// ===== 星星（照抄原版 MC SkyRenderer.buildStars）=====
 
 const std::vector<float>& SkyRenderer::starVertices() {
-    // 1500 个随机小方块，分布在半径 100 的球面上
+    // 1500 个固定朝向小方块，分布在半径 100 的球面上
+    // 顶点格式：POSITION only（3 floats），每个星星 4 个顶点
     static std::vector<float> verts;
     if (!verts.empty()) return verts;
 
     std::mt19937 rng(10842);  // 固定种子，与原版一致
-    int count = 1500;
     float radius = 100.0f;
-    float starSize = 0.15f;
 
-    for (int i = 0; i < count; i++) {
-        // 随机方向（球面均匀分布）
+    for (int j = 0; j < 1500; j++) {
         float f1 = (float)rng() / (float)rng.max() * 2.0f - 1.0f;
         float f2 = (float)rng() / (float)rng.max() * 2.0f - 1.0f;
         float f3 = (float)rng() / (float)rng.max() * 2.0f - 1.0f;
-        float lenSq = f1*f1 + f2*f2 + f3*f3;
-        if (lenSq < 0.01f || lenSq > 1.0f) continue;
+        float f5 = f1*f1 + f2*f2 + f3*f3;
+        if (f5 <= 0.01f || f5 >= 1.0f) continue;
 
         // 归一化到球面
-        float len = sqrtf(lenSq);
-        float dx = f1 / len * radius;
-        float dy = f2 / len * radius;
-        float dz = f3 / len * radius;
+        glm::vec3 dir = glm::normalize(glm::vec3(f1, f2, f3)) * radius;
 
-        // 生成 billboard 顶点（中心位置 + 偏移，着色器中展开）
-        float s = starSize + (float)rng() / (float)rng.max() * 0.1f;
-        float offsets[][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
-        for (int j = 0; j < 4; j++) {
-            verts.push_back(dx); verts.push_back(dy); verts.push_back(dz);  // 中心
-            verts.push_back(offsets[j][0] * s); verts.push_back(offsets[j][1] * s);  // 偏移
+        // 星星大小
+        float s = 0.15f + (float)rng() / (float)rng.max() * 0.1f;
+
+        // 随机翻滚角
+        float f6 = (float)rng() / (float)rng.max() * 2.0f * (float)M_PI;
+
+        // 构建旋转矩阵：rotateTowards(-dir, up) * rotateZ(-roll)
+        // 手动实现 rotateTowards（glm::rotation 在某些 GLM 版本缺失）
+        glm::vec3 from = glm::normalize(-dir);
+        glm::vec3 to   = glm::vec3(0.0f, 1.0f, 0.0f);
+        float d = glm::dot(from, to);
+        glm::quat q;
+        if (d > -0.9999f) {
+            glm::vec3 axis = glm::cross(from, to);
+            q = glm::quat(1.0f + d, axis.x, axis.y, axis.z);
+            q = glm::normalize(q);
+        } else {
+            // 近似反向：取垂直轴旋转 180°
+            glm::vec3 perp = (fabsf(from.x) < 0.9f)
+                ? glm::normalize(glm::cross(from, glm::vec3(1, 0, 0)))
+                : glm::normalize(glm::cross(from, glm::vec3(0, 0, 1)));
+            q = glm::quat(0.0f, perp.x, perp.y, perp.z);
         }
+        glm::mat3 rotMat(q);
+        float cosR = cosf(-f6);
+        float sinR = sinf(-f6);
+        glm::mat3 zRot(
+            cosR, -sinR, 0.0f,
+            sinR,  cosR, 0.0f,
+            0.0f,  0.0f, 1.0f
+        );
+        glm::mat3 finalRot = rotMat * zRot;
+
+        // 4 个顶点（原版 MC 顺序：(s,-s,0), (s,s,0), (-s,s,0), (-s,-s,0)）
+        glm::vec3 v0 = finalRot * glm::vec3( s, -s, 0.0f) + dir;
+        glm::vec3 v1 = finalRot * glm::vec3( s,  s, 0.0f) + dir;
+        glm::vec3 v2 = finalRot * glm::vec3(-s,  s, 0.0f) + dir;
+        glm::vec3 v3 = finalRot * glm::vec3(-s, -s, 0.0f) + dir;
+
+        verts.push_back(v0.x); verts.push_back(v0.y); verts.push_back(v0.z);
+        verts.push_back(v1.x); verts.push_back(v1.y); verts.push_back(v1.z);
+        verts.push_back(v2.x); verts.push_back(v2.y); verts.push_back(v2.z);
+        verts.push_back(v3.x); verts.push_back(v3.y); verts.push_back(v3.z);
     }
 
     return verts;
 }
 
 const std::vector<uint16_t>& SkyRenderer::starIndices() {
-    // 每个星星 6 个索引（2 个三角形）
+    // 每个星星 4 个顶点（POSITION only，3 floats），6 个索引（2 个三角形）
     static std::vector<uint16_t> idx;
     if (!idx.empty()) return idx;
 
-    int starCount = (int)(SkyRenderer::starVertices().size() / 5 / 4);  // 每个顶点 5 个 float，每个星星 4 个顶点
+    int starCount = (int)(SkyRenderer::starVertices().size() / 3 / 4);
     for (int i = 0; i < starCount; i++) {
         uint16_t base = (uint16_t)(i * 4);
         idx.push_back(base);

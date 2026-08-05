@@ -324,13 +324,9 @@ private:
     void destroySkyResources();
     bool skyInitialized = false;
 
-    // 天空纯色管线（天空圆盘、太阳、月亮共用）
+    // 天空纯色管线（天空圆盘、太阳、月亮、星星共用）
     VkPipelineLayout skyColorPipelineLayout = VK_NULL_HANDLE;
     VkPipeline skyColorPipeline = VK_NULL_HANDLE;
-
-    // 星星 billboard 管线
-    VkPipelineLayout skyStarPipelineLayout = VK_NULL_HANDLE;
-    VkPipeline skyStarPipeline = VK_NULL_HANDLE;
 
     // 天空圆盘 VBO（上半部分，TRIANGLE_FAN）
     VkBuffer skyTopVertexBuffer = VK_NULL_HANDLE;
@@ -351,7 +347,7 @@ private:
     VmaAllocation skyMoonIndexMemory = VK_NULL_HANDLE;
     uint32_t skyMoonIndexCount = 0;
 
-    // 星星 VBO + EBO（billboard 格式：center + offset）
+    // 星星 VBO + EBO（POSITION only，与太阳/月亮共用 skyColorPipeline）
     VkBuffer skyStarsVertexBuffer = VK_NULL_HANDLE;
     VmaAllocation skyStarsVertexMemory = VK_NULL_HANDLE;
     VkBuffer skyStarsIndexBuffer = VK_NULL_HANDLE;
