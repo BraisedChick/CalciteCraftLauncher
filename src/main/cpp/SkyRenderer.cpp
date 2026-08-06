@@ -216,12 +216,14 @@ float SkyRenderer::sunAngle(float timeOfDay) {
 }
 
 glm::mat4 SkyRenderer::celestialRotation(float timeOfDay) {
-    // 原版 MC：先绕 Y 轴 -90°，再绕 X 轴旋转 sunAngle * 360°
+    // 原版 MC：mulPose(YP, -90°) → mulPose(XP, angle*360°)
+    // PoseStack 后乘语义：顶点先经 X 旋转，再经 Y 旋转
+    // angle 偏移 -90° 使 time=0（日出）时太阳在地平线
     float angle = sunAngle(timeOfDay) * 360.0f / (float)(M_PI * 2.0);
     
     glm::mat4 rot(1.0f);
+    rot = glm::rotate(rot, glm::radians(angle - 90.0f), glm::vec3(1, 0, 0));
     rot = glm::rotate(rot, glm::radians(-90.0f), glm::vec3(0, 1, 0));
-    rot = glm::rotate(rot, glm::radians(angle), glm::vec3(1, 0, 0));
     
     return rot;
 }
