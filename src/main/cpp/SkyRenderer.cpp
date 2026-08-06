@@ -3,6 +3,10 @@
 #include <random>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <android/log.h>
+
+#define LOG_TAG "SkyRenderer"
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -32,61 +36,52 @@ static std::vector<float> buildSkyDisc(float y) {
     return verts;
 }
 
-const std::vector<float>& SkyRenderer::topSkyVertices() {
-    static std::vector<float> verts = buildSkyDisc(16.0f);
-    return verts;
+std::vector<float> SkyRenderer::getTopSkyVertices() {
+    return buildSkyDisc(16.0f);
 }
 
-const std::vector<float>& SkyRenderer::bottomSkyVertices() {
-    static std::vector<float> verts = buildSkyDisc(-16.0f);
-    return verts;
+std::vector<float> SkyRenderer::getBottomSkyVertices() {
+    return buildSkyDisc(-16.0f);
 }
 
 // ===== 太阳 =====
 
-const std::vector<float>& SkyRenderer::sunVertices() {
+std::vector<SkyRenderer::Vertex> SkyRenderer::getSunVertices() {
     // 60×60 quad at y=100
-    static std::vector<float> verts = {
-        // x,    y,     z,    u,   v
-        -30.0f, 100.0f, -30.0f, 0.0f, 0.0f,
-         30.0f, 100.0f, -30.0f, 1.0f, 0.0f,
-         30.0f, 100.0f,  30.0f, 1.0f, 1.0f,
-        -30.0f, 100.0f,  30.0f, 0.0f, 1.0f,
+    return {
+        Vertex(-30.0f, 100.0f, -30.0f, 0.0f, 0.0f),
+        Vertex(30.0f, 100.0f, -30.0f, 1.0f, 0.0f),
+        Vertex(30.0f, 100.0f, 30.0f, 1.0f, 1.0f),
+        Vertex(-30.0f, 100.0f, 30.0f, 0.0f, 1.0f)
     };
-    return verts;
 }
 
-const std::vector<uint16_t>& SkyRenderer::sunIndices() {
-    static std::vector<uint16_t> idx = { 0, 1, 2, 0, 2, 3 };
-    return idx;
+std::vector<uint16_t> SkyRenderer::getSunIndices() {
+    return { 0, 1, 2, 0, 2, 3 };
 }
 
 // ===== 月亮 =====
 
-const std::vector<float>& SkyRenderer::moonVertices() {
+std::vector<SkyRenderer::Vertex> SkyRenderer::getMoonVertices() {
     // 40×40 quad at y=-100
-    static std::vector<float> verts = {
-        // x,     y,      z,     u,   v
-        -20.0f, -100.0f,  20.0f, 0.0f, 0.0f,
-         20.0f, -100.0f,  20.0f, 1.0f, 0.0f,
-         20.0f, -100.0f, -20.0f, 1.0f, 1.0f,
-        -20.0f, -100.0f, -20.0f, 0.0f, 1.0f,
+    return {
+        Vertex(-20.0f, -100.0f, 20.0f, 0.0f, 0.0f),
+        Vertex(20.0f, -100.0f, 20.0f, 1.0f, 0.0f),
+        Vertex(20.0f, -100.0f, -20.0f, 1.0f, 1.0f),
+        Vertex(-20.0f, -100.0f, -20.0f, 0.0f, 1.0f)
     };
-    return verts;
 }
 
-const std::vector<uint16_t>& SkyRenderer::moonIndices() {
-    static std::vector<uint16_t> idx = { 0, 1, 2, 0, 2, 3 };
-    return idx;
+std::vector<uint16_t> SkyRenderer::getMoonIndices() {
+    return { 0, 1, 2, 0, 2, 3 };
 }
 
 // ===== 星星（照抄原版 MC SkyRenderer.buildStars）=====
 
-const std::vector<float>& SkyRenderer::starVertices() {
+std::vector<float> SkyRenderer::getStarVertices() {
     // 1500 个固定朝向小方块，分布在半径 100 的球面上
     // 顶点格式：POSITION only（3 floats），每个星星 4 个顶点
-    static std::vector<float> verts;
-    if (!verts.empty()) return verts;
+    std::vector<float> verts;
 
     std::mt19937 rng(10842);  // 固定种子，与原版一致
     float radius = 100.0f;
@@ -149,12 +144,11 @@ const std::vector<float>& SkyRenderer::starVertices() {
     return verts;
 }
 
-const std::vector<uint16_t>& SkyRenderer::starIndices() {
+std::vector<uint16_t> SkyRenderer::getStarIndices() {
     // 每个星星 4 个顶点（POSITION only，3 floats），6 个索引（2 个三角形）
-    static std::vector<uint16_t> idx;
-    if (!idx.empty()) return idx;
+    std::vector<uint16_t> idx;
 
-    int starCount = (int)(SkyRenderer::starVertices().size() / 3 / 4);
+    int starCount = 1500; // 固定数量
     for (int i = 0; i < starCount; i++) {
         uint16_t base = (uint16_t)(i * 4);
         idx.push_back(base);
@@ -170,10 +164,9 @@ const std::vector<uint16_t>& SkyRenderer::starIndices() {
 
 // ===== 日出/日落渐变 =====
 
-const std::vector<float>& SkyRenderer::sunriseVertices() {
+std::vector<float> SkyRenderer::getSunriseVertices() {
     // TRIANGLE_FAN：中心 + 17 个环形顶点
-    static std::vector<float> verts;
-    if (!verts.empty()) return verts;
+    std::vector<float> verts;
 
     // 中心点
     verts.push_back(0.0f);
@@ -193,9 +186,8 @@ const std::vector<float>& SkyRenderer::sunriseVertices() {
     return verts;
 }
 
-const std::vector<uint16_t>& SkyRenderer::sunriseIndices() {
-    static std::vector<uint16_t> idx;
-    if (!idx.empty()) return idx;
+std::vector<uint16_t> SkyRenderer::getSunriseIndices() {
+    std::vector<uint16_t> idx;
 
     // TRIANGLE_FAN：从中心点出发
     for (int k = 1; k <= 16; k++) {
@@ -215,15 +207,231 @@ float SkyRenderer::sunAngle(float timeOfDay) {
     return timeOfDay * (float)(M_PI * 2.0) / 24000.0f;
 }
 
-glm::mat4 SkyRenderer::celestialRotation(float timeOfDay) {
+glm::mat4 SkyRenderer::getCelestialRotation(float timeOfDay) {
     // 原版 MC：mulPose(YP, -90°) → mulPose(XP, time*360°)
     // time=0: X 旋转 0°→东方地平线；time=0.25: 90°→天顶；time=0.5: 180°→西方地平线
     float normalizedTime = timeOfDay / 24000.0f;
     float angle = (normalizedTime * 360.0f) - 80.0f;  // 减 90° 偏置
-    
+
     glm::mat4 rot(1.0f);
     rot = glm::rotate(rot, glm::radians(-90.0f), glm::vec3(0, 1, 0));
     rot = glm::rotate(rot, glm::radians(angle), glm::vec3(1, 0, 0));
-    
+
     return rot;
+}
+
+// ===== 纹理管理 =====
+
+GLuint SkyRenderer::loadSunTexture() {
+    // 直接使用 TextureLoader 加载太阳纹理
+    TextureData texData = TextureLoader::loadImage("textures/environment/sun.png");
+    if (!texData.data) {
+        LOGE("Failed to load sun texture, using fallback");
+        texData = createFallbackSunTexture();
+    }
+
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texData.width, texData.height,
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, texData.data);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    delete[] texData.data;
+    return tex;
+}
+
+GLuint SkyRenderer::loadMoonTexture() {
+    // 直接使用 TextureLoader 加载月亮纹理
+    TextureData texData = TextureLoader::loadImage("textures/environment/moon_phases.png");
+    if (!texData.data) {
+        LOGE("Failed to load moon texture, using fallback");
+        texData = createFallbackMoonTexture();
+    }
+
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texData.width, texData.height,
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, texData.data);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    delete[] texData.data;
+    return tex;
+}
+
+void SkyRenderer::clearTextures() {
+    // SkyRenderer 不需要管理纹理资源，由 GLRenderer 负责清理
+}
+
+// ===== 动画计算 =====
+
+float SkyRenderer::getCelestialAlpha(float timeOfDay, bool isMoon) {
+    float normalizedTime = timeOfDay / 24000.0f;
+
+    if (isMoon) {
+        // 月亮在夜晚可见（0.5-1.0）
+        if (normalizedTime < 0.5f) {
+            // 从日落到午夜 (0.5-0.75)
+            if (normalizedTime < 0.25f) return 0.0f;
+            float t = (normalizedTime - 0.25f) * 4.0f;  // 0.25-0.5 -> 0-1
+            return t * t * (3.0f - 2.0f * t);  // 平滑步函数
+        } else if (normalizedTime < 0.75f) {
+            return 1.0f;  // 全夜
+        } else {
+            // 从午夜到日出 (0.75-1.0)
+            float t = (normalizedTime - 0.75f) * 4.0f;  // 0.75-1.0 -> 0-1
+            return 1.0f - t * t * (3.0f - 2.0f * t);  // 平滑步函数
+        }
+    } else {
+        // 太阳在白天可见 (0.0-0.5)
+        if (normalizedTime > 0.5f) {
+            // 从日落到午夜
+            if (normalizedTime < 0.75f) {
+                float t = (normalizedTime - 0.5f) * 4.0f;  // 0.5-0.75 -> 0-1
+                return 1.0f - t * t * (3.0f - 2.0f * t);
+            } else {
+                return 0.0f;
+            }
+        } else if (normalizedTime < 0.25f) {
+            // 从日出到正午
+            if (normalizedTime < 0.125f) {
+                float t = normalizedTime * 8.0f;  // 0-0.125 -> 0-1
+                return t * t * (3.0f - 2.0f * t);
+            } else {
+                return 1.0f;
+            }
+        } else if (normalizedTime < 0.375f) {
+            return 1.0f;  // 正午时段
+        } else {
+            // 从正午到日落
+            float t = (normalizedTime - 0.375f) * 8.0f;  // 0.375-0.5 -> 0-1
+            return 1.0f - t * t * (3.0f - 2.0f * t);
+        }
+    }
+}
+
+glm::vec3 SkyRenderer::getSkyColor(float timeOfDay) {
+    float normalizedTime = timeOfDay / 24000.0f;
+
+    // 基础天空颜色（白天浅蓝，夜晚深蓝）
+    glm::vec3 baseColor(0.5f, 0.7f, 1.0f);  // 浅蓝色
+
+    // 夜晚变暗
+    if (normalizedTime > 0.5f) {
+        float nightFactor = 1.0f;
+        if (normalizedTime < 0.75f) {
+            nightFactor = 0.3f + 0.4f * (normalizedTime - 0.5f) * 4.0f;
+        } else {
+            nightFactor = 0.7f - 0.4f * (normalizedTime - 0.75f) * 4.0f;
+        }
+        baseColor *= nightFactor;
+    }
+
+    // 日出日落时的橙色/红色
+    float sunriseSunset = 0.0f;
+    if (normalizedTime < 0.25f) {
+        // 日出
+        sunriseSunset = sin(normalizedTime * 4.0f * M_PI);
+    } else if (normalizedTime > 0.75f) {
+        // 日落
+        sunriseSunset = sin((normalizedTime - 0.75f) * 4.0f * M_PI);
+    }
+
+    if (sunriseSunset > 0.0f) {
+        // 混合橙色
+        glm::vec3 sunsetColor(1.0f, 0.6f, 0.3f);
+        baseColor = baseColor * (1.0f - sunriseSunset * 0.5f) + sunsetColor * sunriseSunset * 0.5f;
+    }
+
+    return baseColor;
+}
+
+float SkyRenderer::getStarBrightness(float timeOfDay) {
+    float normalizedTime = timeOfDay / 24000.0f;
+    float starBrightness = 0.0f;
+
+    // 夜晚星星可见
+    if (normalizedTime > 0.5f) {
+        float nightProgress = (normalizedTime - 0.5f) * 2.0f;  // 0-1
+        starBrightness = 1.0f - fabsf(nightProgress - 0.5f) * 2.0f;
+    }
+
+    return starBrightness;
+}
+
+TextureData SkyRenderer::createFallbackSunTexture() {
+    const int SIZE = 64;
+    TextureData texData;
+    texData.width = SIZE;
+    texData.height = SIZE;
+    texData.channels = 4;
+    texData.data = new uint8_t[SIZE * SIZE * 4];
+
+    // 创建黄色圆形太阳
+    for (int y = 0; y < SIZE; y++) {
+        for (int x = 0; x < SIZE; x++) {
+            int dx = x - SIZE/2;
+            int dy = y - SIZE/2;
+            float dist = sqrt(dx*dx + dy*dy);
+
+            if (dist <= SIZE/2) {
+                // 黄色，中心亮，边缘暗
+                float alpha = 1.0f - (dist / (SIZE/2)) * 0.3f;
+                texData.data[(y * SIZE + x) * 4 + 0] = 255 * alpha;     // R
+                texData.data[(y * SIZE + x) * 4 + 1] = 255 * alpha;     // G
+                texData.data[(y * SIZE + x) * 4 + 2] = 100 * alpha;     // B
+                texData.data[(y * SIZE + x) * 4 + 3] = 255;             // A
+            } else {
+                // 透明
+                texData.data[(y * SIZE + x) * 4 + 0] = 0;
+                texData.data[(y * SIZE + x) * 4 + 1] = 0;
+                texData.data[(y * SIZE + x) * 4 + 2] = 0;
+                texData.data[(y * SIZE + x) * 4 + 3] = 0;
+            }
+        }
+    }
+
+    return texData;
+}
+
+TextureData SkyRenderer::createFallbackMoonTexture() {
+    const int SIZE = 64;
+    TextureData texData;
+    texData.width = SIZE;
+    texData.height = SIZE;
+    texData.channels = 4;
+    texData.data = new uint8_t[SIZE * SIZE * 4];
+
+    // 创建白色圆形月亮
+    for (int y = 0; y < SIZE; y++) {
+        for (int x = 0; x < SIZE; x++) {
+            int dx = x - SIZE/2;
+            int dy = y - SIZE/2;
+            float dist = sqrt(dx*dx + dy*dy);
+
+            if (dist <= SIZE/2) {
+                // 白色，中心亮，边缘暗
+                float alpha = 1.0f - (dist / (SIZE/2)) * 0.3f;
+                texData.data[(y * SIZE + x) * 4 + 0] = 255 * alpha;     // R
+                texData.data[(y * SIZE + x) * 4 + 1] = 255 * alpha;     // G
+                texData.data[(y * SIZE + x) * 4 + 2] = 255 * alpha;     // B
+                texData.data[(y * SIZE + x) * 4 + 3] = 255;             // A
+            } else {
+                // 透明
+                texData.data[(y * SIZE + x) * 4 + 0] = 0;
+                texData.data[(y * SIZE + x) * 4 + 1] = 0;
+                texData.data[(y * SIZE + x) * 4 + 2] = 0;
+                texData.data[(y * SIZE + x) * 4 + 3] = 0;
+            }
+        }
+    }
+
+    return texData;
 }

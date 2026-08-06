@@ -1021,7 +1021,7 @@ bool VulkanRenderer::initSky() {
     }
 
     // 2. 创建天空圆盘 VBO（上半部分，TRIANGLE_FAN 转为 TRIANGLE_LIST）
-    const auto& topVerts = SkyRenderer::topSkyVertices();
+    const auto& topVerts = SkyRenderer::getTopSkyVertices();
     skyTopVertexCount = (uint32_t)(topVerts.size() / 3);
     // 将 TRIANGLE_FAN 转为 TRIANGLE_LIST
     std::vector<float> topTriList;
@@ -1043,15 +1043,15 @@ bool VulkanRenderer::initSky() {
     }
 
     // 4. 太阳 VBO + EBO（只上传 xyz，丢弃 uv — 纯色管线不需要纹理坐标）
-    const auto& sunVertsRaw = SkyRenderer::sunVertices();
+    const auto& sunVertsRaw = SkyRenderer::getSunVertices();
     std::vector<float> sunVerts;
-    sunVerts.reserve(sunVertsRaw.size() / 5 * 3);
-    for (size_t i = 0; i < sunVertsRaw.size(); i += 5) {
-        sunVerts.push_back(sunVertsRaw[i]);
-        sunVerts.push_back(sunVertsRaw[i + 1]);
-        sunVerts.push_back(sunVertsRaw[i + 2]);
+    sunVerts.reserve(sunVertsRaw.size() * 3);  // 每个Vertex有3个坐标
+    for (const auto& vertex : sunVertsRaw) {
+        sunVerts.push_back(vertex.x);
+        sunVerts.push_back(vertex.y);
+        sunVerts.push_back(vertex.z);
     }
-    const auto& sunIdx = SkyRenderer::sunIndices();
+    const auto& sunIdx = SkyRenderer::getSunIndices();
     skySunIndexCount = (uint32_t)sunIdx.size();
     if (!createHostBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sunVerts.data(),
                           sunVerts.size() * sizeof(float), skySunVertexBuffer, skySunVertexMemory) ||
@@ -1061,15 +1061,15 @@ bool VulkanRenderer::initSky() {
     }
 
     // 5. 月亮 VBO + EBO（只上传 xyz，丢弃 uv — 纯色管线不需要纹理坐标）
-    const auto& moonVertsRaw = SkyRenderer::moonVertices();
+    const auto& moonVertsRaw = SkyRenderer::getMoonVertices();
     std::vector<float> moonVerts;
-    moonVerts.reserve(moonVertsRaw.size() / 5 * 3);
-    for (size_t i = 0; i < moonVertsRaw.size(); i += 5) {
-        moonVerts.push_back(moonVertsRaw[i]);
-        moonVerts.push_back(moonVertsRaw[i + 1]);
-        moonVerts.push_back(moonVertsRaw[i + 2]);
+    moonVerts.reserve(moonVertsRaw.size() * 3);  // 每个Vertex有3个坐标
+    for (const auto& vertex : moonVertsRaw) {
+        moonVerts.push_back(vertex.x);
+        moonVerts.push_back(vertex.y);
+        moonVerts.push_back(vertex.z);
     }
-    const auto& moonIdx = SkyRenderer::moonIndices();
+    const auto& moonIdx = SkyRenderer::getMoonIndices();
     skyMoonIndexCount = (uint32_t)moonIdx.size();
     if (!createHostBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, moonVerts.data(),
                           moonVerts.size() * sizeof(float), skyMoonVertexBuffer, skyMoonVertexMemory) ||
@@ -1079,8 +1079,8 @@ bool VulkanRenderer::initSky() {
     }
 
     // 6. 星星 VBO + EBO（POSITION only，与太阳/月亮共用 skyColorPipeline）
-    const auto& starVerts = SkyRenderer::starVertices();
-    const auto& starIdx = SkyRenderer::starIndices();
+    const auto& starVerts = SkyRenderer::getStarVertices();
+    const auto& starIdx = SkyRenderer::getStarIndices();
     skyStarsIndexCount = (uint32_t)starIdx.size();
     if (!createHostBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, starVerts.data(),
                           starVerts.size() * sizeof(float), skyStarsVertexBuffer, skyStarsVertexMemory) ||
@@ -1137,7 +1137,7 @@ void VulkanRenderer::renderSky(VkCommandBuffer cmd, const glm::mat4& viewMatrix,
     }
 
     // 2. 天体旋转矩阵
-    glm::mat4 celestialRot = SkyRenderer::celestialRotation(timeOfDay);
+    glm::mat4 celestialRot = SkyRenderer::getCelestialRotation(timeOfDay);
     glm::mat4 celestialMVP = skyProj * skyView * celestialRot;
 
     // 3. 渲染太阳（金黄色，白天可见）
