@@ -353,4 +353,28 @@ private:
     VkBuffer skyStarsIndexBuffer = VK_NULL_HANDLE;
     VmaAllocation skyStarsIndexMemory = VK_NULL_HANDLE;
     uint32_t skyStarsIndexCount = 0;
+
+    // 纹理管线（太阳/月亮）
+    VkPipelineLayout skyTexturePipelineLayout = VK_NULL_HANDLE;
+    VkPipeline skyTexturePipeline = VK_NULL_HANDLE;
+
+// 纹理描述符
+    VkDescriptorSetLayout skyTextureSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool skyTextureDescriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSet skyTextureDescriptorSet = VK_NULL_HANDLE;  // 共用，绘制前更新
+    VkSampler skyTextureSampler = VK_NULL_HANDLE;
+
+// 太阳纹理资源
+    VkImage sunTextureImage = VK_NULL_HANDLE;
+    VmaAllocation sunTextureMemory = VK_NULL_HANDLE;
+    VkImageView sunTextureView = VK_NULL_HANDLE;
+
+// 月亮纹理资源
+    VkImage moonTextureImage = VK_NULL_HANDLE;
+    VmaAllocation moonTextureMemory = VK_NULL_HANDLE;
+    VkImageView moonTextureView = VK_NULL_HANDLE;
+
+    uint32_t skySunVertexCount = 0;   // 实际顶点数（4）
+
+    uint32_t skyMoonVertexCount = 0;
 };
