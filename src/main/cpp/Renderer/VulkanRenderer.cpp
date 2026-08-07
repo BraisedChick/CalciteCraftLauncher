@@ -1079,15 +1079,20 @@ bool VulkanRenderer::initSky() {
     }
 
     // 6. 星星 VBO + EBO（POSITION only，与太阳/月亮共用 skyColorPipeline）
-    const auto& starVerts = SkyRenderer::getStarVertices();
-    const auto& starIdx = SkyRenderer::getStarIndices();
-    skyStarsIndexCount = (uint32_t)starIdx.size();
+    int starCount = 0;
+    const auto& starVerts = SkyRenderer::getStarVertices(starCount);
+    const auto& starIdx = SkyRenderer::getStarIndices(starCount);
+    skyStarsIndexCount = (uint32_t)starIdx.size();  // 使用实际星星数量生成的索引数
+
     if (!createHostBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, starVerts.data(),
                           starVerts.size() * sizeof(float), skyStarsVertexBuffer, skyStarsVertexMemory) ||
         !createHostBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, starIdx.data(),
                           starIdx.size() * sizeof(uint16_t), skyStarsIndexBuffer, skyStarsIndexMemory)) {
         return false;
     }
+
+    LOGI("Stars: %d stars, %d vertices, %d indices",
+         starCount, (int)(starVerts.size() / 3), skyStarsIndexCount);
 
     skyInitialized = true;
     LOGI("Sky renderer initialized (Vulkan): colorPipeline=%p",
@@ -1183,7 +1188,7 @@ void VulkanRenderer::renderSky(VkCommandBuffer cmd, const glm::mat4& viewMatrix,
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skyColorPipeline);
         vkCmdPushConstants(cmd, skyColorPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                          0, sizeof(SkyColorPushConstant), &pc);
+                           0, sizeof(SkyColorPushConstant), &pc);
 
         VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &skyStarsVertexBuffer, &offset);

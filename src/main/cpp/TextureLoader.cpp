@@ -19,6 +19,7 @@ std::string TextureLoader::g_zipPath = "";
 void* TextureLoader::g_zip = nullptr;
 bool TextureLoader::g_zipOpen = false;
 std::unordered_map<std::string, TextureData> TextureLoader::s_cache;
+std::shared_mutex TextureLoader::s_cacheMutex;
 
 void TextureLoader::setAssetManager(AAssetManager* assetManager) {
     g_assetManager = assetManager;
@@ -32,7 +33,12 @@ void TextureLoader::setZipPath(const std::string& path) {
         g_zip = nullptr;
         g_zipOpen = false;
     }
-    s_cache.clear();
+
+    // 清理缓存（线程安全）
+    {
+        std::unique_lock<std::shared_mutex> lock(s_cacheMutex);
+        s_cache.clear();
+    }
 
     g_zipPath = path;
     LOGI("Texture ZIP path set to: %s", path.c_str());
@@ -56,7 +62,12 @@ void TextureLoader::setZipPath(const std::string& path) {
 }
 
 void TextureLoader::closeZip() {
-    s_cache.clear();
+    // 清理缓存（线程安全）
+    {
+        std::unique_lock<std::shared_mutex> lock(s_cacheMutex);
+        s_cache.clear();
+    }
+
     if (g_zipOpen) {
         mz_zip_reader_end(static_cast<mz_zip_archive*>(g_zip));
         delete static_cast<mz_zip_archive*>(g_zip);
@@ -67,6 +78,8 @@ void TextureLoader::closeZip() {
 }
 
 void TextureLoader::clearCache() {
+    // 线程安全地清理缓存
+    std::unique_lock<std::shared_mutex> lock(s_cacheMutex);
     s_cache.clear();
     LOGI("Texture cache cleared");
 }
@@ -209,21 +222,29 @@ std::vector<std::pair<std::string, std::string>> TextureLoader::readAllTextFromZ
 }
 
 TextureData TextureLoader::loadPNG(const std::string& filename) {
-    // 查缓存，命中则返回深拷贝
-    auto it = s_cache.find(filename);
-    if (it != s_cache.end()) {
-        return it->second.clone();
+    // 先尝试读锁查找缓存
+    {
+        std::shared_lock<std::shared_mutex> readLock(s_cacheMutex);
+        auto it = s_cache.find(filename);
+        if (it != s_cache.end()) {
+            return it->second.clone();
+        }
     }
 
+    // 如果缓存未命中，需要加载纹理
     if (g_zipPath.empty()) {
         LOGE("ZIP path not set, cannot load texture: %s", filename.c_str());
         return TextureData();
     }
 
+    // 加载纹理（无锁）
     TextureData result = loadFromZip(filename);
+
+    // 如果加载成功，写入缓存（写锁）
     if (result.data) {
-        // 移入缓存，下次直接 clone 返回
+        std::unique_lock<std::shared_mutex> writeLock(s_cacheMutex);
         s_cache.emplace(filename, std::move(result));
+        LOGI("Cached texture: %s", filename.c_str());
         return s_cache[filename].clone();
     }
 

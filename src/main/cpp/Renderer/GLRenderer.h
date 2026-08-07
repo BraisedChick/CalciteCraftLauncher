@@ -292,5 +292,9 @@ private:
     GLuint skyStarsVBO = 0;
     GLuint skyStarsEBO = 0;
 
+    // ===== 太阳和月亮纹理缓存（只加载一次） =====
+    GLuint sunTextureID = 0;
+    GLuint moonTextureID = 0;
+    int m_starCount = 0;
     bool skyInitialized = false;
 };

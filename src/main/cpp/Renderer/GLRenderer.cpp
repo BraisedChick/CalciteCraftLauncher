@@ -703,7 +703,6 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         }
         renderSky(glm::make_mat4(cameraMatrix), glm::make_mat4(projectionMatrix),
                   skyR, skyG, skyB, timeOfDay, starBrightness);
-
     }
 
     // 帧计数器递增
@@ -1589,7 +1588,7 @@ void main() {
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glBindVertexArray(0);
 
-    // 3. 太阳 VAO/VBO/EBO
+// 3. 太阳 VAO/VBO/EBO
     const auto& sunVerts = SkyRenderer::getSunVertices();
     const auto& sunIdx = SkyRenderer::getSunIndices();
     glGenVertexArrays(1, &skySunVAO);
@@ -1597,7 +1596,6 @@ void main() {
     glGenBuffers(1, &skySunEBO);
     glBindVertexArray(skySunVAO);
     glBindBuffer(GL_ARRAY_BUFFER, skySunVBO);
-    // Vertex 包含位置和 UV 坐标，需要转换为 float 数组
     std::vector<float> sunFloats;
     for (const auto& vert : sunVerts) {
         sunFloats.push_back(vert.x);
@@ -1609,8 +1607,12 @@ void main() {
     glBufferData(GL_ARRAY_BUFFER, sunFloats.size() * sizeof(float), sunFloats.data(), GL_STATIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, skySunEBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sunIdx.size() * sizeof(uint16_t), sunIdx.data(), GL_STATIC_DRAW);
+// location 0: position
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+// location 1: texture coordinate (UV)
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
     glBindVertexArray(0);
 
     // 4. 月亮 VAO/VBO/EBO
@@ -1619,9 +1621,10 @@ void main() {
     glGenVertexArrays(1, &skyMoonVAO);
     glGenBuffers(1, &skyMoonVBO);
     glGenBuffers(1, &skyMoonEBO);
-    glBindVertexArray(skyMoonVAO);
+
+    glBindVertexArray(skyMoonVAO);  // 绑定 VAO
+
     glBindBuffer(GL_ARRAY_BUFFER, skyMoonVBO);
-    // Vertex 包含位置和 UV 坐标，需要转换为 float 数组
     std::vector<float> moonFloats;
     for (const auto& vert : moonVerts) {
         moonFloats.push_back(vert.x);
@@ -1631,15 +1634,24 @@ void main() {
         moonFloats.push_back(vert.v);
     }
     glBufferData(GL_ARRAY_BUFFER, moonFloats.size() * sizeof(float), moonFloats.data(), GL_STATIC_DRAW);
+
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, skyMoonEBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, moonIdx.size() * sizeof(uint16_t), moonIdx.data(), GL_STATIC_DRAW);
+
+// 设置顶点属性
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
-    glBindVertexArray(0);
 
+    glEnableVertexAttribArray(1);   // UV 坐标
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+
+    glBindVertexArray(0);  // 最后解绑
     // 5. 星星 VAO/VBO/EBO（POSITION only，与太阳/月亮共用 skyColorProgram）
-    const auto& starVerts = SkyRenderer::getStarVertices();
-    const auto& starIdx = SkyRenderer::getStarIndices();
+    int starCount = 0;
+    const auto& starVerts = SkyRenderer::getStarVertices(starCount);
+    m_starCount = starCount;  // 保存数量供后续绘制使用
+    const auto& starIdx = SkyRenderer::getStarIndices(starCount);
+
     glGenVertexArrays(1, &skyStarsVAO);
     glGenBuffers(1, &skyStarsVBO);
     glGenBuffers(1, &skyStarsEBO);
@@ -1651,6 +1663,17 @@ void main() {
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glBindVertexArray(0);
+
+
+    // ===== 重要：在这里加载太阳和月亮纹理（只加载一次） =====
+    if (sunTextureID == 0) {
+        sunTextureID = SkyRenderer::loadSunTexture();
+        LOGI("Sun texture loaded: %d", sunTextureID);
+    }
+    if (moonTextureID == 0) {
+        moonTextureID = SkyRenderer::loadMoonTexture();
+        LOGI("Moon texture loaded: %d", moonTextureID);
+    }
 
     skyInitialized = true;
     LOGI("Sky renderer initialized (program=%d, topVAO=%d, sunVAO=%d, moonVAO=%d, starsVAO=%d)",
@@ -1683,13 +1706,13 @@ void GLRenderer::renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMat
     // 天空用独立投影矩阵：远裁剪面固定 1024，不受渲染距离影响
     float aspect = (float)screenWidth / screenHeight;
     glm::mat4 skyProj = Camera::computeProjectionMatrix(fov, aspect, nearPlane, 1024.0f);
-
+/*
     // 1. 渲染天空圆盘
     glm::mat4 skyMVP = skyProj * skyView;
     glUniformMatrix4fv(uMVP, 1, GL_FALSE, glm::value_ptr(skyMVP));
     glUniform4f(uColor, skyColor.r, skyColor.g, skyColor.b, 1.0f);
     glBindVertexArray(skyTopVAO);
-
+*/
     // 使用新的接口获取顶点数据
     const auto& topSkyVerts = SkyRenderer::getTopSkyVertices();
     glDrawArrays(GL_TRIANGLE_FAN, 0, (GLsizei)(topSkyVerts.size() / 3));
@@ -1699,8 +1722,10 @@ void GLRenderer::renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMat
     glm::mat4 celestialMVP = skyProj * skyView * celestialRot;
     glUniformMatrix4fv(uMVP, 1, GL_FALSE, glm::value_ptr(celestialMVP));
 
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
     // 3. 渲染太阳（使用纹理）
-    if (sunAlpha > 0.01f && skyCelestialProgram != 0) {
+    if (sunAlpha > 0.01f && skyCelestialProgram != 0 && sunTextureID != 0) {
         // 切换到纹理着色器
         glUseProgram(skyCelestialProgram);
         GLint uCelestialMVP = glGetUniformLocation(skyCelestialProgram, "uMVP");
@@ -1711,9 +1736,9 @@ void GLRenderer::renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMat
         glUniformMatrix4fv(uCelestialMVP, 1, GL_FALSE, glm::value_ptr(celestialMVP));
         glUniform4f(uCelestialColor, 1.0f, 1.0f, 1.0f, sunAlpha); // 白色 * alpha
 
-        // 绑定太阳纹理
+        // 绑定太阳纹理（使用缓存的纹理ID）
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, SkyRenderer::loadSunTexture());
+        glBindTexture(GL_TEXTURE_2D, sunTextureID);
         glUniform1i(uTexture, 0);
 
         // 绘制太阳
@@ -1727,7 +1752,7 @@ void GLRenderer::renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMat
     }
 
     // 4. 渲染月亮（使用纹理）
-    if (moonAlpha > 0.01f && skyCelestialProgram != 0) {
+    if (moonAlpha > 0.01f && skyCelestialProgram != 0 && moonTextureID != 0) {
         // 切换到纹理着色器
         glUseProgram(skyCelestialProgram);
         GLint uCelestialMVP = glGetUniformLocation(skyCelestialProgram, "uMVP");
@@ -1738,9 +1763,9 @@ void GLRenderer::renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMat
         glUniformMatrix4fv(uCelestialMVP, 1, GL_FALSE, glm::value_ptr(celestialMVP));
         glUniform4f(uCelestialColor, 1.0f, 1.0f, 1.0f, moonAlpha); // 白色 * alpha
 
-        // 绑定月亮纹理
+        // 绑定月亮纹理（使用缓存的纹理ID）
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, SkyRenderer::loadMoonTexture());
+        glBindTexture(GL_TEXTURE_2D, moonTextureID);
         glUniform1i(uTexture, 0);
 
         // 绘制月亮
@@ -1755,15 +1780,15 @@ void GLRenderer::renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMat
 
     // 5. 渲染星星
     if (starBrightness > 0.01f) {
-        float actualStarBrightness = starBrightness * skyColor.r; // 乘以天空亮度
-        glUniform4f(uColor, actualStarBrightness, actualStarBrightness, actualStarBrightness, actualStarBrightness);
+        float actualStarBrightness = starBrightness * skyColor.r;
+        glUniform4f(uColor, actualStarBrightness, actualStarBrightness,
+                    actualStarBrightness, actualStarBrightness);
         glBindVertexArray(skyStarsVAO);
 
-        // 使用新的接口获取星星索引
-        const auto& starIndices = SkyRenderer::getStarIndices();
+        // 使用保存的 m_starCount 生成索引（或直接复用已上传的 EBO 数据）
+        const auto& starIndices = SkyRenderer::getStarIndices(m_starCount);
         glDrawElements(GL_TRIANGLES, (GLsizei)starIndices.size(), GL_UNSIGNED_SHORT, 0);
     }
-
     glBindVertexArray(0);
     glUseProgram(0);
 
@@ -1866,6 +1891,11 @@ void GLRenderer::cleanup() {
     if (skyStarsVAO != 0) { glDeleteVertexArrays(1, &skyStarsVAO); skyStarsVAO = 0; }
     if (skyStarsVBO != 0) { glDeleteBuffers(1, &skyStarsVBO); skyStarsVBO = 0; }
     if (skyStarsEBO != 0) { glDeleteBuffers(1, &skyStarsEBO); skyStarsEBO = 0; }
+
+    // 清理太阳月亮纹理
+    if (sunTextureID != 0) { glDeleteTextures(1, &sunTextureID); sunTextureID = 0; }
+    if (moonTextureID != 0) { glDeleteTextures(1, &moonTextureID); moonTextureID = 0; }
+
     skyInitialized = false;
 
     if (display) {

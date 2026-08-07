@@ -5,6 +5,8 @@
 #include <cstring>
 #include <unordered_map>
 #include <android/asset_manager.h>
+#include <shared_mutex>
+#include <mutex>
 
 struct TextureData {
     unsigned char* data = nullptr;
@@ -80,6 +82,8 @@ private:
     static bool g_zipOpen;
 
     // 已解码纹理缓存（文件名 → TextureData）
+    // 使用 shared_mutex 实现读写锁，多线程安全
     static std::unordered_map<std::string, TextureData> s_cache;
+    static std::shared_mutex s_cacheMutex;
     static void clearCache();
 };
