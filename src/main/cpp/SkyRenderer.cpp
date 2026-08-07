@@ -210,7 +210,7 @@ glm::mat4 SkyRenderer::getCelestialRotation(float timeOfDay) {
     // 原版 MC：mulPose(YP, -90°) → mulPose(XP, time*360°)
     // time=0: X 旋转 0°→东方地平线；time=0.25: 90°→天顶；time=0.5: 180°→西方地平线
     float normalizedTime = timeOfDay / 24000.0f;
-    float angle = (normalizedTime * 360.0f) - 80.0f;  // 减 90° 偏置
+    float angle = (normalizedTime * 360.0f) - 90.0f;  // 减 90° 偏置
 
     glm::mat4 rot(1.0f);
     rot = glm::rotate(rot, glm::radians(-90.0f), glm::vec3(0, 1, 0));
@@ -219,66 +219,6 @@ glm::mat4 SkyRenderer::getCelestialRotation(float timeOfDay) {
     return rot;
 }
 
-// ===== 纹理管理 =====
-
-GLuint SkyRenderer::loadSunTexture() {
-    // 直接使用 TextureLoader 加载太阳纹理
-    TextureData texData = TextureLoader::loadImage("environment/celestial/sun.png");
-    if (!texData.data) {
-        LOGE("Failed to load sun texture");
-        return 0;
-    }
-
-    GLuint tex;
-    glGenTextures(1, &tex);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texData.width, texData.height,
-                 0, GL_RGBA, GL_UNSIGNED_BYTE, texData.data);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    int cx = texData.width / 2;
-    int cy = texData.height / 2;
-    LOGI("Sun texture center region (32x32 image, center at %d,%d):", cx, cy);
-    for (int dy = -2; dy <= 2; dy++) {
-        for (int dx = -2; dx <= 2; dx++) {
-            int x = cx + dx;
-            int y = cy + dy;
-            if (x >= 0 && x < texData.width && y >= 0 && y < texData.height) {
-                int idx = (y * texData.width + x) * 4;
-                LOGI("  Pixel (%d,%d): R=%d G=%d B=%d A=%d",
-                     x, y,
-                     texData.data[idx], texData.data[idx+1], texData.data[idx+2], texData.data[idx+3]);
-            }
-        }
-    }
-    return tex;
-}
-
-GLuint SkyRenderer::loadMoonTexture() {
-    // 直接使用 TextureLoader 加载月亮纹理
-    TextureData texData = TextureLoader::loadImage("environment/celestial/moon/first_quarter.png");
-    if (!texData.data) {
-        LOGE("Failed to load moon texture");
-        return 0;
-    }
-    GLuint tex;
-    glGenTextures(1, &tex);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texData.width, texData.height,
-                 0, GL_RGBA, GL_UNSIGNED_BYTE, texData.data);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    return tex;
-}
-
-void SkyRenderer::clearTextures() {
-    // SkyRenderer 不需要管理纹理资源，由 GLRenderer 负责清理
-}
 
 // ===== 动画计算 =====
 

@@ -1667,11 +1667,11 @@ void main() {
 
     // ===== 重要：在这里加载太阳和月亮纹理（只加载一次） =====
     if (sunTextureID == 0) {
-        sunTextureID = SkyRenderer::loadSunTexture();
+        sunTextureID = loadSunTexture();
         LOGI("Sun texture loaded: %d", sunTextureID);
     }
     if (moonTextureID == 0) {
-        moonTextureID = SkyRenderer::loadMoonTexture();
+        moonTextureID = loadMoonTexture();
         LOGI("Moon texture loaded: %d", moonTextureID);
     }
 
@@ -1679,7 +1679,41 @@ void main() {
     LOGI("Sky renderer initialized (program=%d, topVAO=%d, sunVAO=%d, moonVAO=%d, starsVAO=%d)",
          skyColorProgram, skyTopVAO, skySunVAO, skyMoonVAO, skyStarsVAO);
 }
+GLuint GLRenderer::loadSunTexture() {
+    TextureData texData = TextureLoader::loadImage("environment/celestial/sun.png");
+    if (!texData.data) {
+        LOGE("Failed to load sun texture");
+        return 0;
+    }
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texData.width, texData.height,
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, texData.data);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    return tex;
+}
 
+GLuint GLRenderer::loadMoonTexture() {
+    TextureData texData = TextureLoader::loadImage("environment/celestial/moon/first_quarter.png");
+    if (!texData.data) {
+        LOGE("Failed to load moon texture");
+        return 0;
+    }
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texData.width, texData.height,
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, texData.data);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    return tex;
+}
 void GLRenderer::renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMatrix,
                             float skyR, float skyG, float skyB, float timeOfDay, float starBrightness) {
     if (!skyInitialized || skyColorProgram == 0) return;

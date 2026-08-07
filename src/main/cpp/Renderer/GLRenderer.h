@@ -261,7 +261,8 @@ private:
     void initSky();
     void renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMatrix,
                    float skyR, float skyG, float skyB, float timeOfDay, float starBrightness);
-
+    GLuint loadSunTexture();
+    GLuint loadMoonTexture();
     // 天空着色器（纯色：天空圆盘 + 星星）
     GLuint skyColorProgram = 0;
     GLuint skyColorVAO = 0;

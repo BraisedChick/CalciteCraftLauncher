@@ -37,11 +37,6 @@ public:
     // 天体旋转 & 纹理加载
     static glm::mat4 getCelestialRotation(float timeOfDay);
     static float sunAngle(float timeOfDay);
-    static GLuint loadSunTexture();
-    static GLuint loadMoonTexture();
-    static void clearTextures();
-
-    // Fallback 纹理（已移除）
 
     // 动画计算
     static float getCelestialAlpha(float timeOfDay, bool isMoon = false);
