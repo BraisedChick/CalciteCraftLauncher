@@ -685,25 +685,12 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     initSky();
 
     // 渲染天空（天空圆盘 + 太阳 + 月亮 + 星星）
-    {
-        // 获取昼夜时间和星星亮度
-        float timeOfDay = 6000.0f;  // 默认正午
-        float starBrightness = 0.0f;
-        if (gameForLight && gameForLight->getLight()) {
-            long long dayTime = gameForLight->getLight()->getWorldDayTime();
-            timeOfDay = (float)(dayTime % 24000);
-            if (timeOfDay < 0) timeOfDay += 24000.0f;
-            // 星星亮度：夜晚可见，白天消失
-            float normalizedTime = timeOfDay / 24000.0f;
-            if (normalizedTime > 0.5f) {
-                // 夜晚：从日落到午夜逐渐变亮，从午夜到日出逐渐变暗
-                float nightProgress = (normalizedTime - 0.5f) * 2.0f;  // 0-1
-                starBrightness = 1.0f - fabsf(nightProgress * 2.0f - 1.0f);
-            }
-        }
-        renderSky(glm::make_mat4(cameraMatrix), glm::make_mat4(projectionMatrix),
-                  skyR, skyG, skyB, timeOfDay, starBrightness);
-    }
+    auto skyParams = SkyRenderer::computeSkyParams(
+            gameForLight ? gameForLight->getLight() : nullptr
+    );
+    renderSky(glm::make_mat4(cameraMatrix), glm::make_mat4(projectionMatrix),
+              skyR, skyG, skyB, skyParams.timeOfDay,
+              skyParams.starBrightness, skyParams.moonPhase);
 
     // 帧计数器递增
     frameCount++;
@@ -1670,9 +1657,14 @@ void main() {
         sunTextureID = loadSunTexture();
         LOGI("Sun texture loaded: %d", sunTextureID);
     }
-    if (moonTextureID == 0) {
-        moonTextureID = loadMoonTexture();
-        LOGI("Moon texture loaded: %d", moonTextureID);
+    for (int i = 0; i < 8; i++) {
+        if (moonTextureIDs[i] == 0) {
+            moonTextureIDs[i] = loadMoonTexture(i);
+            if (moonTextureIDs[i] == 0) {
+                LOGW("Failed to load moon phase %d, using phase 0 as fallback", i);
+                moonTextureIDs[i] = moonTextureIDs[0];  // 用新月作为备用
+            }
+        }
     }
 
     skyInitialized = true;
@@ -1697,12 +1689,19 @@ GLuint GLRenderer::loadSunTexture() {
     return tex;
 }
 
-GLuint GLRenderer::loadMoonTexture() {
-    TextureData texData = TextureLoader::loadImage("environment/celestial/moon/first_quarter.png");
-    if (!texData.data) {
-        LOGE("Failed to load moon texture");
+GLuint GLRenderer::loadMoonTexture(int phase) {
+    const char* path = SkyRenderer::getMoonPhasePath(phase);
+    if (!path) {
+        LOGE("Invalid moon phase: %d", phase);
         return 0;
     }
+
+    TextureData texData = TextureLoader::loadImage(path);
+    if (!texData.data) {
+        LOGE("Failed to load moon texture: %s", path);
+        return 0;
+    }
+
     GLuint tex;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
@@ -1712,10 +1711,12 @@ GLuint GLRenderer::loadMoonTexture() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    LOGI("Loaded moon phase %d: %s", phase, path);
     return tex;
 }
 void GLRenderer::renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMatrix,
-                            float skyR, float skyG, float skyB, float timeOfDay, float starBrightness) {
+                            float skyR, float skyG, float skyB, float timeOfDay, float starBrightness, int moonPhase) {
     if (!skyInitialized || skyColorProgram == 0) return;
 
     // 使用 SkyRenderer 计算天空颜色和透明度
@@ -1785,8 +1786,11 @@ void GLRenderer::renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMat
         glUniformMatrix4fv(uMVP, 1, GL_FALSE, glm::value_ptr(celestialMVP));
     }
 
-    // 4. 渲染月亮（使用纹理）
-    if (moonAlpha > 0.01f && skyCelestialProgram != 0 && moonTextureID != 0) {
+// 4. 渲染月亮（使用纹理）
+    if (moonAlpha > 0.01f && skyCelestialProgram != 0) {
+        GLuint currentMoonTex = moonTextureIDs[moonPhase];  // 直接使用传入的 moonPhase
+        if (currentMoonTex == 0) currentMoonTex = moonTextureIDs[0];
+
         // 切换到纹理着色器
         glUseProgram(skyCelestialProgram);
         GLint uCelestialMVP = glGetUniformLocation(skyCelestialProgram, "uMVP");
@@ -1795,11 +1799,11 @@ void GLRenderer::renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMat
 
         // 设置月亮矩阵和颜色
         glUniformMatrix4fv(uCelestialMVP, 1, GL_FALSE, glm::value_ptr(celestialMVP));
-        glUniform4f(uCelestialColor, 1.0f, 1.0f, 1.0f, moonAlpha); // 白色 * alpha
+        glUniform4f(uCelestialColor, 1.0f, 1.0f, 1.0f, moonAlpha);
 
-        // 绑定月亮纹理（使用缓存的纹理ID）
+        // 绑定当前月相纹理
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, moonTextureID);
+        glBindTexture(GL_TEXTURE_2D, currentMoonTex);
         glUniform1i(uTexture, 0);
 
         // 绘制月亮
@@ -1928,7 +1932,12 @@ void GLRenderer::cleanup() {
 
     // 清理太阳月亮纹理
     if (sunTextureID != 0) { glDeleteTextures(1, &sunTextureID); sunTextureID = 0; }
-    if (moonTextureID != 0) { glDeleteTextures(1, &moonTextureID); moonTextureID = 0; }
+    for (int i = 0; i < 8; i++) {
+        if (moonTextureIDs[i] != 0) {
+            glDeleteTextures(1, &moonTextureIDs[i]);
+            moonTextureIDs[i] = 0;
+        }
+    }
 
     skyInitialized = false;
 

@@ -260,9 +260,10 @@ private:
     // ===== 天空渲染 =====
     void initSky();
     void renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMatrix,
-                   float skyR, float skyG, float skyB, float timeOfDay, float starBrightness);
+                   float skyR, float skyG, float skyB,
+                   float timeOfDay, float starBrightness, int moonPhase);
     GLuint loadSunTexture();
-    GLuint loadMoonTexture();
+    GLuint loadMoonTexture(int phase);
     // 天空着色器（纯色：天空圆盘 + 星星）
     GLuint skyColorProgram = 0;
     GLuint skyColorVAO = 0;
@@ -295,7 +296,7 @@ private:
 
     // ===== 太阳和月亮纹理缓存（只加载一次） =====
     GLuint sunTextureID = 0;
-    GLuint moonTextureID = 0;
+    GLuint moonTextureIDs[8] = {0};
     int m_starCount = 0;
     bool skyInitialized = false;
 };

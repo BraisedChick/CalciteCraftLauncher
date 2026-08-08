@@ -5,6 +5,14 @@
 #include <glm/glm.hpp>
 #include <GLES3/gl3.h>
 #include "TextureLoader.h"
+#include "Light.h"
+
+struct SkyRenderParams {
+    float timeOfDay;          // 0~24000
+    float starBrightness;     // 0~1
+    float normalizedTime;     // 0~1
+    int moonPhase;            // 0~7 月相索引
+};
 
 class SkyRenderer {
 public:
@@ -14,7 +22,8 @@ public:
         Vertex(float x_, float y_, float z_, float u_, float v_)
                 : x(x_), y(y_), z(z_), u(u_), v(v_) {}
     };
-
+    static SkyRenderParams computeSkyParams(Light* light);
+    static const char* getMoonPhasePath(int phase);
     // 获取天空圆盘顶点（大小固定）
     static std::vector<float> getTopSkyVertices();
     static std::vector<float> getBottomSkyVertices();

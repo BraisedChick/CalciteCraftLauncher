@@ -303,6 +303,48 @@ glm::vec3 SkyRenderer::getSkyColor(float timeOfDay) {
     return baseColor;
 }
 
+SkyRenderParams SkyRenderer::computeSkyParams(Light* light) {
+    SkyRenderParams params;
+    params.timeOfDay = 6000.0f;
+    params.starBrightness = 0.0f;
+    params.normalizedTime = 0.25f;
+    params.moonPhase = 0;  // 默认新月
+
+    if (light) {
+        long long dayTime = light->getWorldDayTime();
+        params.timeOfDay = (float)(dayTime % 24000);
+        if (params.timeOfDay < 0) params.timeOfDay += 24000.0f;
+        params.normalizedTime = params.timeOfDay / 24000.0f;
+
+        // 星星亮度
+        if (params.normalizedTime > 0.5f) {
+            float nightProgress = (params.normalizedTime - 0.5f) * 2.0f;
+            params.starBrightness = 1.0f - fabsf(nightProgress * 2.0f - 1.0f);
+        }
+
+        // 月相索引（基于总天数）
+        long long days = dayTime / 24000LL;
+        params.moonPhase = (int)(days % 8);
+    }
+
+    return params;
+}
+
+
+const char* SkyRenderer::getMoonPhasePath(int phase) {
+    static const char* paths[] = {
+            "environment/celestial/moon/full_moon.png",
+            "environment/celestial/moon/waning_gibbous.png",
+            "environment/celestial/moon/third_quarter.png",
+            "environment/celestial/moon/waning_crescent.png",
+            "environment/celestial/moon/new_moon.png",
+            "environment/celestial/moon/waxing_crescent.png",
+            "environment/celestial/moon/first_quarter.png",
+            "environment/celestial/moon/waxing_gibbous.png"
+    };
+    return paths[phase % 8];
+}
+
 float SkyRenderer::getStarBrightness(float timeOfDay) {
     float normalizedTime = timeOfDay / 24000.0f;
     float starBrightness = 0.0f;
