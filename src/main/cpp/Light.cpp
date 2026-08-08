@@ -8,10 +8,11 @@
 #include <unordered_map>
 #include <cstring>
 #include <string>
-
 #define LOG_TAG "Light"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-
+namespace {
+    inline double frac(double x) { return x - std::floor(x); }
+}
 // ===== 昼夜计算 =====
 
 float Light::getSkyDarken() const {
@@ -35,26 +36,31 @@ float Light::getSkyDarken() const {
 // ===== 光照贴图像素输出（渲染后端无关，纹理上传由调用方负责）=====
 
 bool Light::getLightmapPixelsIfChanged(uint8_t* pixels) {
-    float skyBright = 1.0f - getSkyDarken();
-
-    // 仅在天空亮度变化超过阈值时重新生成（避免每帧上传）
+    float skyBright = std::clamp(std::cosf(normalizedTime * 2.0f * M_PI) * 2.0f + 0.5f, 0.0f, 1.0f);
     if (fabsf(skyBright - lastGeneratedSkyBright) <= 0.001f) return false;
-
     generateLightmapPixels(skyBright, pixels);
     lastGeneratedSkyBright = skyBright;
     return true;
 }
 
 // ===== 每帧更新（天空/雾效颜色）=====
-
 void Light::update() {
-    float skyDarken = getSkyDarken();
-    float skyBright = 1.0f - skyDarken;
+    // 1. 计算原版标准化时间（与 DimensionType.timeOfDay 一致）
+    long long dt = worldDayTime % 24000;
+    if (dt < 0) dt += 24000;
+    double raw = (double)dt / 24000.0;
+    double d0 = frac(raw - 0.25);
+    double d1 = 0.5 - std::cos(d0 * M_PI) / 2.0;
+    normalizedTime = (float)((d0 * 2.0 + d1) / 3.0);
 
-    // 天空/雾效颜色插值：白天蓝 → 夜晚深蓝黑（每帧更新，开销极小）
-    skyR = 0.53f * skyBright + 0.02f * skyDarken;
-    skyG = 0.81f * skyBright + 0.02f * skyDarken;
-    skyB = 0.92f * skyBright + 0.08f * skyDarken;
+    // 2. 亮度因子（使用 normalizedTime 而非线性时间）
+    float brightness = std::clamp(std::cosf(normalizedTime * 2.0f * M_PI) * 2.0f + 0.5f, 0.0f, 1.0f);
+
+    // 3. 天空颜色
+    skyR = 0.53f * brightness + 0.02f * (1.0f - brightness);
+    skyG = 0.81f * brightness + 0.02f * (1.0f - brightness);
+    skyB = 0.92f * brightness + 0.08f * (1.0f - brightness);
+
 }
 
 // ===== 光照贴图像素生成 =====

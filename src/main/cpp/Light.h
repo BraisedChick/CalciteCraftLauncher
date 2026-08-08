@@ -23,7 +23,8 @@ public:
     // ===== 光照贴图像素（渲染后端无关）=====
     /// 每帧调用：更新天空/雾效颜色
     void update();
-
+    ///获取非线时间
+    float getNormalizedTime() const { return normalizedTime; }
     /// 天空亮度变化超过阈值时生成 16x16 RGBA 像素并返回 true（首次调用必返回 true）
     /// 调用方拿到像素后自行上传纹理（GL: glTexSubImage2D / Vulkan: staging buffer）
     bool getLightmapPixelsIfChanged(uint8_t* pixels);
@@ -80,4 +81,5 @@ private:
     // 输出（工作线程 → 渲染线程）：本轮传播波及的脏 chunk key → section 掩码
     std::mutex outputMutex;
     std::unordered_map<uint64_t, uint64_t> dirtyChunkKeys;
+    float normalizedTime = 0.25f;
 };

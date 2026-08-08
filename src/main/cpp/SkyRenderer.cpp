@@ -247,10 +247,7 @@ SkyRenderParams SkyRenderer::computeSkyParams(Light* light) {
         // 月相
         params.moonPhase = (int)((dayTime / 24000LL % 8LL + 8LL) % 8LL);
 
-        // 原版 DimensionType.timeOfDay 算法
-        double d0 = MathUtils::frac((double)dayTime / 24000.0 - 0.25);
-        double d1 = 0.5 - std::cos(d0 * M_PI) / 2.0;
-        params.normalizedTime = (float)((d0 * 2.0 + d1) / 3.0);
+        params.normalizedTime = light->getNormalizedTime();
 
         // timeOfDay 设为 normalizedTime * 24000，便于旧函数使用
         params.timeOfDay = params.normalizedTime * 24000.0f;
