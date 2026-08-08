@@ -689,9 +689,9 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
             gameForLight ? gameForLight->getLight() : nullptr
     );
     renderSky(glm::make_mat4(cameraMatrix), glm::make_mat4(projectionMatrix),
-              skyR, skyG, skyB, skyParams.timeOfDay,
-              skyParams.starBrightness, skyParams.moonPhase);
-
+              skyR, skyG, skyB,
+              skyParams.timeOfDay, skyParams.starBrightness, skyParams.moonPhase,
+              skyParams.normalizedTime);
     // 帧计数器递增
     frameCount++;
 
@@ -1716,14 +1716,16 @@ GLuint GLRenderer::loadMoonTexture(int phase) {
     return tex;
 }
 void GLRenderer::renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMatrix,
-                            float skyR, float skyG, float skyB, float timeOfDay, float starBrightness, int moonPhase) {
+                           float skyR, float skyG, float skyB,
+                           float timeOfDay, float starBrightness, int moonPhase,
+                           float normalizedTime) {
     if (!skyInitialized || skyColorProgram == 0) return;
 
-    // 使用 SkyRenderer 计算天空颜色和透明度
-    glm::vec3 skyColor = SkyRenderer::getSkyColor(timeOfDay);
-    float sunAlpha = SkyRenderer::getCelestialAlpha(timeOfDay, false);
-    float moonAlpha = SkyRenderer::getCelestialAlpha(timeOfDay, true);
 
+    float sunAlpha = SkyRenderer::getCelestialAlpha( false);
+    float moonAlpha = SkyRenderer::getCelestialAlpha(true);
+
+    glm::vec3 skyColor = glm::vec3(skyR, skyG, skyB);
     // 保存 GL 状态
     glDisable(GL_DEPTH_TEST);  // 完全禁用深度测试，避免遮挡
     glDepthMask(GL_FALSE);
@@ -1753,7 +1755,7 @@ void GLRenderer::renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMat
     glDrawArrays(GL_TRIANGLE_FAN, 0, (GLsizei)(topSkyVerts.size() / 3));
 
     // 2. 天体旋转矩阵
-    glm::mat4 celestialRot = SkyRenderer::getCelestialRotation(timeOfDay);
+    glm::mat4 celestialRot = SkyRenderer::getCelestialRotation(normalizedTime);
     glm::mat4 celestialMVP = skyProj * skyView * celestialRot;
     glUniformMatrix4fv(uMVP, 1, GL_FALSE, glm::value_ptr(celestialMVP));
 

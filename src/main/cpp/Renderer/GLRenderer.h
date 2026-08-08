@@ -261,19 +261,15 @@ private:
     void initSky();
     void renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMatrix,
                    float skyR, float skyG, float skyB,
-                   float timeOfDay, float starBrightness, int moonPhase);
+                   float timeOfDay, float starBrightness, int moonPhase,
+                   float normalizedTime);
     GLuint loadSunTexture();
     GLuint loadMoonTexture(int phase);
     // 天空着色器（纯色：天空圆盘 + 星星）
     GLuint skyColorProgram = 0;
-    GLuint skyColorVAO = 0;
-    GLuint skyColorVBO = 0;
 
     // 天体着色器（纹理：太阳 + 月亮）
     GLuint skyCelestialProgram = 0;
-    GLuint skyCelestialVAO = 0;
-    GLuint skyCelestialVBO = 0;
-    GLuint skyCelestialEBO = 0;
 
     // 天空 VAO/EBO（TRIANGLE_FAN）
     GLuint skyTopVAO = 0;

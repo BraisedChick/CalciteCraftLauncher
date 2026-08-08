@@ -8,10 +8,10 @@
 #include "Light.h"
 
 struct SkyRenderParams {
-    float timeOfDay;          // 0~24000
+    float timeOfDay;          // 0~24000（已由 computeSkyParams 设为 normalizedTime*24000）
     float starBrightness;     // 0~1
-    float normalizedTime;     // 0~1
-    int moonPhase;            // 0~7 月相索引
+    float normalizedTime;     // 0~1（已应用原版偏移和曲线）
+    int moonPhase;            // 0~7
 };
 
 class SkyRenderer {
@@ -24,31 +24,26 @@ public:
     };
     static SkyRenderParams computeSkyParams(Light* light);
     static const char* getMoonPhasePath(int phase);
-    // 获取天空圆盘顶点（大小固定）
+
     static std::vector<float> getTopSkyVertices();
     static std::vector<float> getBottomSkyVertices();
 
-    // 太阳/月亮（固定大小）
     static std::vector<Vertex> getSunVertices();
     static std::vector<uint16_t> getSunIndices();
     static std::vector<Vertex> getMoonVertices();
     static std::vector<uint16_t> getMoonIndices();
 
-    // ★★★ 星星新接口：返回顶点，并通过引用参数返回实际星星数量 ★★★
     static std::vector<float> getStarVertices(int& outStarCount);
-    // 索引生成接受星星数量
     static std::vector<uint16_t> getStarIndices(int starCount);
 
-    // 日出渐变
     static std::vector<float> getSunriseVertices();
     static std::vector<uint16_t> getSunriseIndices();
 
-    // 天体旋转 & 纹理加载
-    static glm::mat4 getCelestialRotation(float timeOfDay);
-    static float sunAngle(float timeOfDay);
+    // 天体旋转：接受 normalizedTime (0~1)
+    static glm::mat4 getCelestialRotation(float normalizedTime);
+    static float sunAngle(float timeOfDay); // 保留旧接口
 
-    // 动画计算
-    static float getCelestialAlpha(float timeOfDay, bool isMoon = false);
-    static glm::vec3 getSkyColor(float timeOfDay);
+    // 透明度计算
+    static float getCelestialAlpha(bool isMoon = false);
     static float getStarBrightness(float timeOfDay);
 };

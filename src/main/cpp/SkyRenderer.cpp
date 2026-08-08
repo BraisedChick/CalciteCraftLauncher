@@ -4,6 +4,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <android/log.h>
+#include <algorithm>  // for std::clamp
 
 #define LOG_TAG "SkyRenderer"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -11,6 +12,13 @@
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+// 工具函数：取正小数部分
+namespace MathUtils {
+    inline double frac(double x) {
+        return x - std::floor(x);
+    }
+}
 
 // ===== 天空圆盘 =====
 
@@ -199,137 +207,62 @@ std::vector<uint16_t> SkyRenderer::getSunriseIndices() {
 }
 
 // ===== 天体旋转 =====
-
+glm::mat4 SkyRenderer::getCelestialRotation(float normalizedTime) {
+    // 直接使用 normalizedTime (0~1)，已包含偏移和曲线
+    float angleDeg = normalizedTime * 360.0f;
+    glm::mat4 rot(1.0f);
+    rot = glm::rotate(rot, glm::radians(-90.0f), glm::vec3(0, 1, 0));
+    rot = glm::rotate(rot, glm::radians(angleDeg), glm::vec3(1, 0, 0));
+    return rot;
+}
 float SkyRenderer::sunAngle(float timeOfDay) {
     // timeOfDay: 0-24000（0=日出，6000=正午，12000=日落，18000=午夜）
     // 返回太阳角度（弧度）
     return timeOfDay * (float)(M_PI * 2.0) / 24000.0f;
 }
 
-glm::mat4 SkyRenderer::getCelestialRotation(float timeOfDay) {
-    // 原版 MC：mulPose(YP, -90°) → mulPose(XP, time*360°)
-    // time=0: X 旋转 0°→东方地平线；time=0.25: 90°→天顶；time=0.5: 180°→西方地平线
-    float normalizedTime = timeOfDay / 24000.0f;
-    float angle = (normalizedTime * 360.0f) - 90.0f;  // 减 90° 偏置
 
-    glm::mat4 rot(1.0f);
-    rot = glm::rotate(rot, glm::radians(-90.0f), glm::vec3(0, 1, 0));
-    rot = glm::rotate(rot, glm::radians(angle), glm::vec3(1, 0, 0));
+// ===== 雨天透明度计算 =====
+float SkyRenderer::getCelestialAlpha(bool isMoon) {
+    // 直接使用 normalizedTime (0~1)
 
-    return rot;
-}
-
-
-// ===== 动画计算 =====
-
-float SkyRenderer::getCelestialAlpha(float timeOfDay, bool isMoon) {
-    float normalizedTime = timeOfDay / 24000.0f;
-
-    if (isMoon) {
-        // 月亮在夜晚可见（0.5-1.0）
-        if (normalizedTime < 0.5f) {
-            // 从日落到午夜 (0.5-0.75)
-            if (normalizedTime < 0.25f) return 0.0f;
-            float t = (normalizedTime - 0.25f) * 4.0f;  // 0.25-0.5 -> 0-1
-            return t * t * (3.0f - 2.0f * t);  // 平滑步函数
-        } else if (normalizedTime < 0.75f) {
-            return 1.0f;  // 全夜
-        } else {
-            // 从午夜到日出 (0.75-1.0)
-            float t = (normalizedTime - 0.75f) * 4.0f;  // 0.75-1.0 -> 0-1
-            return 1.0f - t * t * (3.0f - 2.0f * t);  // 平滑步函数
-        }
-    } else {
-        // 太阳在白天可见 (0.0-0.5)
-        if (normalizedTime > 0.5f) {
-            // 从日落到午夜
-            if (normalizedTime < 0.75f) {
-                float t = (normalizedTime - 0.5f) * 4.0f;  // 0.5-0.75 -> 0-1
-                return 1.0f - t * t * (3.0f - 2.0f * t);
-            } else {
-                return 0.0f;
-            }
-        } else if (normalizedTime < 0.25f) {
-            // 从日出到正午
-            if (normalizedTime < 0.125f) {
-                float t = normalizedTime * 8.0f;  // 0-0.125 -> 0-1
-                return t * t * (3.0f - 2.0f * t);
-            } else {
-                return 1.0f;
-            }
-        } else if (normalizedTime < 0.375f) {
-            return 1.0f;  // 正午时段
-        } else {
-            // 从正午到日落
-            float t = (normalizedTime - 0.375f) * 8.0f;  // 0.375-0.5 -> 0-1
-            return 1.0f - t * t * (3.0f - 2.0f * t);
-        }
+    if (isMoon) {//TODO:实现雨天太阳月亮透明度计算
+        return 1.0f;
+    }
+    else {
+        return 1.0f;
     }
 }
 
-glm::vec3 SkyRenderer::getSkyColor(float timeOfDay) {
-    float normalizedTime = timeOfDay / 24000.0f;
-
-    // 基础天空颜色（白天浅蓝，夜晚深蓝）
-    glm::vec3 baseColor(0.5f, 0.7f, 1.0f);  // 浅蓝色
-
-    // 夜晚变暗
-    if (normalizedTime > 0.5f) {
-        float nightFactor = 1.0f;
-        if (normalizedTime < 0.75f) {
-            nightFactor = 0.3f + 0.4f * (normalizedTime - 0.5f) * 4.0f;
-        } else {
-            nightFactor = 0.7f - 0.4f * (normalizedTime - 0.75f) * 4.0f;
-        }
-        baseColor *= nightFactor;
-    }
-
-    // 日出日落时的橙色/红色
-    float sunriseSunset = 0.0f;
-    if (normalizedTime < 0.25f) {
-        // 日出
-        sunriseSunset = sin(normalizedTime * 4.0f * M_PI);
-    } else if (normalizedTime > 0.75f) {
-        // 日落
-        sunriseSunset = sin((normalizedTime - 0.75f) * 4.0f * M_PI);
-    }
-
-    if (sunriseSunset > 0.0f) {
-        // 混合橙色
-        glm::vec3 sunsetColor(1.0f, 0.6f, 0.3f);
-        baseColor = baseColor * (1.0f - sunriseSunset * 0.5f) + sunsetColor * sunriseSunset * 0.5f;
-    }
-
-    return baseColor;
-}
-
+// ===== 计算天空参数 =====
 SkyRenderParams SkyRenderer::computeSkyParams(Light* light) {
     SkyRenderParams params;
     params.timeOfDay = 6000.0f;
     params.starBrightness = 0.0f;
     params.normalizedTime = 0.25f;
-    params.moonPhase = 0;  // 默认新月
+    params.moonPhase = 0;
 
     if (light) {
         long long dayTime = light->getWorldDayTime();
-        params.timeOfDay = (float)(dayTime % 24000);
-        if (params.timeOfDay < 0) params.timeOfDay += 24000.0f;
-        params.normalizedTime = params.timeOfDay / 24000.0f;
+        // 月相
+        params.moonPhase = (int)((dayTime / 24000LL % 8LL + 8LL) % 8LL);
 
-        // 星星亮度
-        if (params.normalizedTime > 0.5f) {
-            float nightProgress = (params.normalizedTime - 0.5f) * 2.0f;
-            params.starBrightness = 1.0f - fabsf(nightProgress * 2.0f - 1.0f);
-        }
+        // 原版 DimensionType.timeOfDay 算法
+        double d0 = MathUtils::frac((double)dayTime / 24000.0 - 0.25);
+        double d1 = 0.5 - std::cos(d0 * M_PI) / 2.0;
+        params.normalizedTime = (float)((d0 * 2.0 + d1) / 3.0);
 
-        // 月相索引（基于总天数）
-        long long days = dayTime / 24000LL;
-        params.moonPhase = (int)(days % 8);
+        // timeOfDay 设为 normalizedTime * 24000，便于旧函数使用
+        params.timeOfDay = params.normalizedTime * 24000.0f;
+
+        // 星星亮度（原版 ClientLevel.getStarBrightness）
+        float f = params.normalizedTime;
+        float f1 = 1.0F - (std::cos(f * 2.0f * (float)M_PI) * 2.0F + 0.25F);
+        f1 = std::clamp(f1, 0.0F, 1.0F);
+        params.starBrightness = f1 * f1 * 0.5F;
     }
-
     return params;
 }
-
 
 const char* SkyRenderer::getMoonPhasePath(int phase) {
     static const char* paths[] = {
