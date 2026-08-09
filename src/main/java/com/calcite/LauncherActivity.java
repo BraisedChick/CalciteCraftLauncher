@@ -123,9 +123,7 @@ public class LauncherActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        // 启动时轮转日志：保留最近两次
-        LogManager.rotateLogs(this);
-        // 启动 logcat 日志捕获（含启动器自身的 Java 日志）
+        // 启启动日志记录
         LogManager.startLogcatCapture(this);
         // 允许内容延伸到凹槽区域（须在 setContentView 前调用）
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {

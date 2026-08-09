@@ -28,6 +28,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
+import com.calcite.LogManager;
 import com.calcite.util.DohResolver;
 
 public class MainActivity extends Activity {
@@ -57,7 +58,6 @@ public class MainActivity extends Activity {
 
     private RendererSurfaceView rendererSurfaceView;
     private boolean libraryLoaded = false;
-    private Process logcatProcess;
 
     // 按键码常量（与 C++ 中的定义对应）
     private static final int KEY_W = 0;
@@ -95,9 +95,9 @@ public class MainActivity extends Activity {
         if (rendererType == null || rendererType.isEmpty()) rendererType = "opengl";
         loadLibraryForProtocol(protocolVersion);
 
-        // 启动 logcat 重定向到本地文件（捕获所有 C++/Java 日志）
-        startLogcatCapture();
-
+        if (!LogManager.isLogcatRunning()) {
+            LogManager.startLogcatCapture(this);
+        }
         android.util.Log.i("MainActivity", "========================================");
         android.util.Log.i("MainActivity", "onCreate started, protocol=" + protocolVersion
                 + ", renderer=" + rendererType);
@@ -226,10 +226,7 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             android.util.Log.e("MainActivity", "Exception in cleanupRenderer", e);
         }
-        if (logcatProcess != null) {
-            logcatProcess.destroy();
-            logcatProcess = null;
-        }
+        LogManager.stopLogcatCapture();
     }
 
     @Override
@@ -291,22 +288,6 @@ public class MainActivity extends Activity {
         return super.onKeyUp(keyCode, event);
     }
 
-    private void startLogcatCapture() {
-        // LauncherActivity 已在 onCreate 时启动日志捕获，此处跳过
-        if (com.calcite.LauncherActivity.getLogcatProcess() != null) {
-            android.util.Log.i("MainActivity", "Logcat already running from LauncherActivity");
-            return;
-        }
-        try {
-            String logPath = getExternalFilesDir(null).getAbsolutePath() + "/logs/client.log";
-            new java.io.File(logPath).getParentFile().mkdirs();
-            Runtime.getRuntime().exec(new String[]{"logcat", "-c"});
-            logcatProcess = Runtime.getRuntime().exec(new String[]{"logcat", "-f", logPath, "*:V"});
-            android.util.Log.i("MainActivity", "Logcat capture started: " + logPath);
-        } catch (Exception e) {
-            android.util.Log.e("MainActivity", "Failed to start logcat capture", e);
-        }
-    }
 
     private void enableImmersiveMode() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
