@@ -43,6 +43,7 @@ import com.calcite.auth.MicrosoftAuthService;
 import com.calcite.ui.MioButton;
 import com.calcite.ui.MioTextView;
 import com.calcite.util.DohResolver;
+import com.calcite.LogManager;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -103,12 +104,6 @@ public class LauncherActivity extends Activity {
     // 记录最近一次启动的协议版本，用于检测版本切换冲突
     private static int sLastLaunchedProtocol = 0;
 
-    private static Process sLogcatProcess;
-
-    static Process getLogcatProcess() {
-        return sLogcatProcess;
-    }
-
     private Handler heartbeatHandler = new Handler();
     private Runnable heartbeatTask = null;
 
@@ -129,9 +124,9 @@ public class LauncherActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         // 启动时轮转日志：保留最近两次
-        rotateLogs();
+        LogManager.rotateLogs(this);
         // 启动 logcat 日志捕获（含启动器自身的 Java 日志）
-        startLogcatCapture();
+        LogManager.startLogcatCapture(this);
         // 允许内容延伸到凹槽区域（须在 setContentView 前调用）
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             getWindow().setDecorFitsSystemWindows(false);
@@ -155,7 +150,7 @@ public class LauncherActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        stopLogcatCapture();
+        LogManager.stopLogcatCapture();
     }
 
     @Override
@@ -594,7 +589,7 @@ public class LauncherActivity extends Activity {
         authThread.start();
     }
 
-    // ===== Calcite 账号注册/登录 =====
+    // ===== Calcite启动器 账号注册/登录 =====
 
     private void showRegisterDialog() {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
@@ -1113,36 +1108,6 @@ public class LauncherActivity extends Activity {
         }
     }
 
-    /** 轮转日志：client.1.log → 删除, client.log → client.1.log */
-    private void rotateLogs() {
-        try {
-            java.io.File logsDir = new java.io.File(
-                getExternalFilesDir(null).getAbsolutePath() + "/logs/");
-            java.io.File logFile = new java.io.File(logsDir, "client.log");
-            java.io.File logBak = new java.io.File(logsDir, "client1.log");
-            if (logBak.exists()) logBak.delete();
-            if (logFile.exists()) logFile.renameTo(logBak);
-        } catch (Exception ignored) {}
-    }
-
-    private void startLogcatCapture() {
-        try {
-            String logPath = getExternalFilesDir(null).getAbsolutePath() + "/logs/client.log";
-            new java.io.File(logPath).getParentFile().mkdirs();
-            Runtime.getRuntime().exec(new String[]{"logcat", "-c"});
-            sLogcatProcess = Runtime.getRuntime().exec(new String[]{"logcat", "-f", logPath, "*:V"});
-            android.util.Log.i("LauncherActivity", "Logcat capture started: " + logPath);
-        } catch (Exception e) {
-            android.util.Log.e("LauncherActivity", "Failed to start logcat capture", e);
-        }
-    }
-
-    private void stopLogcatCapture() {
-        if (sLogcatProcess != null) {
-            sLogcatProcess.destroy();
-            sLogcatProcess = null;
-        }
-    }
 
     private void launchGame() {
 
