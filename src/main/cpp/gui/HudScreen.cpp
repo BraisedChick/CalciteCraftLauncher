@@ -12,8 +12,8 @@
 #include "ResourcepackManager.h"
 #include "BlockRegistry.h"
 #include "PlayerInventory.h"
-#include "EntityRenderer.h"
 #include "MinecraftVersion.h"
+#include "GLEntityRenderer.h"
 
 #include <chrono>
 #include <cmath>

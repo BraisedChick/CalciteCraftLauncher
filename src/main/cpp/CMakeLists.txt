@@ -101,7 +101,8 @@ set(APP_SOURCES
     Raycast.cpp
     Entity.cpp
     EntityManager.cpp
-    EntityRenderer.cpp
+    EntityModel.cpp
+    GLEntityRenderer.cpp
     3rdparty/miniz/miniz.c
     3rdparty/minivorbis/minivorbis.c
     ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/imgui/imgui.cpp

@@ -12,7 +12,7 @@ class GLRenderer;
 class VulkanRenderer;
 class ChunkMeshScheduler;
 class GameEngine;
-class EntityRenderer;
+class GLEntityRenderer;
 class TextureAtlas;
 class BlockRegistry;
 class MusicManager;
@@ -67,7 +67,7 @@ public:
     VulkanRenderer* getVulkanRenderer() { return m_vulkanRenderer.get(); }
 
     // ===== 实体渲染器（OpenGL 组件，全局生命周期） =====
-    EntityRenderer* getEntityRenderer() { return m_entityRenderer.get(); }
+    GLEntityRenderer* getEntityRenderer() { return m_entityRenderer.get(); }
 
     // ===== 纹理图集（全局生命周期） =====
     TextureAtlas* getTextureAtlas() { return m_textureAtlas.get(); }
@@ -98,7 +98,7 @@ private:
     std::unique_ptr<GLRenderer> m_renderer;
     std::unique_ptr<VulkanRenderer> m_vulkanRenderer;
     std::unique_ptr<ChunkMeshScheduler> m_meshScheduler;
-    std::unique_ptr<EntityRenderer> m_entityRenderer;
+    std::unique_ptr<GLEntityRenderer> m_entityRenderer;
     std::unique_ptr<TextureAtlas> m_textureAtlas;
     std::unique_ptr<BlockRegistry> m_blockRegistry;
     std::unique_ptr<GameEngine> m_gameEngine;

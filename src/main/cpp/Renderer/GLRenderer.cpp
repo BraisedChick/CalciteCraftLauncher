@@ -17,7 +17,7 @@
 #include "gui/GameUI.h"
 #include "ClientEngine/ClientEngine.h"
 #include "ClientEngine/GameEngine.h"
-#include "EntityRenderer.h"
+#include "GLEntityRenderer.h"
 #include "EntityManager.h"
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"

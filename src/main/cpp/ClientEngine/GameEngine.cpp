@@ -70,7 +70,7 @@
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundOpenScreenPacket.hpp"
 #include "Light.h"
 #include "EntityManager.h"
-#include "EntityRenderer.h"
+#include "GLEntityRenderer.h"
 #include "protocolCraft/Types/NBT/Tag.hpp"
 #include "protocolCraft/Utilities/Json.hpp"
 #include "3rdparty/json.hpp"

@@ -3,7 +3,7 @@
 #include "Renderer/GLRenderer.h"
 #include "Renderer/VulkanRenderer.h"
 #include "Renderer/ChunkMeshScheduler.h"
-#include "EntityRenderer.h"
+#include "GLEntityRenderer.h"
 #include "TextureAtlas.h"
 #include "BlockRegistry.h"
 #include "BiomeColorManager.h"
@@ -33,7 +33,7 @@ ClientEngine::ClientEngine() {
     m_meshScheduler = std::make_unique<ChunkMeshScheduler>();
     m_textureAtlas = std::make_unique<TextureAtlas>();
     m_blockRegistry = std::make_unique<BlockRegistry>();
-    m_entityRenderer = std::make_unique<EntityRenderer>();
+    m_entityRenderer = std::make_unique<GLEntityRenderer>();
     m_musicManager = std::make_unique<MusicManager>();
     m_musicManager->init();
 }
