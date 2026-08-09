@@ -13,7 +13,7 @@
 #include "CommonTypes.h"
 #include "PanoramaView.h"
 #include "ChunkOcclusionCuller.h"
-
+#include "VulkanSkyRenderer.h"
 // VMA 句柄前置声明（完整定义在 VulkanRenderer.cpp 随 VMA_IMPLEMENTATION 展开，
 // 与 vk_mem_alloc.h 内部的 VK_DEFINE_HANDLE 重复 typedef 同一类型，合法）
 VK_DEFINE_HANDLE(VmaAllocator)
@@ -70,6 +70,7 @@ private:
     // 与 GLRenderer 的 SectionRenderData 对位，但网格不独占 buffer：
     // 顶点/索引存于共享网格池（meshPool）块内区间，绘制用 firstIndex/vertexOffset 寻址，
     // 索引顺序 base | overlay | water 三段合并
+    std::unique_ptr<VulkanSkyRenderer> skyRenderer;
     struct ChunkSectionRenderData {
         int sectionY = 0;
         int poolBlock = -1;               // 所属网格池块下标
@@ -317,64 +318,5 @@ private:
     VkPipelineLayout panoramaPipelineLayout = VK_NULL_HANDLE;
     VkPipeline panoramaPipeline = VK_NULL_HANDLE;
 
-    // ===== 天空渲染资源（游戏内：天空圆盘 + 太阳 + 月亮 + 星星）=====
-    bool initSky();
-    void renderSky(VkCommandBuffer cmd, const glm::mat4& viewMatrix, const glm::mat4& projMatrix,
-                   float skyR, float skyG, float skyB, float timeOfDay, float starBrightness);
-    void destroySkyResources();
-    bool skyInitialized = false;
 
-    // 天空纯色管线（天空圆盘、太阳、月亮、星星共用）
-    VkPipelineLayout skyColorPipelineLayout = VK_NULL_HANDLE;
-    VkPipeline skyColorPipeline = VK_NULL_HANDLE;
-
-    // 天空圆盘 VBO（上半部分，TRIANGLE_FAN）
-    VkBuffer skyTopVertexBuffer = VK_NULL_HANDLE;
-    VmaAllocation skyTopVertexMemory = VK_NULL_HANDLE;
-    uint32_t skyTopVertexCount = 0;
-
-    // 太阳 VBO + EBO
-    VkBuffer skySunVertexBuffer = VK_NULL_HANDLE;
-    VmaAllocation skySunVertexMemory = VK_NULL_HANDLE;
-    VkBuffer skySunIndexBuffer = VK_NULL_HANDLE;
-    VmaAllocation skySunIndexMemory = VK_NULL_HANDLE;
-    uint32_t skySunIndexCount = 0;
-
-    // 月亮 VBO + EBO
-    VkBuffer skyMoonVertexBuffer = VK_NULL_HANDLE;
-    VmaAllocation skyMoonVertexMemory = VK_NULL_HANDLE;
-    VkBuffer skyMoonIndexBuffer = VK_NULL_HANDLE;
-    VmaAllocation skyMoonIndexMemory = VK_NULL_HANDLE;
-    uint32_t skyMoonIndexCount = 0;
-
-    // 星星 VBO + EBO（POSITION only，与太阳/月亮共用 skyColorPipeline）
-    VkBuffer skyStarsVertexBuffer = VK_NULL_HANDLE;
-    VmaAllocation skyStarsVertexMemory = VK_NULL_HANDLE;
-    VkBuffer skyStarsIndexBuffer = VK_NULL_HANDLE;
-    VmaAllocation skyStarsIndexMemory = VK_NULL_HANDLE;
-    uint32_t skyStarsIndexCount = 0;
-
-    // 纹理管线（太阳/月亮）
-    VkPipelineLayout skyTexturePipelineLayout = VK_NULL_HANDLE;
-    VkPipeline skyTexturePipeline = VK_NULL_HANDLE;
-
-// 纹理描述符
-    VkDescriptorSetLayout skyTextureSetLayout = VK_NULL_HANDLE;
-    VkDescriptorPool skyTextureDescriptorPool = VK_NULL_HANDLE;
-    VkDescriptorSet skyTextureDescriptorSet = VK_NULL_HANDLE;  // 共用，绘制前更新
-    VkSampler skyTextureSampler = VK_NULL_HANDLE;
-
-// 太阳纹理资源
-    VkImage sunTextureImage = VK_NULL_HANDLE;
-    VmaAllocation sunTextureMemory = VK_NULL_HANDLE;
-    VkImageView sunTextureView = VK_NULL_HANDLE;
-
-// 月亮纹理资源
-    VkImage moonTextureImage = VK_NULL_HANDLE;
-    VmaAllocation moonTextureMemory = VK_NULL_HANDLE;
-    VkImageView moonTextureView = VK_NULL_HANDLE;
-
-    uint32_t skySunVertexCount = 0;   // 实际顶点数（4）
-
-    uint32_t skyMoonVertexCount = 0;
 };

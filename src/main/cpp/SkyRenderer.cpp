@@ -224,7 +224,7 @@ float SkyRenderer::sunAngle(float timeOfDay) {
 
 // ===== 雨天透明度计算 =====
 float SkyRenderer::getCelestialAlpha(bool isMoon) {
-    // 直接使用 normalizedTime (0~1)
+
 
     if (isMoon) {//TODO:实现雨天太阳月亮透明度计算
         return 1.0f;

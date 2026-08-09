@@ -70,6 +70,7 @@ set(APP_SOURCES
     Renderer/GLRenderer.cpp
     Renderer/ChunkMeshScheduler.cpp
     Renderer/ChunkOcclusionCuller.cpp
+    Renderer/VulkanSkyRenderer.cpp
     Light.cpp
     MeshGenerator.cpp
     CrackOverlayMesh.cpp
