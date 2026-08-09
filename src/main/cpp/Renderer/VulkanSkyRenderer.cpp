@@ -276,25 +276,24 @@ bool VulkanSkyRenderer::init() {
     skyDescriptorSetSun = sets[0];
     for (int i = 0; i < 8; ++i) skyDescriptorSetMoon[i] = sets[1 + i];
 
-// 7. 填充所有描述符集（初始化一次，永不改变）
-    auto writeSet = [&](VkDescriptorSet set, VkImageView view) {
-        VkDescriptorImageInfo info{ skyTextureSampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-        VkWriteDescriptorSet write{};
-        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        write.dstSet = set;
-        write.dstBinding = 0;
-        write.descriptorCount = 1;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        write.pImageInfo = &info;
-        return write;
-    };
+// 7. 填充所有描述符集（保证 pImageInfo 存活到 vkUpdateDescriptorSets 结束）
+    VkDescriptorImageInfo imageInfos[9];
+    imageInfos[0] = { skyTextureSampler, sunTextureView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    for (int i = 0; i < 8; ++i) {
+        imageInfos[1 + i] = { skyTextureSampler, moonTextureViews[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    }
 
     VkWriteDescriptorSet writes[9];
-    writes[0] = writeSet(skyDescriptorSetSun, sunTextureView);
-    for (int i = 0; i < 8; ++i) {
-        writes[1 + i] = writeSet(skyDescriptorSetMoon[i], moonTextureViews[i]);
+    for (int i = 0; i < 9; ++i) {
+        writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstSet = (i == 0) ? skyDescriptorSetSun : skyDescriptorSetMoon[i - 1];
+        writes[i].dstBinding = 0;
+        writes[i].descriptorCount = 1;
+        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[i].pImageInfo = &imageInfos[i];
     }
     vkUpdateDescriptorSets(device, 9, writes, 0, nullptr);
+
     // 7. 编译着色器
     auto vertCode = readFile("shaders/sky_color_vert.spv");
     auto fragCode = readFile("shaders/sky_color_frag.spv");
