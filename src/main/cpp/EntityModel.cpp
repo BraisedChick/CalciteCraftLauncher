@@ -77,10 +77,10 @@ EntityModel EntityModel::buildHumanoid() {
 
     model.buildBox(-4, 24, -4, 8, 8, 8, 0, 0, TW, TH);          // Head
     model.buildBox(-4, 12, -2, 8, 12, 4, 16, 16, TW, TH);       // Body
-    model.buildBox(-8, 12, -2, 4, 12, 4, 40, 16, TW, TH);       // Right Arm
-    model.buildBox(4, 12, -2, 4, 12, 4, 32, 48, TW, TH);        // Left Arm
-    model.buildBox(-4, 0, -2, 4, 12, 4, 0, 16, TW, TH);         // Right Leg
-    model.buildBox(0, 0, -2, 4, 12, 4, 16, 48, TW, TH);         // Left Leg
+    model.buildBox(-8, 12, -2, 4, 12, 4, 40, 16, TW, TH);       // Right Arm  (40,16)
+    model.buildBox(4, 12, -2, 4, 12, 4, 40, 16, TW, TH);        // Left Arm   (40,16)  ← 和右臂相同 UV
+    model.buildBox(-4, 0, -2, 4, 12, 4, 0, 16, TW, TH);         // Right Leg  (0,16)
+    model.buildBox(0, 0, -2, 4, 12, 4, 0, 16, TW, TH);          // Left Leg   (0,16)   ← 和右腿相同 UV
 
     model.setupDefaultLayout();
     return model;
