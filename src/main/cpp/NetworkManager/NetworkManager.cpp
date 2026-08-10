@@ -254,6 +254,7 @@ void NetworkManager::registerHandlers() {
     reg(0x62, &NetworkManager::handleEntity);
     reg(0x3A, &NetworkManager::handleEntity);
     reg(0x4F, &NetworkManager::handleEntity);
+    reg(0x3E, &NetworkManager::handleEntity);
     reg(0x2E, &NetworkManager::handleInventory);
     reg(0x13, &NetworkManager::handleInventory);
     reg(0x0F, &NetworkManager::handleChat);
@@ -287,6 +288,7 @@ void NetworkManager::registerHandlers() {
     reg(0x68, &NetworkManager::handleEntity);
     reg(0x3E, &NetworkManager::handleEntity);
     reg(0x54, &NetworkManager::handleEntity);
+    reg(0x41, &NetworkManager::handleEntity);
     reg(0x30, &NetworkManager::handleInventory);
     reg(0x11, &NetworkManager::handleInventory);
     reg(0x63, &NetworkManager::handleChat);

@@ -53,13 +53,11 @@ void EntityManager::moveEntityRot(int entityId, short dx, short dy, short dz, fl
     auto& e = it->second;
     e.prevX = e.x; e.prevY = e.y; e.prevZ = e.z;
     e.prevYaw = e.yaw;
-    e.prevHeadYaw = e.headYaw;
     e.x += dx / 4096.0;
     e.y += dy / 4096.0;
     e.z += dz / 4096.0;
     e.yaw = yaw;
     e.pitch = pitch;
-    e.headYaw = yaw;
 }
 
 void EntityManager::rotateEntity(int entityId, float yaw, float pitch) {
@@ -68,10 +66,8 @@ void EntityManager::rotateEntity(int entityId, float yaw, float pitch) {
     if (it == entities.end()) return;
     auto& e = it->second;
     e.prevYaw = e.yaw;
-    e.prevHeadYaw = e.headYaw;
     e.yaw = yaw;
     e.pitch = pitch;
-    e.headYaw = yaw;
 }
 
 void EntityManager::teleportEntity(int entityId, double x, double y, double z, float yaw, float pitch) {
@@ -81,11 +77,9 @@ void EntityManager::teleportEntity(int entityId, double x, double y, double z, f
     auto& e = it->second;
     e.prevX = e.x; e.prevY = e.y; e.prevZ = e.z;
     e.prevYaw = e.yaw;
-    e.prevHeadYaw = e.headYaw;
     e.x = x; e.y = y; e.z = z;
     e.yaw = yaw;
     e.pitch = pitch;
-    e.headYaw = yaw;
 }
 
 void EntityManager::setEntityMotion(int entityId, short vx, short vy, short vz) {

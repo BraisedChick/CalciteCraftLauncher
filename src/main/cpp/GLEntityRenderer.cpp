@@ -286,7 +286,6 @@ void GLEntityRenderer::renderHumanoid(const glm::mat4& vp, const glm::mat4& base
     glBindVertexArray(res.vao);
 
     const auto& parts = model.getParts();
-    LOGI("renderHumanoid: parts count = %zu", parts.size());
 
     if (parts.empty()) {
         glm::mat4 mvp = vp * baseModelMatrix;
@@ -296,17 +295,9 @@ void GLEntityRenderer::renderHumanoid(const glm::mat4& vp, const glm::mat4& base
     }
 
     for (const auto& part : parts) {
-        // 打印部件详细信息
-        LOGI("Part: %s, start=%d, count=%d, pivot=(%f,%f,%f)",
-             part.name.c_str(), part.startVertex, part.vertexCount,
-             part.pivot.x, part.pivot.y, part.pivot.z);
-
-        // 检查部件范围是否有效
         if (part.startVertex < 0 || part.vertexCount <= 0 ||
             part.startVertex + part.vertexCount > res.vertexCount) {
-            LOGE("Invalid part: %s (start=%d, count=%d, total=%d)",
-                 part.name.c_str(), part.startVertex, part.vertexCount, res.vertexCount);
-            continue;
+            continue; // 静默跳过无效部件
         }
 
         glm::mat4 finalModel = baseModelMatrix;
@@ -322,10 +313,6 @@ void GLEntityRenderer::renderHumanoid(const glm::mat4& vp, const glm::mat4& base
 
         glm::mat4 mvp = vp * finalModel;
         glUniformMatrix4fv(m_uMVP, 1, GL_FALSE, &mvp[0][0]);
-
-        // 打印最终模型矩阵的位置分量（用于调试）
-        glm::vec3 pos = glm::vec3(finalModel[3]);
-        LOGI("Final position for %s: (%f, %f, %f)", part.name.c_str(), pos.x, pos.y, pos.z);
 
         glDrawArrays(GL_TRIANGLES, part.startVertex, part.vertexCount);
     }

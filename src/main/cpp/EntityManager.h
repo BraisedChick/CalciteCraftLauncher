@@ -24,6 +24,9 @@ public:
     // 传送（绝对位置）
     void teleportEntity(int entityId, double x, double y, double z, float yaw, float pitch);
 
+    // 设置头部偏航（独立于身体旋转）
+    void setHeadYaw(int entityId, float headYaw);
+
     // 设置实体速度
     void setEntityMotion(int entityId, short vx, short vy, short vz);
 

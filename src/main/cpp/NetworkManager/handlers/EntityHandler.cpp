@@ -13,6 +13,7 @@
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundTeleportEntityPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundRemoveEntitiesPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundSetEntityMotionPacket.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundRotateHeadPacket.hpp"
 
 void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data, size_t startPos) {
     switch (packetId) {
@@ -198,7 +199,22 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
                 pkt.GetEntityId(), pkt.GetXA(), pkt.GetYA(), pkt.GetZA());
             break;
         }
-
+#if PROTOCOL_VERSION < 762
+        case 0x3E:   // 1.18.2 ClientboundRotateHeadPacket
+#else
+        case 0x41:   // 1.19.4+ ClientboundRotateHeadPacket
+#endif
+        {
+            ProtocolCraft::ClientboundRotateHeadPacket pkt;
+            std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+            auto iter = pktData.cbegin();
+            size_t len = pktData.size();
+            pkt.Read(iter, len);
+            int entityId = pkt.GetEntityId();
+            float headYaw = pkt.GetYHeadRot() * 360.0f / 256.0f;
+            m_engine->getEntityManager()->setHeadYaw(entityId, headYaw);
+            break;
+        }
         default:
             break;
     }
