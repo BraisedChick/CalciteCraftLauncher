@@ -70,22 +70,49 @@ void EntityModel::buildBox(float ox, float oy, float oz,
     addFace(p1, p5, p6, p2, u + d + w, v + d, d, h, texW, texH); // Right
 }
 
+void EntityModel::addPart(const std::string& name, int startVertex, int vertexCount, const glm::vec3& pivot) {
+    // 存储时转为块单位（1px = 1/16 block）
+    m_parts.push_back({name, startVertex, vertexCount, pivot / 16.0f});
+}
+
 // ---------- 各个模型的构建函数 ----------
 EntityModel EntityModel::buildHumanoid() {
     EntityModel model;
     const float TW = 64.0f, TH = 64.0f;
 
-    model.buildBox(-4, 24, -4, 8, 8, 8, 0, 0, TW, TH);          // Head
-    model.buildBox(-4, 12, -2, 8, 12, 4, 16, 16, TW, TH);       // Body
-    model.buildBox(-8, 12, -2, 4, 12, 4, 40, 16, TW, TH);       // Right Arm  (40,16)
-    model.buildBox(4, 12, -2, 4, 12, 4, 40, 16, TW, TH);        // Left Arm   (40,16)  ← 和右臂相同 UV
-    model.buildBox(-4, 0, -2, 4, 12, 4, 0, 16, TW, TH);         // Right Leg  (0,16)
-    model.buildBox(0, 0, -2, 4, 12, 4, 0, 16, TW, TH);          // Left Leg   (0,16)   ← 和右腿相同 UV
+    // 使用 helper lambda 简化
+    auto addBoxPart = [&](const std::string& name,
+                          float ox, float oy, float oz,
+                          float w, float h, float d,
+                          float u, float v,
+                          const glm::vec3& pivot) {
+        int startVertex = (int)model.m_vertices.size() / 5;  // 当前顶点数（总 float / 5）
+        model.buildBox(ox, oy, oz, w, h, d, u, v, TW, TH);
+        int vertexCount = (int)model.m_vertices.size() / 5 - startVertex;
+        model.addPart(name, startVertex, vertexCount, pivot);
+    };
+
+    // Head
+    addBoxPart("head", -4, 24, -4, 8, 8, 8, 0, 0, glm::vec3(0, 24, 0));
+
+    // Body
+    addBoxPart("body", -4, 12, -2, 8, 12, 4, 16, 16, glm::vec3(0, 12, 0));
+
+    // Right Arm
+    addBoxPart("right_arm", -8, 12, -2, 4, 12, 4, 40, 16, glm::vec3(-5, 18, 0));
+
+    // Left Arm
+    addBoxPart("left_arm", 4, 12, -2, 4, 12, 4, 40, 16, glm::vec3(5, 18, 0));
+
+    // Right Leg
+    addBoxPart("right_leg", -4, 0, -2, 4, 12, 4, 0, 16, glm::vec3(-2, 12, 0));
+
+    // Left Leg
+    addBoxPart("left_leg", 0, 0, -2, 4, 12, 4, 0, 16, glm::vec3(2, 12, 0));
 
     model.setupDefaultLayout();
     return model;
 }
-
 EntityModel EntityModel::buildQuadruped() {
     EntityModel model;
     const float QW = 64.0f, QH = 32.0f;

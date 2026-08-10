@@ -52,7 +52,8 @@ private:
     const GLModelResource& getModelResource(const EntityModel& model);
 
     // 渲染不同类型的实体（调用对应的模型绘制）
-    void renderHumanoid(float bodyYaw, float headYaw, float headPitch);
+    void renderHumanoid(const glm::mat4& vp, const glm::mat4& baseModelMatrix,
+                        float headYawOffset, float headPitch);
     void renderQuadruped(const EntityModel& model, float bodyYaw, float headYaw, float headPitch);
     void renderSpider(float bodyYaw, float headYaw);
     void renderCreeper();

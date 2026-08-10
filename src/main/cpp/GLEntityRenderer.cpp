@@ -1,5 +1,5 @@
 #include "GLEntityRenderer.h"
-#include "TextureLoader.h"          // 你的 PNG 加载工具
+#include "TextureLoader.h"
 #include <android/log.h>
 #include <cmath>
 #include <chrono>
@@ -63,10 +63,8 @@ static GLuint compileShader(GLenum type, const char* src) {
 bool GLEntityRenderer::init() {
     if (m_initialized) return true;
 
-    // 确保模型数据已构建
     EntityModel::initializeAll();
 
-    // 编译着色器
     GLuint vs = compileShader(GL_VERTEX_SHADER, entityVertSrc);
     GLuint fs = compileShader(GL_FRAGMENT_SHADER, entityFragSrc);
     if (!vs || !fs) {
@@ -97,7 +95,6 @@ bool GLEntityRenderer::init() {
     m_uHasTexture = glGetUniformLocation(m_shaderProgram, "uHasTexture");
     m_uColor = glGetUniformLocation(m_shaderProgram, "uColor");
 
-    // 创建 dummy VAO（实际渲染时每个模型有自己的 VAO）
     glGenVertexArrays(1, &m_dummyVao);
 
     m_initialized = true;
@@ -111,7 +108,6 @@ void GLEntityRenderer::cleanup() {
         glDeleteProgram(m_shaderProgram);
         m_shaderProgram = 0;
     }
-    // 删除所有模型的 GPU 资源
     for (auto& pair : m_modelCache) {
         const auto& res = pair.second;
         if (res.vao) glDeleteVertexArrays(1, &res.vao);
@@ -136,7 +132,7 @@ void GLEntityRenderer::clearTextureCache() {
     m_textureCache.clear();
 }
 
-// ===== 纹理加载（同原有逻辑） =====
+// ===== 纹理加载 =====
 GLuint GLEntityRenderer::getEntityTexture(const Entity& entity) {
     std::string key = entity.getTypeName();
     auto it = m_textureCache.find(key);
@@ -206,7 +202,7 @@ GLuint GLEntityRenderer::getEntityTexture(const Entity& entity) {
     }
 
     std::string filename = texPath + ".png";
-    TextureData tex = TextureLoader::loadPNG(filename); // 假设内部加 "textures/" 前缀
+    TextureData tex = TextureLoader::loadPNG(filename);
 
     GLuint glTex = 0;
     if (tex.data && tex.width > 0 && tex.height > 0) {
@@ -243,7 +239,6 @@ const GLEntityRenderer::GLModelResource& GLEntityRenderer::getModelResource(cons
     glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float),
                  vertices.data(), GL_STATIC_DRAW);
 
-    // 设置顶点属性
     for (const auto& attr : layout.attributes) {
         GLenum type;
         switch (attr.type) {
@@ -258,7 +253,6 @@ const GLEntityRenderer::GLModelResource& GLEntityRenderer::getModelResource(cons
                               layout.stride, (void*)(uintptr_t)attr.offset);
     }
 
-    // 索引缓冲（如果有）
     if (!indices.empty()) {
         glGenBuffers(1, &res.ibo);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, res.ibo);
@@ -282,19 +276,62 @@ const GLEntityRenderer::GLModelResource& GLEntityRenderer::getModelResource(cons
     return m_modelCache[&model];
 }
 
-// ===== 绘制函数（不再上传顶点） =====
-void GLEntityRenderer::renderHumanoid(float bodyYaw, float headYaw, float headPitch) {
-    (void)bodyYaw; (void)headYaw; (void)headPitch;
+// =========================================================================
+// 新的 renderHumanoid：部件独立绘制，支持头部独立旋转
+// =========================================================================
+void GLEntityRenderer::renderHumanoid(const glm::mat4& vp, const glm::mat4& baseModelMatrix,
+                                      float headYawOffset, float headPitch) {
     const auto& model = EntityModel::getHumanoid();
     const auto& res = getModelResource(model);
     glBindVertexArray(res.vao);
-    if (res.hasIndices) {
-        glDrawElements(GL_TRIANGLES, res.indexCount, GL_UNSIGNED_INT, 0);
-    } else {
+
+    const auto& parts = model.getParts();
+    LOGI("renderHumanoid: parts count = %zu", parts.size());
+
+    if (parts.empty()) {
+        glm::mat4 mvp = vp * baseModelMatrix;
+        glUniformMatrix4fv(m_uMVP, 1, GL_FALSE, &mvp[0][0]);
         glDrawArrays(GL_TRIANGLES, 0, res.vertexCount);
+        return;
+    }
+
+    for (const auto& part : parts) {
+        // 打印部件详细信息
+        LOGI("Part: %s, start=%d, count=%d, pivot=(%f,%f,%f)",
+             part.name.c_str(), part.startVertex, part.vertexCount,
+             part.pivot.x, part.pivot.y, part.pivot.z);
+
+        // 检查部件范围是否有效
+        if (part.startVertex < 0 || part.vertexCount <= 0 ||
+            part.startVertex + part.vertexCount > res.vertexCount) {
+            LOGE("Invalid part: %s (start=%d, count=%d, total=%d)",
+                 part.name.c_str(), part.startVertex, part.vertexCount, res.vertexCount);
+            continue;
+        }
+
+        glm::mat4 finalModel = baseModelMatrix;
+        finalModel = glm::translate(finalModel, part.pivot);
+
+        if (part.name == "head") {
+            finalModel = glm::rotate(finalModel, glm::radians(-headPitch), glm::vec3(1, 0, 0));
+            finalModel = glm::rotate(finalModel, glm::radians(headYawOffset), glm::vec3(0, 1, 0));
+        }
+        // 未来可加手臂/腿的摆动
+
+        finalModel = glm::translate(finalModel, -part.pivot);
+
+        glm::mat4 mvp = vp * finalModel;
+        glUniformMatrix4fv(m_uMVP, 1, GL_FALSE, &mvp[0][0]);
+
+        // 打印最终模型矩阵的位置分量（用于调试）
+        glm::vec3 pos = glm::vec3(finalModel[3]);
+        LOGI("Final position for %s: (%f, %f, %f)", part.name.c_str(), pos.x, pos.y, pos.z);
+
+        glDrawArrays(GL_TRIANGLES, part.startVertex, part.vertexCount);
     }
 }
 
+// ===== 其他绘制函数（整体绘制，用于非人形实体） =====
 void GLEntityRenderer::renderQuadruped(const EntityModel& model, float bodyYaw, float headYaw, float headPitch) {
     (void)bodyYaw; (void)headYaw; (void)headPitch;
     const auto& res = getModelResource(model);
@@ -350,7 +387,7 @@ void GLEntityRenderer::renderAll(const std::vector<Entity>& entities,
 
     glUseProgram(m_shaderProgram);
     glEnable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);   // MC 风格双面渲染
+    glDisable(GL_CULL_FACE);
 
     glm::mat4 vp = proj * view;
 
@@ -380,7 +417,7 @@ void GLEntityRenderer::renderAll(const std::vector<Entity>& entities,
         float iy = (float)(entity.prevY + (entity.y - entity.prevY) * partialTick);
         float iz = (float)(entity.prevZ + (entity.z - entity.prevZ) * partialTick);
 
-        // 视锥剔除（包围球半径 2.0，可考虑按模型调整）
+        // 视锥剔除
         bool visible = true;
         for (const auto& p : planes) {
             if (p.a*ix + p.b*iy + p.c*iz + p.d < -2.0f) {
@@ -434,22 +471,22 @@ void GLEntityRenderer::renderAll(const std::vector<Entity>& entities,
         float iyaw = entity.prevYaw + (entity.yaw - entity.prevYaw) * partialTick;
         float iheadYaw = entity.prevHeadYaw + (entity.headYaw - entity.prevHeadYaw) * partialTick;
 
-        // 构建模型矩阵
-        glm::mat4 modelMatrix;
+        // ===== 构建世界空间基础矩阵 =====
+        glm::mat4 baseModelMatrix;
         if (entity.type == EntityType::ITEM) {
             static auto startTime = std::chrono::steady_clock::now();
             float time = std::chrono::duration<float>(std::chrono::steady_clock::now() - startTime).count();
             float spinAngle = time * 90.0f;
-            modelMatrix = glm::translate(vp, glm::vec3(ix, iy + 0.25f, iz));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians(spinAngle), glm::vec3(0, 1, 0));
+            baseModelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(ix, iy + 0.25f, iz));
+            baseModelMatrix = glm::rotate(baseModelMatrix, glm::radians(spinAngle), glm::vec3(0, 1, 0));
         } else {
-            modelMatrix = glm::translate(vp, glm::vec3(ix, iy, iz));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians(-iyaw + 180.0f), glm::vec3(0, 1, 0));
+            baseModelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(ix, iy, iz));
+            baseModelMatrix = glm::rotate(baseModelMatrix, glm::radians(-iyaw + 180.0f), glm::vec3(0, 1, 0));
         }
-        glUniformMatrix4fv(m_uMVP, 1, GL_FALSE, &modelMatrix[0][0]);
 
-        // 分发渲染
+        // ===== 分发渲染 =====
         switch (entity.type) {
+            // 人形实体（使用部件绘制，头部独立旋转）
             case EntityType::ZOMBIE:
             case EntityType::ZOMBIE_VILLAGER:
             case EntityType::SKELETON:
@@ -459,61 +496,82 @@ void GLEntityRenderer::renderAll(const std::vector<Entity>& entities,
             case EntityType::PIGLIN:
             case EntityType::IRON_GOLEM:
             case EntityType::BLAZE:
-                renderHumanoid(iyaw, iheadYaw, entity.pitch);
+                renderHumanoid(vp, baseModelMatrix, iheadYaw - iyaw, entity.pitch);
                 break;
 
+                // 物品（整体绘制，带旋转）
+            case EntityType::ITEM: {
+                glm::mat4 mvp = vp * baseModelMatrix;
+                glUniformMatrix4fv(m_uMVP, 1, GL_FALSE, &mvp[0][0]);
+                renderItem();
+                break;
+            }
+
+                // 四足动物（整体绘制）
             case EntityType::PIG:
             case EntityType::CHICKEN:
             case EntityType::HORSE:
             case EntityType::WOLF:
-            case EntityType::CAT:
+            case EntityType::CAT: {
+                glm::mat4 mvp = vp * baseModelMatrix;
+                glUniformMatrix4fv(m_uMVP, 1, GL_FALSE, &mvp[0][0]);
                 renderQuadruped(EntityModel::getQuadruped(), iyaw, iheadYaw, entity.pitch);
                 break;
+            }
 
             case EntityType::COW:
-            case EntityType::SHEEP:
+            case EntityType::SHEEP: {
+                glm::mat4 mvp = vp * baseModelMatrix;
+                glUniformMatrix4fv(m_uMVP, 1, GL_FALSE, &mvp[0][0]);
                 renderQuadruped(EntityModel::getCow(), iyaw, iheadYaw, entity.pitch);
                 break;
+            }
 
-            case EntityType::SPIDER:
+            case EntityType::SPIDER: {
+                glm::mat4 mvp = vp * baseModelMatrix;
+                glUniformMatrix4fv(m_uMVP, 1, GL_FALSE, &mvp[0][0]);
                 renderSpider(iyaw, iheadYaw);
                 break;
+            }
 
-            case EntityType::CREEPER:
+            case EntityType::CREEPER: {
+                glm::mat4 mvp = vp * baseModelMatrix;
+                glUniformMatrix4fv(m_uMVP, 1, GL_FALSE, &mvp[0][0]);
                 renderCreeper();
                 break;
+            }
 
-            case EntityType::SLIME:
+            case EntityType::SLIME: {
+                glm::mat4 mvp = vp * baseModelMatrix;
+                glUniformMatrix4fv(m_uMVP, 1, GL_FALSE, &mvp[0][0]);
                 renderSlime();
                 break;
+            }
 
-            case EntityType::GHAST:
+            case EntityType::GHAST: {
+                glm::mat4 mvp = vp * baseModelMatrix;
+                glUniformMatrix4fv(m_uMVP, 1, GL_FALSE, &mvp[0][0]);
                 renderGhast();
                 break;
+            }
 
-            case EntityType::ITEM:
-                renderItem();
-                break;
-
+                // 无模型实体，跳过
             case EntityType::ARROW:
             case EntityType::EXPERIENCE_ORB:
             case EntityType::FALLING_BLOCK:
             case EntityType::TNT:
             case EntityType::BOAT:
             case EntityType::MINECART:
-                // 无模型，跳过
                 break;
 
+                // 未知类型不渲染
             default:
-                // 未知类型回退人形
-                renderHumanoid(iyaw, iheadYaw, entity.pitch);
                 break;
         }
 
         m_renderedCount++;
     }
 
-    // 清理状态
     glUseProgram(0);
     glBindVertexArray(0);
     glEnable(GL_CULL_FACE);

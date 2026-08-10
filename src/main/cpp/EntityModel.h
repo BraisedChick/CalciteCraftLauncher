@@ -11,7 +11,6 @@ enum class VertexComponentType : uint8_t {
     UINT16,
     // 可按需扩展
 };
-
 // 单个顶点属性描述
 struct VertexAttribute {
     uint32_t location;      // shader location (OpenGL attrib index / Vulkan location)
@@ -30,6 +29,16 @@ struct VertexLayout {
 // ===== 纯数据模型，不依赖任何图形 API =====
 class EntityModel {
 public:
+    struct ModelPart {
+        std::string name;
+        int startVertex;       // 在 m_vertices 中的起始顶点索引
+        int vertexCount;       // 顶点数量
+        glm::vec3 pivot;       // 旋转轴心（相对于实体脚底）
+    };
+
+    // 获取部件列表（只读）
+    const std::vector<ModelPart>& getParts() const { return m_parts; }
+
     // 获取原始顶点数据（交错的 x,y,z,u,v，全部 float）
     const std::vector<float>& getVertices() const { return m_vertices; }
 
@@ -68,6 +77,10 @@ private:
     static EntityModel buildSlime();
     static EntityModel buildGhast();
     static EntityModel buildItem();
+    // 添加部件（内部使用）
+    void addPart(const std::string& name, int startVertex, int vertexCount, const glm::vec3& pivot);
+
+    std::vector<ModelPart> m_parts;   // 部件数据
 
     // ===== 几何构建辅助（成员函数，直接填充 m_vertices） =====
     void addFace(const glm::vec3& p0, const glm::vec3& p1,
