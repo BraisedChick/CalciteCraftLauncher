@@ -8,15 +8,13 @@
 void EntityManager::addEntity(const Entity& entity) {
     std::lock_guard<std::mutex> lock(mutex);
     entities[entity.entityId] = entity;
-    // 初始化插值位置
     auto& e = entities[entity.entityId];
     e.prevX = e.x;
     e.prevY = e.y;
     e.prevZ = e.z;
     e.prevYaw = e.yaw;
     e.prevHeadYaw = e.headYaw;
-    LOGI("Entity added: id=%d type=%d (%s) at (%.1f, %.1f, %.1f)",
-         e.entityId, (int)e.type, e.getTypeName(), e.x, e.y, e.z);
+    e.targetHeadYaw = e.headYaw;
 }
 
 void EntityManager::removeEntity(int entityId) {
@@ -56,7 +54,6 @@ void EntityManager::moveEntityRot(int entityId, short dx, short dy, short dz, fl
     e.x += dx / 4096.0;
     e.y += dy / 4096.0;
     e.z += dz / 4096.0;
-    e.yaw = yaw;
     e.pitch = pitch;
 }
 
@@ -66,7 +63,6 @@ void EntityManager::rotateEntity(int entityId, float yaw, float pitch) {
     if (it == entities.end()) return;
     auto& e = it->second;
     e.prevYaw = e.yaw;
-    e.yaw = yaw;
     e.pitch = pitch;
 }
 
@@ -78,7 +74,6 @@ void EntityManager::teleportEntity(int entityId, double x, double y, double z, f
     e.prevX = e.x; e.prevY = e.y; e.prevZ = e.z;
     e.prevYaw = e.yaw;
     e.x = x; e.y = y; e.z = z;
-    e.yaw = yaw;
     e.pitch = pitch;
 }
 
@@ -122,12 +117,75 @@ bool EntityManager::getEntity(int entityId, Entity& out) const {
     return true;
 }
 
+void EntityManager::setHeadYaw(int entityId, float headYaw) {
+    std::lock_guard<std::mutex> lock(mutex);
+    auto it = entities.find(entityId);
+    if (it == entities.end()) return;
+    auto& e = it->second;
+    e.targetHeadYaw = headYaw;
+}
+
 size_t EntityManager::getEntityCount() const {
     std::lock_guard<std::mutex> lock(mutex);
     return entities.size();
 }
 
 void EntityManager::tick(float partialTick) {
-    // 预留：可在此做客户端预测（重力、碰撞等）
-    // 目前渲染时直接做 prevX→X 的插值
+    std::lock_guard<std::mutex> lock(mutex);
+    for (auto& [id, e] : entities) {
+        // 非玩家实体直接使用目标值（无限制）
+        if (e.type != EntityType::PLAYER) {
+            e.yaw = e.targetHeadYaw;
+            e.headYaw = e.targetHeadYaw;
+            e.prevYaw = e.yaw;
+            e.prevHeadYaw = e.headYaw;
+            continue;
+        }
+
+        // ---- 玩家逻辑 ----
+        // 1. 计算移动量，决定身体基础目标方向 baseYaw
+        float dx = (float)(e.x - e.prevX);
+        float dz = (float)(e.z - e.prevZ);
+        float distSq = dx * dx + dz * dz;
+        e.prevX = e.x; e.prevY = e.y; e.prevZ = e.z;
+
+        float baseYaw = e.yaw;
+        if (distSq > 0.0025000002f) {
+            float f4 = atan2f(dz, dx) * 180.0f / M_PI - 90.0f;
+            float yawDiff = e.targetHeadYaw - f4;
+            yawDiff = fmodf(yawDiff, 360.0f);
+            if (yawDiff > 180.0f) yawDiff -= 360.0f;
+            if (yawDiff < -180.0f) yawDiff += 360.0f;
+            if (fabsf(yawDiff) > 95.0f && fabsf(yawDiff) < 265.0f)
+                baseYaw = f4 - 180.0f;
+            else
+                baseYaw = f4;
+        }
+
+        // 2. 身体延迟跟随（每 tick 向 baseYaw 靠近 30%）
+        float bodyDiff = baseYaw - e.yaw;
+        bodyDiff = fmodf(bodyDiff, 360.0f);
+        if (bodyDiff > 180.0f) bodyDiff -= 360.0f;
+        if (bodyDiff < -180.0f) bodyDiff += 360.0f;
+        e.yaw += bodyDiff * 0.3f;
+
+        // 3. 头部偏移限制（玩家专用：最大 45 度）
+        float headOffset = e.targetHeadYaw - e.yaw;
+        headOffset = fmodf(headOffset, 360.0f);
+        if (headOffset > 180.0f) headOffset -= 360.0f;
+        if (headOffset < -180.0f) headOffset += 360.0f;
+        const float MAX_HEAD_ANGLE_PLAYER = 45.0f; // 玩家最大偏转 45°
+        if (headOffset > MAX_HEAD_ANGLE_PLAYER) {
+            e.yaw = e.targetHeadYaw - MAX_HEAD_ANGLE_PLAYER;
+        } else if (headOffset < -MAX_HEAD_ANGLE_PLAYER) {
+            e.yaw = e.targetHeadYaw + MAX_HEAD_ANGLE_PLAYER;
+        }
+
+        // 头部最终角度直接等于目标值（因为身体已被调整）
+        e.headYaw = e.targetHeadYaw;
+
+        // 更新 prev 值（用于渲染插值）
+        e.prevYaw = e.yaw;
+        e.prevHeadYaw = e.headYaw;
+    }
 }

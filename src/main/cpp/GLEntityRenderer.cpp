@@ -305,7 +305,7 @@ void GLEntityRenderer::renderHumanoid(const glm::mat4& vp, const glm::mat4& base
 
         if (part.name == "head") {
             finalModel = glm::rotate(finalModel, glm::radians(-headPitch), glm::vec3(1, 0, 0));
-            finalModel = glm::rotate(finalModel, glm::radians(headYawOffset), glm::vec3(0, 1, 0));
+            finalModel = glm::rotate(finalModel, glm::radians(-headYawOffset), glm::vec3(0, 1, 0));
         }
         // 未来可加手臂/腿的摆动
 

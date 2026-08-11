@@ -82,7 +82,7 @@ void Collision::update(float deltaTime, float camPitch, float camYaw, glm::vec3*
             return;
         }
     }
-
+    ClientEngine::getInstance()->getGame()->getEntityManager()->tick(1);
     // 固定时间步长累积器（20 ticks/s）
     accumulatedTime += deltaTime;
     if (accumulatedTime >= TICK_DURATION) {

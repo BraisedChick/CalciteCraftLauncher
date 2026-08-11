@@ -148,6 +148,7 @@ struct Entity {
     bool removed = false;
 
     std::string uuid;
+    float targetHeadYaw = 0.0f;
 
     const char* getTypeName() const;
 };
