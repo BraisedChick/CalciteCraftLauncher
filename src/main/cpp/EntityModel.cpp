@@ -205,17 +205,25 @@ EntityModel EntityModel::buildCreeper() {
     EntityModel model;
     const float QW = 64.0f, QH = 32.0f;
 
+    // ---- 腿（底部，Y=0~6） ----
+    // 右后腿：Z=2（后腿）
+    model.buildBox(-4, 0, 2, 4, 6, 4, 0, 16, QW, QH);
+    // 左后腿：Z=2
+    model.buildBox(0, 0, 2, 4, 6, 4, 0, 16, QW, QH);
+    // 右前腿：Z=-6（前腿）
+    model.buildBox(-4, 0, -6, 4, 6, 4, 0, 16, QW, QH);
+    // 左前腿：Z=-6
+    model.buildBox(0, 0, -6, 4, 6, 4, 0, 16, QW, QH);
+
+    // ---- 身体（中间，Y=6~18） ----
+    model.buildBox(-4, 6, -2, 8, 12, 4, 16, 16, QW, QH);
+
+    // ---- 头部（顶部，Y=18~26） ----
     model.buildBox(-4, 18, -4, 8, 8, 8, 0, 0, QW, QH);
-    model.buildBox(-2, 6, -2, 4, 16, 4, 16, 16, QW, QH);
-    model.buildBox(-6, 0, -2, 4, 6, 4, 0, 16, QW, QH);
-    model.buildBox(2, 0, -2, 4, 6, 4, 0, 16, QW, QH);
-    model.buildBox(-6, 0, 2, 4, 6, 4, 0, 16, QW, QH);
-    model.buildBox(2, 0, 2, 4, 6, 4, 0, 16, QW, QH);
 
     model.setupDefaultLayout();
     return model;
 }
-
 EntityModel EntityModel::buildSlime() {
     EntityModel model;
     const float QW = 64.0f, QH = 32.0f;
