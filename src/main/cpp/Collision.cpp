@@ -468,13 +468,6 @@ void Collision::tick() {
         onGround = false;
     }
 
-    // 摔出世界保护
-    if (position.y < -64.0f) {
-        position.y = 320.0f;
-        velocity = glm::vec3(0.0f);
-        onGround = false;
-        return;
-    }
 
 }
 
