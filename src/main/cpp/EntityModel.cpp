@@ -10,6 +10,7 @@ EntityModel EntityModel::s_spider;
 EntityModel EntityModel::s_creeper;
 EntityModel EntityModel::s_slime;
 EntityModel EntityModel::s_ghast;
+EntityModel EntityModel::s_skeleton;
 EntityModel EntityModel::s_item;
 bool EntityModel::s_initialized = false;
 
@@ -190,6 +191,32 @@ EntityModel EntityModel::buildCow() {
     return model;
 }
 
+EntityModel EntityModel::buildSkeleton() {
+    EntityModel model;
+    const float TW = 64.0f, TH = 32.0f;
+
+    auto addBoxPart = [&](const std::string& name,
+                          float ox, float oy, float oz,
+                          float w, float h, float d,
+                          float u, float v,
+                          const glm::vec3& pivot) {
+        int startVertex = (int)model.m_vertices.size() / 5;
+        model.buildBox(ox, oy, oz, w, h, d, u, v, TW, TH);
+        int vertexCount = (int)model.m_vertices.size() / 5 - startVertex;
+        model.addPart(name, startVertex, vertexCount, pivot);
+    };
+
+    addBoxPart("head", -4, 24, -4, 8, 8, 8, 0, 0, glm::vec3(0, 24, 0));
+    addBoxPart("body", -4, 12, -2, 8, 12, 4, 16, 16, glm::vec3(0, 12, 0));
+    addBoxPart("right_arm", -6, 12, -1, 2, 12, 2, 40, 16, glm::vec3(-5, 18, 0));
+    addBoxPart("left_arm", 4, 12, -1, 2, 12, 2, 40, 16, glm::vec3(5, 18, 0));
+    addBoxPart("right_leg", -3, 0, -1, 2, 12, 2, 0, 16, glm::vec3(-2, 12, 0));
+    addBoxPart("left_leg", 1, 0, -1, 2, 12, 2, 0, 16, glm::vec3(2, 12, 0));
+
+    model.setupDefaultLayout();
+    return model;
+}
+
 EntityModel EntityModel::buildSpider() {
     EntityModel model;
     const float QW = 64.0f, QH = 32.0f;
@@ -270,6 +297,7 @@ void EntityModel::initializeAll() {
     s_creeper = buildCreeper();
     s_slime = buildSlime();
     s_ghast = buildGhast();
+    s_skeleton = buildSkeleton();
     s_item = buildItem();
     s_initialized = true;
 }
@@ -281,4 +309,5 @@ const EntityModel& EntityModel::getSpider() { return s_spider; }
 const EntityModel& EntityModel::getCreeper() { return s_creeper; }
 const EntityModel& EntityModel::getSlime() { return s_slime; }
 const EntityModel& EntityModel::getGhast() { return s_ghast; }
+const EntityModel& EntityModel::getSkeleton() { return s_skeleton; }
 const EntityModel& EntityModel::getItem() { return s_item; }

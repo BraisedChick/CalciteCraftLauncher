@@ -280,8 +280,8 @@ const GLEntityRenderer::GLModelResource& GLEntityRenderer::getModelResource(cons
 // 新的 renderHumanoid：部件独立绘制，支持头部独立旋转
 // =========================================================================
 void GLEntityRenderer::renderHumanoid(const glm::mat4& vp, const glm::mat4& baseModelMatrix,
-                                      float headYawOffset, float headPitch) {
-    const auto& model = EntityModel::getHumanoid();
+                                      float headYawOffset, float headPitch,
+                                      const EntityModel& model) {
     const auto& res = getModelResource(model);
     glBindVertexArray(res.vao);
 
@@ -476,16 +476,17 @@ void GLEntityRenderer::renderAll(const std::vector<Entity>& entities,
             // 人形实体（使用部件绘制，头部独立旋转）
             case EntityType::ZOMBIE:
             case EntityType::ZOMBIE_VILLAGER:
-            case EntityType::SKELETON:
             case EntityType::PLAYER:
             case EntityType::WITCH:
             case EntityType::VILLAGER:
             case EntityType::PIGLIN:
             case EntityType::IRON_GOLEM:
             case EntityType::BLAZE:
-                renderHumanoid(vp, baseModelMatrix, iheadYaw - iyaw, entity.pitch);
+                renderHumanoid(vp, baseModelMatrix, iheadYaw - iyaw, entity.pitch, EntityModel::getHumanoid());
                 break;
-
+            case EntityType::SKELETON:
+                renderHumanoid(vp, baseModelMatrix, iheadYaw - iyaw, entity.pitch, EntityModel::getSkeleton());
+                break;
                 // 物品（整体绘制，带旋转）
             case EntityType::ITEM: {
                 glm::mat4 mvp = vp * baseModelMatrix;

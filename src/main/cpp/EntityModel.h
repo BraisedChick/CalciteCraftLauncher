@@ -60,6 +60,7 @@ public:
     static const EntityModel& getSlime();
     static const EntityModel& getGhast();
     static const EntityModel& getItem();
+    static const EntityModel& getSkeleton();
 
     // 初始化所有模型（在渲染前调用一次）
     static void initializeAll();
@@ -77,6 +78,7 @@ private:
     static EntityModel buildSlime();
     static EntityModel buildGhast();
     static EntityModel buildItem();
+    static EntityModel buildSkeleton();
     // 添加部件（内部使用）
     void addPart(const std::string& name, int startVertex, int vertexCount, const glm::vec3& pivot);
 
@@ -109,5 +111,6 @@ private:
     static EntityModel s_slime;
     static EntityModel s_ghast;
     static EntityModel s_item;
+    static EntityModel s_skeleton;
     static bool s_initialized;
 };
