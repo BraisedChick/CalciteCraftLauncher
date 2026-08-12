@@ -9,19 +9,16 @@ void EntityManager::addEntity(const Entity& entity) {
     std::lock_guard<std::mutex> lock(mutex);
     entities[entity.entityId] = entity;
     auto& e = entities[entity.entityId];
-    e.prevX = e.x;
-    e.prevY = e.y;
-    e.prevZ = e.z;
-    e.prevYaw = e.yaw;
-    e.prevHeadYaw = e.headYaw;
-    e.targetHeadYaw = e.headYaw;
+    // 初始化 prevX/Z 用于移动检测
+    e.prevX = e.x; e.prevY = e.y; e.prevZ = e.z;
+    // 身体默认等于逻辑朝向
+    e.bodyYaw = e.yaw;
 }
 
 void EntityManager::removeEntity(int entityId) {
     std::lock_guard<std::mutex> lock(mutex);
     auto it = entities.find(entityId);
     if (it != entities.end()) {
-        LOGI("Entity removed: id=%d", entityId);
         entities.erase(it);
     }
 }
@@ -49,11 +46,16 @@ void EntityManager::moveEntityRot(int entityId, short dx, short dy, short dz, fl
     auto it = entities.find(entityId);
     if (it == entities.end()) return;
     auto& e = it->second;
-    e.prevX = e.x; e.prevY = e.y; e.prevZ = e.z;
-    e.prevYaw = e.yaw;
+    // 更新位置
     e.x += dx / 4096.0;
     e.y += dy / 4096.0;
     e.z += dz / 4096.0;
+    // 更新逻辑朝向
+    e.yaw = yaw;
+    // 非玩家直接同步身体
+    if (e.type != EntityType::PLAYER) {
+        e.bodyYaw = yaw;
+    }
     e.pitch = pitch;
 }
 
@@ -62,7 +64,10 @@ void EntityManager::rotateEntity(int entityId, float yaw, float pitch) {
     auto it = entities.find(entityId);
     if (it == entities.end()) return;
     auto& e = it->second;
-    e.prevYaw = e.yaw;
+    e.yaw = yaw;
+    if (e.type != EntityType::PLAYER) {
+        e.bodyYaw = yaw;
+    }
     e.pitch = pitch;
 }
 
@@ -71,10 +76,14 @@ void EntityManager::teleportEntity(int entityId, double x, double y, double z, f
     auto it = entities.find(entityId);
     if (it == entities.end()) return;
     auto& e = it->second;
-    e.prevX = e.x; e.prevY = e.y; e.prevZ = e.z;
-    e.prevYaw = e.yaw;
     e.x = x; e.y = y; e.z = z;
+    e.yaw = yaw;
+    if (e.type != EntityType::PLAYER) {
+        e.bodyYaw = yaw;
+    }
     e.pitch = pitch;
+    // 重置 prevX/Z 防止瞬间移动被误判为移动量
+    e.prevX = x; e.prevY = y; e.prevZ = z;
 }
 
 void EntityManager::setEntityMotion(int entityId, short vx, short vy, short vz) {
@@ -122,7 +131,7 @@ void EntityManager::setHeadYaw(int entityId, float headYaw) {
     auto it = entities.find(entityId);
     if (it == entities.end()) return;
     auto& e = it->second;
-    e.targetHeadYaw = headYaw;
+    e.headYaw = headYaw;
 }
 
 size_t EntityManager::getEntityCount() const {
@@ -133,59 +142,47 @@ size_t EntityManager::getEntityCount() const {
 void EntityManager::tick(float partialTick) {
     std::lock_guard<std::mutex> lock(mutex);
     for (auto& [id, e] : entities) {
-        // 非玩家实体直接使用目标值（无限制）
-        if (e.type != EntityType::PLAYER) {
-            e.yaw = e.targetHeadYaw;
-            e.headYaw = e.targetHeadYaw;
-            e.prevYaw = e.yaw;
-            e.prevHeadYaw = e.headYaw;
-            continue;
+        // 非玩家实体暂时不处理
+        if (e.type == EntityType::PLAYER) {
+
+            // ---- 玩家逻辑 ----
+            // 1. 计算移动量，决定身体基础目标方向 baseYaw
+            float dx = (float)(e.x - e.prevX);
+            float dz = (float)(e.z - e.prevZ);
+            float distSq = dx * dx + dz * dz;
+            e.prevX = e.x; e.prevY = e.y; e.prevZ = e.z;
+
+            float baseYaw = e.bodyYaw;
+            if (distSq > 0.0025000002f) {
+                float f4 = atan2f(dz, dx) * 180.0f / M_PI - 90.0f;
+                float yawDiff = e.yaw - f4;
+                yawDiff = fmodf(yawDiff, 360.0f);
+                if (yawDiff > 180.0f) yawDiff -= 360.0f;
+                if (yawDiff < -180.0f) yawDiff += 360.0f;
+                if (fabsf(yawDiff) > 95.0f && fabsf(yawDiff) < 265.0f)
+                    baseYaw = f4 - 180.0f;
+                else
+                    baseYaw = f4;
+            }
+
+            // 2. 身体延迟跟随
+            float bodyDiff = baseYaw - e.bodyYaw;
+            bodyDiff = fmodf(bodyDiff, 360.0f);
+            if (bodyDiff > 180.0f) bodyDiff -= 360.0f;
+            if (bodyDiff < -180.0f) bodyDiff += 360.0f;
+            e.bodyYaw += bodyDiff * 0.3f;
+
+            // 3. 头部偏移限制（45°）
+            float headOffset = e.headYaw - e.bodyYaw;
+            headOffset = fmodf(headOffset, 360.0f);
+            if (headOffset > 180.0f) headOffset -= 360.0f;
+            if (headOffset < -180.0f) headOffset += 360.0f;
+            const float MAX_HEAD_ANGLE_PLAYER = 45.0f;
+            if (headOffset > MAX_HEAD_ANGLE_PLAYER) {
+                e.bodyYaw = e.headYaw - MAX_HEAD_ANGLE_PLAYER;
+            } else if (headOffset < -MAX_HEAD_ANGLE_PLAYER) {
+                e.bodyYaw = e.headYaw + MAX_HEAD_ANGLE_PLAYER;
+            }
         }
-
-        // ---- 玩家逻辑 ----
-        // 1. 计算移动量，决定身体基础目标方向 baseYaw
-        float dx = (float)(e.x - e.prevX);
-        float dz = (float)(e.z - e.prevZ);
-        float distSq = dx * dx + dz * dz;
-        e.prevX = e.x; e.prevY = e.y; e.prevZ = e.z;
-
-        float baseYaw = e.yaw;
-        if (distSq > 0.0025000002f) {
-            float f4 = atan2f(dz, dx) * 180.0f / M_PI - 90.0f;
-            float yawDiff = e.targetHeadYaw - f4;
-            yawDiff = fmodf(yawDiff, 360.0f);
-            if (yawDiff > 180.0f) yawDiff -= 360.0f;
-            if (yawDiff < -180.0f) yawDiff += 360.0f;
-            if (fabsf(yawDiff) > 95.0f && fabsf(yawDiff) < 265.0f)
-                baseYaw = f4 - 180.0f;
-            else
-                baseYaw = f4;
-        }
-
-        // 2. 身体延迟跟随（每 tick 向 baseYaw 靠近 30%）
-        float bodyDiff = baseYaw - e.yaw;
-        bodyDiff = fmodf(bodyDiff, 360.0f);
-        if (bodyDiff > 180.0f) bodyDiff -= 360.0f;
-        if (bodyDiff < -180.0f) bodyDiff += 360.0f;
-        e.yaw += bodyDiff * 0.3f;
-
-        // 3. 头部偏移限制（玩家专用：最大 45 度）
-        float headOffset = e.targetHeadYaw - e.yaw;
-        headOffset = fmodf(headOffset, 360.0f);
-        if (headOffset > 180.0f) headOffset -= 360.0f;
-        if (headOffset < -180.0f) headOffset += 360.0f;
-        const float MAX_HEAD_ANGLE_PLAYER = 45.0f; // 玩家最大偏转 45°
-        if (headOffset > MAX_HEAD_ANGLE_PLAYER) {
-            e.yaw = e.targetHeadYaw - MAX_HEAD_ANGLE_PLAYER;
-        } else if (headOffset < -MAX_HEAD_ANGLE_PLAYER) {
-            e.yaw = e.targetHeadYaw + MAX_HEAD_ANGLE_PLAYER;
-        }
-
-        // 头部最终角度直接等于目标值（因为身体已被调整）
-        e.headYaw = e.targetHeadYaw;
-
-        // 更新 prev 值（用于渲染插值）
-        e.prevYaw = e.yaw;
-        e.prevHeadYaw = e.headYaw;
     }
 }

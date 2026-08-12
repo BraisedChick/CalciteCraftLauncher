@@ -137,18 +137,17 @@ struct Entity {
     float yaw = 0;
     float pitch = 0;
     float headYaw = 0;
+    float bodyYaw= 0;
 
     double vx = 0, vy = 0, vz = 0;
 
     double prevX = 0, prevY = 0, prevZ = 0;
-    float prevYaw = 0, prevHeadYaw = 0;
 
     int tickCount = 0;
     bool onGround = false;
     bool removed = false;
 
     std::string uuid;
-    float targetHeadYaw = 0.0f;
 
     const char* getTypeName() const;
 };

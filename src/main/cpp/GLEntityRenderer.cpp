@@ -455,8 +455,8 @@ void GLEntityRenderer::renderAll(const std::vector<Entity>& entities,
         }
 
         // 插值旋转
-        float iyaw = entity.prevYaw + (entity.yaw - entity.prevYaw) * partialTick;
-        float iheadYaw = entity.prevHeadYaw + (entity.headYaw - entity.prevHeadYaw) * partialTick;
+        float iyaw = entity.bodyYaw;
+        float iheadYaw = entity.headYaw;
 
         // ===== 构建世界空间基础矩阵 =====
         glm::mat4 baseModelMatrix;
