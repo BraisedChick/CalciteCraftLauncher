@@ -23,7 +23,7 @@
 #include <poll.h>
 #include <cstring>
 #include <errno.h>
-
+#include "PacketIds.h"
 NetworkManager::NetworkManager() : sock(-1), connected(false), encrypter(nullptr) {}
 NetworkManager::~NetworkManager() { disconnect(); }
 
@@ -226,77 +226,62 @@ void NetworkManager::registerHandlers() {
         m_packetHandlers[pid] = handler;
     };
 
+    // ========== 跨版本公共注册（所有版本都存在的包） ==========
+    // Login / GameEvent / Respawn
+    reg(ClientboundLoginPacket,              &NetworkManager::handleLogin);
+    reg(ClientboundKeepAlivePacket,          &NetworkManager::handlePlayerStatus);
+    reg(ClientboundPlayerPositionPacket,     &NetworkManager::handlePlayerStatus);
+    reg(ClientboundGameEventPacket,          &NetworkManager::handleLogin);
+    reg(ClientboundRespawnPacket,            &NetworkManager::handleLogin);
+
+    // World
+    reg(ClientboundLevelChunkWithLightPacket, &NetworkManager::handleWorld);
+    reg(ClientboundBlockUpdatePacket,        &NetworkManager::handleWorld);
+    reg(ClientboundForgetLevelChunkPacket,   &NetworkManager::handleWorld);
+    reg(ClientboundLightUpdatePacket,        &NetworkManager::handleWorld);
+    reg(ClientboundSectionBlocksUpdatePacket,&NetworkManager::handleWorld);
+
+    // Inventory
+    reg(ClientboundContainerSetContentPacket,&NetworkManager::handleInventory);
+    reg(ClientboundContainerSetSlotPacket,   &NetworkManager::handleInventory);
+    reg(ClientboundOpenScreenPacket,         &NetworkManager::handleInventory);
+    reg(ClientboundContainerClosePacket,     &NetworkManager::handleInventory);
+
+    // Player Status (Health, Experience, Time, CarriedItem, Combat)
+    reg(ClientboundPlayerCombatKillPacket,   &NetworkManager::handlePlayerStatus);
+    reg(ClientboundSetExperiencePacket,      &NetworkManager::handlePlayerStatus);
+    reg(ClientboundSetHealthPacket,          &NetworkManager::handlePlayerStatus);
+    reg(ClientboundSetTimePacket,            &NetworkManager::handlePlayerStatus);
+    reg(ClientboundSetCarriedItemPacket,     &NetworkManager::handlePlayerStatus);
+
+    // Entity (大部分通用)
+    reg(ClientboundAddEntityPacket,          &NetworkManager::handleEntity);
+    reg(ClientboundMoveEntityPacketPosRot,   &NetworkManager::handleEntity);
+    reg(ClientboundMoveEntityPacketPos,      &NetworkManager::handleEntity);
+    reg(ClientboundMoveEntityPacketRot,      &NetworkManager::handleEntity);
+    reg(ClientboundTeleportEntityPacket,     &NetworkManager::handleEntity);
+    reg(ClientboundRemoveEntitiesPacket,     &NetworkManager::handleEntity);
+    reg(ClientboundSetEntityMotionPacket,    &NetworkManager::handleEntity);
+    reg(ClientboundRotateHeadPacket,         &NetworkManager::handleEntity);
+
+    // Chat (公共部分，但1.18.2与1.19.4不同，用条件分别注册)
+    // 先不在这里注册，下面按版本添加
+
+    // ========== 版本特定注册 ==========
 #if PROTOCOL_VERSION < 762
-    // 1.18.2
-    reg(0x26, &NetworkManager::handleLogin);
-    reg(0x21, &NetworkManager::handlePlayerStatus);
-    reg(0x38, &NetworkManager::handlePlayerStatus);
-    reg(0x22, &NetworkManager::handleWorld);
-    reg(0x0C, &NetworkManager::handleWorld);
-    reg(0x1D, &NetworkManager::handleWorld); // ForgetLevelChunk
-    reg(0x25, &NetworkManager::handleWorld);
-    reg(0x3F, &NetworkManager::handleWorld);
-    reg(0x14, &NetworkManager::handleInventory);
-    reg(0x16, &NetworkManager::handleInventory);
-    reg(0x35, &NetworkManager::handlePlayerStatus);
-    reg(0x51, &NetworkManager::handlePlayerStatus);
-    reg(0x52, &NetworkManager::handlePlayerStatus);
-    reg(0x1E, &NetworkManager::handleLogin);
-    reg(0x3D, &NetworkManager::handleLogin);
-    reg(0x59, &NetworkManager::handlePlayerStatus);
-    reg(0x48, &NetworkManager::handlePlayerStatus);
-    reg(0x00, &NetworkManager::handleEntity);
-    reg(0x02, &NetworkManager::handleEntity);
-    reg(0x04, &NetworkManager::handleEntity);
-    reg(0x2A, &NetworkManager::handleEntity);
-    reg(0x29, &NetworkManager::handleEntity);
-    reg(0x2B, &NetworkManager::handleEntity);
-    reg(0x62, &NetworkManager::handleEntity);
-    reg(0x3A, &NetworkManager::handleEntity);
-    reg(0x4F, &NetworkManager::handleEntity);
-    reg(0x3E, &NetworkManager::handleEntity);
-    reg(0x2E, &NetworkManager::handleInventory);
-    reg(0x13, &NetworkManager::handleInventory);
-    reg(0x0F, &NetworkManager::handleChat);
+    // 1.18.2 特有的包
+    reg(ClientboundAddMobPacket,             &NetworkManager::handleEntity);
+    reg(ClientboundAddPlayerPacket,          &NetworkManager::handleEntity);
+    reg(ClientboundChatPacket,               &NetworkManager::handleChat);
 #else
-    // 1.19+
-    reg(0x28, &NetworkManager::handleLogin);
-    reg(0x23, &NetworkManager::handlePlayerStatus);
-    reg(0x3C, &NetworkManager::handlePlayerStatus);
-    reg(0x24, &NetworkManager::handleWorld);
-    reg(0x0A, &NetworkManager::handleWorld);
-    reg(0x1E, &NetworkManager::handleWorld); // ForgetLevelChunk
-    reg(0x27, &NetworkManager::handleWorld);
-    reg(0x43, &NetworkManager::handleWorld);
-    reg(0x12, &NetworkManager::handleInventory);
-    reg(0x14, &NetworkManager::handleInventory);
-    reg(0x38, &NetworkManager::handlePlayerStatus);
-    reg(0x56, &NetworkManager::handlePlayerStatus);
-    reg(0x57, &NetworkManager::handlePlayerStatus);
-    reg(0x1F, &NetworkManager::handleLogin);
-    reg(0x41, &NetworkManager::handleLogin);
-    reg(0x5E, &NetworkManager::handlePlayerStatus);
-    reg(0x4D, &NetworkManager::handlePlayerStatus);
-    reg(0x00, &NetworkManager::handlePlayerStatus); // BundlePacket
-    reg(0x01, &NetworkManager::handleEntity);
-#if PROTOCOL_VERSION < 764
-    reg(0x03, &NetworkManager::handleEntity); // AddPlayer
-#endif
-    reg(0x2C, &NetworkManager::handleEntity);
-    reg(0x2B, &NetworkManager::handleEntity);
-    reg(0x2D, &NetworkManager::handleEntity);
-    reg(0x68, &NetworkManager::handleEntity);
-    reg(0x3E, &NetworkManager::handleEntity);
-    reg(0x54, &NetworkManager::handleEntity);
-    reg(0x41, &NetworkManager::handleEntity);
-    reg(0x30, &NetworkManager::handleInventory);
-    reg(0x11, &NetworkManager::handleInventory);
-    reg(0x63, &NetworkManager::handleChat);
-    reg(0x34, &NetworkManager::handleChat);
-    reg(0x1A, &NetworkManager::handleChat);
+    // 1.19.4+ 特有的包
+    reg(BundleDelimiterPacket,               &NetworkManager::handlePlayerStatus); // 跳过处理
+    reg(ClientboundAddPlayerPacket,          &NetworkManager::handleEntity); // 1.19.4 仍存在，但后续版本可能移除，可加条件
+    reg(ClientboundSystemChatPacket,         &NetworkManager::handleChat);
+    reg(ClientboundPlayerChatPacket,         &NetworkManager::handleChat);
+    reg(ClientboundDisguisedChatPacket,      &NetworkManager::handleChat);
 #endif
 }
-
 void NetworkManager::handlePlayPacket(int packetId,
                                       const std::vector<uint8_t>& data, size_t startPos) {
     if (m_packetHandlers.empty()) {
