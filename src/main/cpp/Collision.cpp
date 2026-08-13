@@ -145,7 +145,6 @@ void Collision::tick() {
     position.x = std::clamp(position.x, -2.9999999E7f, 2.9999999E7f);
     position.z = std::clamp(position.z, -2.9999999E7f, 2.9999999E7f);
 
-    ClientEngine::getInstance()->getGame()->getEntityManager()->tick(1);
 }
 
 // ---------- LivingEntity::travel 等价 ----------
