@@ -8,6 +8,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <android/log.h>
 #include <cmath>
+#include <algorithm>
 
 #define LOG_TAG "Collision"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -20,6 +21,7 @@
 #define KEY_DOWN 5
 #define KEY_SPRINT 6
 
+// ---------- 外部接口 ----------
 void Collision::setChunkManager(ChunkManager* mgr) {
     std::lock_guard<std::mutex> lock(mutex);
     chunkManager = mgr;
@@ -40,7 +42,7 @@ void Collision::setKeyState(int key, bool pressed) {
         case KEY_UP: jumpPressed = pressed; break;
         case KEY_DOWN: keyDown = pressed; break;
         case KEY_SPRINT:
-            if (pressed) keySprint = !keySprint;  // 点按切换
+            if (pressed) keySprint = !keySprint;
             LOGI("Sprint toggled: %s", keySprint ? "ON" : "OFF");
             break;
     }
@@ -61,16 +63,13 @@ void Collision::resetMovement() {
     joystickDY.store(0.0f);
 }
 
-// ===== 物理更新 =====
-
 void Collision::update(float deltaTime, float camPitch, float camYaw, glm::vec3* outPosition, bool* outOnGround) {
     std::lock_guard<std::mutex> lock(mutex);
 
-    // 从 Camera 同步视角方向
     pitch = camPitch;
     yaw = camYaw;
 
-    // 如果玩家所在的区块未加载，暂停物理更新（防掉虚空）
+    // 区块未加载则暂停
     if (chunkManager) {
         int cx = (int)floorf(position.x) >> 4;
         int cz = (int)floorf(position.z) >> 4;
@@ -82,8 +81,19 @@ void Collision::update(float deltaTime, float camPitch, float camYaw, glm::vec3*
             return;
         }
     }
-    ClientEngine::getInstance()->getGame()->getEntityManager()->tick(1);
-    // 固定时间步长累积器（20 ticks/s）
+
+    // 击退
+    if (playerEntityId >= 0) {
+        auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+        if (game) {
+            double kbVx=0, kbVy=0, kbVz=0;
+            game->getEntityManager()->consumeEntityMotion(playerEntityId, kbVx, kbVy, kbVz);
+            velocity.x += (float)kbVx;
+            velocity.y += (float)kbVy;
+            velocity.z += (float)kbVz;
+        }
+    }
+
     accumulatedTime += deltaTime;
     if (accumulatedTime >= TICK_DURATION) {
         prevPosition = position;
@@ -97,382 +107,284 @@ void Collision::update(float deltaTime, float camPitch, float camYaw, glm::vec3*
     if (outOnGround) *outOnGround = onGround;
 }
 
+// ---------- 物理核心----------
 void Collision::tick() {
     if (!chunkManager) return;
 
-    // ==== 从 EntityManager 读取击退冲量（一次性消费）====
-    double kbVx = 0, kbVy = 0, kbVz = 0;
-    if (playerEntityId >= 0) {
-        auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
-        if (game) game->getEntityManager()->consumeEntityMotion(playerEntityId, kbVx, kbVy, kbVz);
-        velocity.x += (float)kbVx;
-        velocity.y += (float)kbVy;
-        velocity.z += (float)kbVz;
-    }
-
-    // ---- 计算水平移动方向 ----
-    float cosYaw = cosf(yaw);
-    float sinYaw = sinf(yaw);
-    float cosPitch = cosf(pitch);
-    float sinPitch = sinf(pitch);
-
-    glm::vec3 front;
-    front.x = -sinYaw * cosPitch;
-    front.y = -sinPitch;
-    front.z = cosYaw * cosPitch;
-    front = glm::normalize(front);
-
-    glm::vec3 horizontalFront(front.x, 0.0f, front.z);
-    if (glm::length(horizontalFront) > 1e-6f) {
-        horizontalFront = glm::normalize(horizontalFront);
-    }
-
-    glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
-    glm::vec3 right = glm::normalize(glm::cross(front, worldUp));
-
-    glm::vec3 moveDir(0.0f, 0.0f, 0.0f);
-
-    // 键盘
-    if (keyW) moveDir += horizontalFront;
-    if (keyS) moveDir -= horizontalFront;
-    if (keyA) moveDir -= right;
-    if (keyD) moveDir += right;
-
-    // 摇杆
-    float jdy = joystickDY.load();
-    if (fabs(jdy) > 0.1f) {
-        moveDir += horizontalFront * (-jdy);
-    }
-    float jdx = joystickDX.load();
-    if (fabs(jdx) > 0.1f) {
-        moveDir += right * jdx;
-    }
-
-    // ===== 旁观者模式：无视碰撞，自由飞行 =====
+    // 旁观者模式（无碰撞飞行）
     if (noClip) {
-        const float SPECTATOR_SPEED = 0.5f;
-        glm::vec3 specDir(0.0f);
-        if (keyW) specDir += front;
-        if (keyS) specDir -= front;
-        if (keyA) specDir -= right;
-        if (keyD) specDir += right;
-        if (fabs(jdy) > 0.1f) specDir += front * -jdy;
-        if (fabs(jdx) > 0.1f) specDir += right * jdx;
-        if (glm::length(specDir) > 0.001f) {
-            specDir = glm::normalize(specDir);
-            position += specDir * SPECTATOR_SPEED;
-        }
-        if (jumpPressed) position.y += SPECTATOR_SPEED;
-        if (keyDown) position.y -= SPECTATOR_SPEED;
-        velocity = glm::vec3(0.0f);
+        const float SPEED = 0.5f;
+        glm::vec3 front, right;
+        float cosYaw = cosf(yaw), sinYaw = sinf(yaw);
+        float cosPitch = cosf(pitch), sinPitch = sinf(pitch);
+        front = glm::normalize(glm::vec3(-sinYaw * cosPitch, -sinPitch, cosYaw * cosPitch));
+        right = glm::normalize(glm::cross(front, glm::vec3(0,1,0)));
+
+        glm::vec3 move(0,0,0);
+        if (keyW) move += front;
+        if (keyS) move -= front;
+        if (keyA) move -= right;
+        if (keyD) move += right;
+        float jdy = joystickDY.load();
+        if (fabs(jdy) > 0.1f) move += front * (-jdy);
+        float jdx = joystickDX.load();
+        if (fabs(jdx) > 0.1f) move += right * jdx;
+        if (glm::length(move) > 0.001f) move = glm::normalize(move) * SPEED;
+        if (jumpPressed) move.y += SPEED;
+        if (keyDown) move.y -= SPEED;
+        position += move;
+        velocity = glm::vec3(0);
         onGround = false;
-        prevPosition = position;
         return;
     }
 
-    // ---- 水平输入 → 速度 ----
-    // 疾跑判定：按下疾跑键且正在向前移动
-    bool sprinting = keySprint && (keyW || joystickDY.load(std::memory_order_relaxed) < -0.1f);
-    float accel = sprinting ? SPRINT_MOVE_ACCELERATION : MOVE_ACCELERATION;
-    float speedCap = sprinting ? SPRINT_MOVE_SPEED : MOVE_SPEED;
+    // 1. 调用 movePlayer (LivingEntity::travel)
+    movePlayer();
 
-    if (glm::length(moveDir) > 0.001f) {
-        moveDir = glm::normalize(moveDir);
-        velocity.x += moveDir.x * accel;
-        velocity.z += moveDir.z * accel;
-    }
+    // 2. 边界限位（原版有，防止超界）
+    position.x = std::clamp(position.x, -2.9999999E7f, 2.9999999E7f);
+    position.z = std::clamp(position.z, -2.9999999E7f, 2.9999999E7f);
 
-    // ---- 创造模式飞行 ----
-    bool isFlying = (gameMode == 1 || gameMode == 3);
-    if (isFlying) {
-        // 垂直控制（升/降）
-        if (jumpPressed) velocity.y = 0.4f;
-        else if (keyDown) velocity.y = -0.4f;
-        else velocity.y *= 0.6f;
+    ClientEngine::getInstance()->getGame()->getEntityManager()->tick(1);
+}
 
-        // 水平：飞行时施加阻力（松开按键后逐渐停下）
-        if (glm::length(moveDir) < 0.001f) {
-            velocity.x *= 0.8f;
-            velocity.z *= 0.8f;
-            if (fabs(velocity.x) < 0.001f) velocity.x = 0.0f;
-            if (fabs(velocity.z) < 0.001f) velocity.z = 0.0f;
-        }
-        speedCap = 0.5f;
-        float hSpeed = sqrtf(velocity.x * velocity.x + velocity.z * velocity.z);
-        if (hSpeed > speedCap) {
-            velocity.x = velocity.x / hSpeed * speedCap;
-            velocity.z = velocity.z / hSpeed * speedCap;
-        }
-        onGround = false;
-    } else {
-        // ---- 地面摩擦力 / 空气阻力（仅非飞行）----
-        if (onGround) {
-            velocity.x *= 0.6f;
-            velocity.z *= 0.6f;
-        } else {
-            velocity.x *= 0.98f;
-            velocity.z *= 0.98f;
-        }
+// ---------- LivingEntity::travel 等价 ----------
+void Collision::movePlayer() {
+    // 省略水中/岩浆/鞘翅等特殊情况，仅实现普通地面移动
+    // 若有这些需求可后续补充
 
-        // 限制水平速度
-        float horizSpeed = sqrtf(velocity.x * velocity.x + velocity.z * velocity.z);
-        if (horizSpeed > speedCap) {
-            velocity.x = velocity.x / horizSpeed * speedCap;
-            velocity.z = velocity.z / horizSpeed * speedCap;
-        }
-
-        // ---- 跳跃 ----
-        if (jumpPressed && onGround) {
-            velocity.y = JUMP_VELOCITY;
-            onGround = false;
-            jumpPressed = false;
-        }
-    }
-
-    // ---- 碰撞处理（原版Minecraft顺序：Y → X → Z，每轴后立即更新位置）----
-    // 重力在 Y 轴移动后应用，保证跳跃 tick 使用完整跳跃速度
-    float preVelY = velocity.y;
-
-    // Y轴（垂直优先）——飞行时同样检测（原版仅旁观者 noClip 穿墙，上方已早退）
-    if (velocity.y != 0.0f) {
-        AABB box = getPlayerAABB().offset(0.0f, velocity.y, 0.0f);
-        int minBX = (int)floorf(box.minX);
-        int maxBX = (int)floorf(box.maxX + 1e-5f);
-        int minBY = (int)floorf(box.minY);
-        int maxBY = (int)floorf(box.maxY + 1e-5f);
-        int minBZ = (int)floorf(box.minZ);
-        int maxBZ = (int)floorf(box.maxZ + 1e-5f);
-
-        AABB playerBox = getPlayerAABB();
-        for (int by = minBY; by <= maxBY; by++) {
-            for (int bz = minBZ; bz <= maxBZ; bz++) {
-                for (int bx = minBX; bx <= maxBX; bx++) {
-                    auto blockBoxes = getBlockAABBs(bx, by, bz);
-                    for (const auto& blockBox : blockBoxes) {
-                        if (!box.intersects(blockBox)) continue;
-
-                        if (velocity.y > 0.0f && playerBox.maxY <= blockBox.minY) {
-                            float newDy = blockBox.minY - playerBox.maxY;
-                            if (newDy < velocity.y) velocity.y = newDy;
-                        } else if (velocity.y < 0.0f && playerBox.minY >= blockBox.maxY) {
-                            float newDy = blockBox.maxY - playerBox.minY;
-                            if (newDy > velocity.y) velocity.y = newDy;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    float actualY = velocity.y;
-    position.y += actualY;
-
+    // 重力（非飞行时）
     if (!isFlying) {
-        velocity.y = preVelY - GRAVITY;
+        velocity.y -= GRAVITY;
         if (velocity.y < -3.0f) velocity.y = -3.0f;
     }
 
-    // 自动踏步标记（如果 X 踏步成功，Z 不再重复抬高）
-    bool steppedUp = false;
+    // 输入加速度
+    applyInputs(isFlying ? 0.02f : (onGround ? 0.216f : 0.02f)); // 简化，实际需根据摩擦计算
 
-    // X轴（水平）— 带自动踏步
-    if (velocity.x != 0.0f) {
-        float desiredVelX = velocity.x;
-        float origY = position.y;
-
-        AABB box = getPlayerAABB().offset(velocity.x, 0.0f, 0.0f);
-        int minBX = (int)floorf(box.minX);
-        int maxBX = (int)floorf(box.maxX + 1e-5f);
-        int minBY = (int)floorf(box.minY);
-        int maxBY = (int)floorf(box.maxY + 1e-5f);
-        int minBZ = (int)floorf(box.minZ);
-        int maxBZ = (int)floorf(box.maxZ + 1e-5f);
-
-        AABB playerBox = getPlayerAABB();
-        for (int by = minBY; by <= maxBY; by++) {
-            for (int bz = minBZ; bz <= maxBZ; bz++) {
-                for (int bx = minBX; bx <= maxBX; bx++) {
-                    auto blockBoxes = getBlockAABBs(bx, by, bz);
-                    for (const auto& blockBox : blockBoxes) {
-                        if (!box.intersects(blockBox)) continue;
-
-                        if (velocity.x > 0.0f && playerBox.maxX <= blockBox.minX + 1e-5f) {
-                            float newDx = blockBox.minX - playerBox.maxX - 0.001f;
-                            if (newDx < velocity.x) velocity.x = newDx;
-                        } else if (velocity.x < 0.0f && playerBox.minX >= blockBox.maxX - 1e-5f) {
-                            float newDx = blockBox.maxX - playerBox.minX + 0.001f;
-                            if (newDx > velocity.x) velocity.x = newDx;
-                        }
-                    }
-                }
-            }
-        }
-
-        // 自动踏步：在地面上且被阻挡时，尝试抬腿
-        // 关键：先算出需要踏上的实际高度（阻挡方块顶面），只抬这么高再测头顶净空，
-        // 避免总是抬满 STEP_HEIGHT 导致头顶有方块时无法踏上矮台阶（如 0.125 高的雪片）
-        if (onGround && fabsf(velocity.x) < fabsf(desiredVelX) - 1e-7f) {
-            // 1. 探测水平目标位置需要踏上的最高方块顶面（限制在 STEP_HEIGHT 内）
-            AABB probeBox = getPlayerAABB().offset(desiredVelX, 0.0f, 0.0f);
-            int pminBX = (int)floorf(probeBox.minX);
-            int pmaxBX = (int)floorf(probeBox.maxX + 1e-5f);
-            int pminBZ = (int)floorf(probeBox.minZ);
-            int pmaxBZ = (int)floorf(probeBox.maxZ + 1e-5f);
-            float newGround = origY;
-            for (int by = (int)floorf(origY); by <= (int)floorf(origY + STEP_HEIGHT); by++) {
-                for (int bz = pminBZ; bz <= pmaxBZ; bz++) {
-                    for (int bx = pminBX; bx <= pmaxBX; bx++) {
-                        auto blockBoxes = getBlockAABBs(bx, by, bz);
-                        for (const auto& ab : blockBoxes) {
-                            float top = ab.maxY;
-                            if (top > newGround + 1e-4f && top <= origY + STEP_HEIGHT + 1e-4f) {
-                                newGround = top;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 2. 确实有可踏方块时，只抬到该高度并测试整体净空（含头顶）
-            if (newGround > origY + 1e-4f) {
-                position.y = newGround;
-                bool stepClear = true;
-                AABB stepBox = getPlayerAABB().offset(desiredVelX, 0.0f, 0.0f);
-                int sminBX = (int)floorf(stepBox.minX);
-                int smaxBX = (int)floorf(stepBox.maxX + 1e-5f);
-                int sminBY = (int)floorf(stepBox.minY);
-                int smaxBY = (int)floorf(stepBox.maxY + 1e-5f);
-                int sminBZ = (int)floorf(stepBox.minZ);
-                int smaxBZ = (int)floorf(stepBox.maxZ + 1e-5f);
-                for (int by = sminBY; by <= smaxBY && stepClear; by++) {
-                    for (int bz = sminBZ; bz <= smaxBZ && stepClear; bz++) {
-                        for (int bx = sminBX; bx <= smaxBX && stepClear; bx++) {
-                            auto blockBoxes = getBlockAABBs(bx, by, bz);
-                            for (const auto& blockBox : blockBoxes) {
-                                if (stepBox.intersects(blockBox)) { stepClear = false; break; }
-                            }
-                            if (!stepClear) break;
-                        }
-                    }
-                }
-                if (stepClear) {
-                    velocity.x = desiredVelX;
-                    steppedUp = true;
-                    // position.y 已为 newGround
-                } else {
-                    position.y = origY;
-                }
-            }
-        }
-
-        position.x += velocity.x;
-    }
-
-    // Z轴（水平）— 带自动踏步
-    if (velocity.z != 0.0f) {
-        float desiredVelZ = velocity.z;
-        float origY = position.y;
-
-        AABB box = getPlayerAABB().offset(0.0f, 0.0f, velocity.z);
-        int minBX = (int)floorf(box.minX);
-        int maxBX = (int)floorf(box.maxX + 1e-5f);
-        int minBY = (int)floorf(box.minY);
-        int maxBY = (int)floorf(box.maxY + 1e-5f);
-        int minBZ = (int)floorf(box.minZ);
-        int maxBZ = (int)floorf(box.maxZ + 1e-5f);
-
-        AABB playerBox = getPlayerAABB();
-        for (int by = minBY; by <= maxBY; by++) {
-            for (int bz = minBZ; bz <= maxBZ; bz++) {
-                for (int bx = minBX; bx <= maxBX; bx++) {
-                    auto blockBoxes = getBlockAABBs(bx, by, bz);
-                    for (const auto& blockBox : blockBoxes) {
-                        if (!box.intersects(blockBox)) continue;
-
-                        if (velocity.z > 0.0f && playerBox.maxZ <= blockBox.minZ + 1e-5f) {
-                            float newDz = blockBox.minZ - playerBox.maxZ - 0.001f;
-                            if (newDz < velocity.z) velocity.z = newDz;
-                        } else if (velocity.z < 0.0f && playerBox.minZ >= blockBox.maxZ - 1e-5f) {
-                            float newDz = blockBox.maxZ - playerBox.minZ + 0.001f;
-                            if (newDz > velocity.z) velocity.z = newDz;
-                        }
-                    }
-                }
-            }
-        }
-
-        // 自动踏步：仅当 X 轴未踏步时尝试（否则 Y 已被抬高，Z 在已抬高位置重测过）
-        // 同 X 轴：先算实际踏步高度，只抬这么高再测净空，避免头顶有方块时踏不上矮台阶
-        if (onGround && !steppedUp && fabsf(velocity.z) < fabsf(desiredVelZ) - 1e-7f) {
-            // 1. 探测水平目标位置需要踏上的最高方块顶面（限制在 STEP_HEIGHT 内）
-            AABB probeBox = getPlayerAABB().offset(0.0f, 0.0f, desiredVelZ);
-            int pminBX = (int)floorf(probeBox.minX);
-            int pmaxBX = (int)floorf(probeBox.maxX + 1e-5f);
-            int pminBZ = (int)floorf(probeBox.minZ);
-            int pmaxBZ = (int)floorf(probeBox.maxZ + 1e-5f);
-            float newGround = origY;
-            for (int by = (int)floorf(origY); by <= (int)floorf(origY + STEP_HEIGHT); by++) {
-                for (int bz = pminBZ; bz <= pmaxBZ; bz++) {
-                    for (int bx = pminBX; bx <= pmaxBX; bx++) {
-                        auto blockBoxes = getBlockAABBs(bx, by, bz);
-                        for (const auto& ab : blockBoxes) {
-                            float top = ab.maxY;
-                            if (top > newGround + 1e-4f && top <= origY + STEP_HEIGHT + 1e-4f) {
-                                newGround = top;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 2. 确实有可踏方块时，只抬到该高度并测试整体净空（含头顶）
-            if (newGround > origY + 1e-4f) {
-                position.y = newGround;
-                bool stepClear = true;
-                AABB stepBox = getPlayerAABB().offset(0.0f, 0.0f, desiredVelZ);
-                int sminBX = (int)floorf(stepBox.minX);
-                int smaxBX = (int)floorf(stepBox.maxX + 1e-5f);
-                int sminBY = (int)floorf(stepBox.minY);
-                int smaxBY = (int)floorf(stepBox.maxY + 1e-5f);
-                int sminBZ = (int)floorf(stepBox.minZ);
-                int smaxBZ = (int)floorf(stepBox.maxZ + 1e-5f);
-                for (int by = sminBY; by <= smaxBY && stepClear; by++) {
-                    for (int bz = sminBZ; bz <= smaxBZ && stepClear; bz++) {
-                        for (int bx = sminBX; bx <= smaxBX && stepClear; bx++) {
-                            auto blockBoxes = getBlockAABBs(bx, by, bz);
-                            for (const auto& blockBox : blockBoxes) {
-                                if (stepBox.intersects(blockBox)) { stepClear = false; break; }
-                            }
-                            if (!stepClear) break;
-                        }
-                    }
-                }
-                if (stepClear) {
-                    velocity.z = desiredVelZ;
-                    // position.y 已为 newGround
-                } else {
-                    position.y = origY;
-                }
-            }
-        }
-
-        position.z += velocity.z;
-    }
-
-    // ---- 更新地面状态 ----
-    if (actualY != preVelY && preVelY < 0) {
-        onGround = true;
-        velocity.y = 0.0f;
-    } else if (preVelY <= 0.0f && actualY == 0.0f) {
-        onGround = true;
-    } else {
+    // 跳跃
+    if (jumpPressed && onGround && !isFlying) {
+        velocity.y = JUMP_VELOCITY;
         onGround = false;
+        jumpPressed = false;
     }
 
+    // 飞行垂直控制
+    if (isFlying) {
+        if (jumpPressed) velocity.y = 0.4f;
+        else if (keyDown) velocity.y = -0.4f;
+        else velocity.y *= 0.6f;
+    }
 
+    // 限速
+    float horiz = sqrtf(velocity.x*velocity.x + velocity.z*velocity.z);
+    float speedCap = keySprint ? SPRINT_MOVE_SPEED : MOVE_SPEED;
+    if (isFlying) speedCap = 0.5f;
+    if (horiz > speedCap) {
+        velocity.x = velocity.x / horiz * speedCap;
+        velocity.z = velocity.z / horiz * speedCap;
+    }
+
+    // 执行移动
+    applyMovement();
+
+    // 水平摩擦
+    if (onGround) {
+        velocity.x *= 0.6f;
+        velocity.z *= 0.6f;
+    } else {
+        velocity.x *= 0.98f;
+        velocity.z *= 0.98f;
+    }
+
+    // 微小速度归零
+    if (fabsf(velocity.x) < 0.003f) velocity.x = 0.0f;
+    if (fabsf(velocity.y) < 0.003f) velocity.y = 0.0f;
+    if (fabsf(velocity.z) < 0.003f) velocity.z = 0.0f;
+
+    // 检查特殊方块（粘液块、灵魂沙等）
+    checkInsideBlocks();
 }
 
-// ===== 碰撞检测 =====
+// ---------- Entity::move 等价 ----------
+void Collision::applyMovement() {
+    if (noClip) return;
 
+    glm::vec3 movement = velocity;
+
+    if (glm::length(stuckSpeedMultiplier - glm::vec3(1.0f)) > EPSILON) {
+        movement *= stuckSpeedMultiplier;
+        stuckSpeedMultiplier = glm::vec3(1.0f);
+        velocity = glm::vec3(0.0f);
+    }
+
+    AABB playerAABB = getPlayerAABB();
+    glm::vec3 movementBefore = movement;
+
+    // 1. 碰撞检测
+    if (glm::length(movement) > 0.0f) {
+        movement = collideBoundingBox(playerAABB, movement);
+    }
+
+    // 2. 简化踏步逻辑
+    if ((onGround || (movement.y != movementBefore.y && movementBefore.y < 0.0f)) &&
+        (movement.x != movementBefore.x || movement.z != movementBefore.z)) {
+
+        // 尝试抬高 STEP_HEIGHT (0.6) 并水平移动
+        glm::vec3 stepUpMovement = collideBoundingBox(playerAABB,
+                                                      glm::vec3(movementBefore.x, STEP_HEIGHT, movementBefore.z));
+        // 如果踏步后的水平位移更远，则应用踏步
+        if (stepUpMovement.x * stepUpMovement.x + stepUpMovement.z * stepUpMovement.z >
+            movement.x * movement.x + movement.z * movement.z) {
+            // 应用踏步位移，并处理竖直下降
+            movement = stepUpMovement +
+                       collideBoundingBox(playerAABB.offset(stepUpMovement.x, stepUpMovement.y, stepUpMovement.z),
+                                          glm::vec3(0.0f, -stepUpMovement.y + movementBefore.y, 0.0f));
+        }
+    }
+
+    // 3. 应用位移
+    if (glm::length(movement) > EPSILON) {
+        position += movement;
+    }
+
+    // 4. 碰撞轴与地面判定
+    bool collisionX = movementBefore.x != movement.x;
+    bool collisionY = movementBefore.y != movement.y;
+    bool collisionZ = movementBefore.z != movement.z;
+    horizontalCollision = collisionX || collisionZ;
+
+    onGround = (movementBefore.y < 0.0f && collisionY);
+
+    // 5. 速度归零
+    if (collisionX) velocity.x = 0.0f;
+    if (collisionZ) velocity.z = 0.0f;
+    if (collisionY) {
+        velocity.y = 0.0f; // 简化：蹲下不处理
+    }
+}
+// ---------- AABB 碰撞检测----------
+glm::vec3 Collision::collideBoundingBox(const AABB& aabb, const glm::vec3& movement) const {
+    // 1. 使用膨胀的 AABB 收集碰撞箱
+    glm::vec3 center = aabb.getCenter();
+    glm::vec3 half = aabb.getHalfSize();
+    glm::vec3 newCenter = center + movement * 0.5f;
+    glm::vec3 newHalf = half + glm::abs(movement) * 0.5f;
+    AABB movementExtended(newCenter.x - newHalf.x, newCenter.y - newHalf.y, newCenter.z - newHalf.z,
+                          newCenter.x + newHalf.x, newCenter.y + newHalf.y, newCenter.z + newHalf.z);
+
+    std::vector<AABB> colliders;
+    int minX = (int)floorf(movementExtended.minX);
+    int maxX = (int)floorf(movementExtended.maxX + EPSILON);
+    int minY = (int)floorf(movementExtended.minY) - 1;  // 注意：减 1
+    int maxY = (int)floorf(movementExtended.maxY + EPSILON);
+    int minZ = (int)floorf(movementExtended.minZ);
+    int maxZ = (int)floorf(movementExtended.maxZ + EPSILON);
+
+    for (int y = minY; y <= maxY; ++y)
+        for (int z = minZ; z <= maxZ; ++z)
+            for (int x = minX; x <= maxX; ++x) {
+                auto boxes = getBlockAABBs(x, y, z);
+                colliders.insert(colliders.end(), boxes.begin(), boxes.end());
+            }
+
+    if (colliders.empty()) return movement;
+
+    // 2. 使用原始 aabb 进行碰撞修正（与之前相同）
+    glm::vec3 collidedMovement = movement;
+    AABB movedAABB = aabb;
+    collideOneAxis(movedAABB, collidedMovement, 1, colliders);
+    if (fabsf(collidedMovement.x) > fabsf(collidedMovement.z)) {
+        collideOneAxis(movedAABB, collidedMovement, 0, colliders);
+        collideOneAxis(movedAABB, collidedMovement, 2, colliders);
+    } else {
+        collideOneAxis(movedAABB, collidedMovement, 2, colliders);
+        collideOneAxis(movedAABB, collidedMovement, 0, colliders);
+    }
+
+    return collidedMovement;
+}
+
+void Collision::collideOneAxis(AABB& aabb, glm::vec3& movement, int axis, const std::vector<AABB>& colliders) const {
+    if (fabsf(movement[axis]) < EPSILON) {
+        movement[axis] = 0.0f;
+        return;
+    }
+
+    int axis1 = (axis + 1) % 3;
+    int axis2 = (axis + 2) % 3;
+
+    float aabbMin[3] = {aabb.minX, aabb.minY, aabb.minZ};
+    float aabbMax[3] = {aabb.maxX, aabb.maxY, aabb.maxZ};
+
+    for (const auto& collider : colliders) {
+        float collMin[3] = {collider.minX, collider.minY, collider.minZ};
+        float collMax[3] = {collider.maxX, collider.maxY, collider.maxZ};
+
+        // 检查其他两个轴是否重叠
+        if (aabbMax[axis1] - EPSILON > collMin[axis1] &&
+            aabbMin[axis1] + EPSILON < collMax[axis1] &&
+            aabbMax[axis2] - EPSILON > collMin[axis2] &&
+            aabbMin[axis2] + EPSILON < collMax[axis2]) {
+
+            if (movement[axis] > 0.0f) {
+                // 只有方块在玩家上方才修正
+                if (aabbMax[axis] - EPSILON <= collMin[axis]) {
+                    float newMove = collMin[axis] - aabbMax[axis];
+                    if (newMove < movement[axis]) movement[axis] = newMove;
+                }
+            } else { // movement[axis] < 0.0f
+                // 只有方块在玩家下方才修正
+                if (aabbMin[axis] + EPSILON >= collMax[axis]) {
+                    float newMove = collMax[axis] - aabbMin[axis];
+                    if (newMove > movement[axis]) movement[axis] = newMove;
+                }
+            }
+        }
+    }
+
+    glm::vec3 translation(0.0f, 0.0f, 0.0f);
+    translation[axis] = movement[axis];
+    aabb.translate(translation);
+}
+
+// ---------- 特殊方块检查 ----------
+void Collision::checkInsideBlocks() {
+    // 实现蜘蛛网、粘液块等，此处略，可后续添加
+}
+
+// ---------- 输入处理 ----------
+glm::vec3 Collision::getInputVector() const {
+    glm::vec3 front, right;
+    float cosYaw = cosf(yaw), sinYaw = sinf(yaw);
+    float cosPitch = cosf(pitch), sinPitch = sinf(pitch);
+    front = glm::normalize(glm::vec3(-sinYaw * cosPitch, -sinPitch, cosYaw * cosPitch));
+    right = glm::normalize(glm::cross(front, glm::vec3(0,1,0)));
+
+    glm::vec3 move(0,0,0);
+    if (keyW) move += glm::vec3(front.x, 0, front.z);
+    if (keyS) move -= glm::vec3(front.x, 0, front.z);
+    if (keyA) move -= right;
+    if (keyD) move += right;
+    float jdy = joystickDY.load();
+    if (fabs(jdy) > 0.1f) move += glm::vec3(front.x, 0, front.z) * (-jdy);
+    float jdx = joystickDX.load();
+    if (fabs(jdx) > 0.1f) move += right * jdx;
+
+    if (glm::length(move) > 1.0f) move = glm::normalize(move);
+    return move;
+}
+
+void Collision::applyInputs(float strength) {
+    glm::vec3 input = getInputVector();
+    if (glm::length(input) < EPSILON) return;
+
+    // 直接累加，因为 input 已经是世界坐标系下的方向
+    velocity.x += input.x * strength;
+    velocity.z += input.z * strength;
+}
+
+// ---------- AABB 获取 ----------
 AABB Collision::getPlayerAABB() const {
     float hw = PLAYER_WIDTH * 0.5f;
     return AABB(position.x - hw, position.y, position.z - hw,
@@ -480,12 +392,15 @@ AABB Collision::getPlayerAABB() const {
 }
 
 std::vector<AABB> Collision::getBlockAABBs(int blockX, int blockY, int blockZ) const {
-    if (!chunkManager) return {AABB((float)blockX, (float)blockY, (float)blockZ,
-                                    (float)(blockX + 1), (float)(blockY + 1), (float)(blockZ + 1))};
+    if (!chunkManager) {
+        return {AABB((float)blockX, (float)blockY, (float)blockZ,
+                     (float)(blockX+1), (float)(blockY+1), (float)(blockZ+1))};
+    }
     auto chunk = chunkManager->getChunk(blockX >> 4, blockZ >> 4);
-    if (!chunk || !chunk->isLoaded) return {AABB((float)blockX, (float)blockY, (float)blockZ,
-                                                  (float)(blockX + 1), (float)(blockY + 1), (float)(blockZ + 1))};
-
+    if (!chunk || !chunk->isLoaded) {
+        return {AABB((float)blockX, (float)blockY, (float)blockZ,
+                     (float)(blockX+1), (float)(blockY+1), (float)(blockZ+1))};
+    }
     int32_t state = chunk->getBlockState(blockX & 15, blockY, blockZ & 15);
     if (state == 0) return {};
 
@@ -494,33 +409,27 @@ std::vector<AABB> Collision::getBlockAABBs(int blockX, int blockY, int blockZ) c
 
     auto* atlas = ClientEngine::getInstance()->getTextureAtlas();
     if (!atlas || !atlas->isInitialized()) {
-        // TextureAtlas 未初始化：使用高度值回退
         float h = meta.height;
         if (h <= 0.0f) return {};
         return {AABB((float)blockX, (float)blockY, (float)blockZ,
-                     (float)(blockX + 1), (float)blockY + h, (float)(blockZ + 1))};
+                     (float)(blockX+1), (float)blockY + h, (float)(blockZ+1))};
     }
 
     auto boxes = atlas->getBlockCollisionBoxes(meta.name, state, meta.minStateId);
     if (boxes.empty()) {
-        // 无模型数据 → 全方块碰撞
         return {AABB((float)blockX, (float)blockY, (float)blockZ,
-                     (float)(blockX + 1), (float)(blockY + 1), (float)(blockZ + 1))};
+                     (float)(blockX+1), (float)(blockY+1), (float)(blockZ+1))};
     }
-
-    // 将 block-local 0-1 坐标偏移到世界坐标
     std::vector<AABB> result;
     result.reserve(boxes.size());
     for (const auto& cb : boxes) {
-        result.push_back(AABB(
-            blockX + cb.minX, blockY + cb.minY, blockZ + cb.minZ,
-            blockX + cb.maxX, blockY + cb.maxY, blockZ + cb.maxZ));
+        result.push_back(AABB(blockX + cb.minX, blockY + cb.minY, blockZ + cb.minZ,
+                              blockX + cb.maxX, blockY + cb.maxY, blockZ + cb.maxZ));
     }
     return result;
 }
 
-// ===== 访问器 =====
-
+// ---------- 访问器 ----------
 glm::vec3 Collision::getPosition() const {
     std::lock_guard<std::mutex> lock(mutex);
     return position;
@@ -534,8 +443,7 @@ glm::vec3 Collision::getVelocity() const {
 glm::vec3 Collision::getSmoothPosition() const {
     std::lock_guard<std::mutex> lock(mutex);
     float alpha = accumulatedTime / TICK_DURATION;
-    if (alpha < 0.0f) alpha = 0.0f;
-    if (alpha > 1.0f) alpha = 1.0f;
+    alpha = std::clamp(alpha, 0.0f, 1.0f);
     return prevPosition + (position - prevPosition) * alpha;
 }
 
@@ -556,5 +464,6 @@ void Collision::setGameMode(int mode) {
     std::lock_guard<std::mutex> lock(mutex);
     gameMode = mode;
     noClip = (mode == 3);
-    LOGI("Game mode set to %d (noClip=%s)", mode, noClip ? "true" : "false");
+    isFlying = (mode == 1 || mode == 3);
+    LOGI("Game mode set to %d (noClip=%s, flying=%s)", mode, noClip ? "true" : "false", isFlying ? "true" : "false");
 }
