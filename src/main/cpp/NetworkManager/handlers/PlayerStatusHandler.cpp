@@ -5,6 +5,7 @@
 #include "Camera.h"
 #include "Light.h"
 #include "PlayerInventory.h"
+#include "NetworkManager/PacketIds.h"
 
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundKeepAlivePacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundPlayerPositionPacket.hpp"
@@ -53,11 +54,8 @@ void NetworkManager::handlePlayerStatus(int packetId, const std::vector<uint8_t>
             break;
         }
 
-#if PROTOCOL_VERSION < 762
-        case 0x38:
-#else
-        case 0x3C:
-#endif
+        case ClientboundPlayerPositionPacket:
+
         { // Player Position And Look
             ProtocolCraft::ClientboundPlayerPositionPacket posPacket;
             std::vector<unsigned char> packetData(data.begin() + startPos, data.end());

@@ -59,8 +59,8 @@ void Collision::resetMovement() {
     keyUp = keyDown = false;
     keySprint = false;
     jumpPressed = false;
-    joystickDX.store(0.0f);
-    joystickDY.store(0.0f);
+    joystickDX.store(0.0);
+    joystickDY.store(0.0);
 }
 
 void Collision::update(float deltaTime, float camPitch, float camYaw, glm::vec3* outPosition, bool* outOnGround) {
@@ -71,11 +71,11 @@ void Collision::update(float deltaTime, float camPitch, float camYaw, glm::vec3*
 
     // 区块未加载则暂停
     if (chunkManager) {
-        int cx = (int)floorf(position.x) >> 4;
-        int cz = (int)floorf(position.z) >> 4;
+        int cx = (int)floor(position.x) >> 4;
+        int cz = (int)floor(position.z) >> 4;
         auto chunk = chunkManager->getChunk(cx, cz);
         if (!chunk || !chunk->isLoaded) {
-            accumulatedTime = 0.0f;
+            accumulatedTime = 0.0;
             if (outPosition) *outPosition = position;
             if (outOnGround) *outOnGround = onGround;
             return;
@@ -88,9 +88,9 @@ void Collision::update(float deltaTime, float camPitch, float camYaw, glm::vec3*
         if (game) {
             double kbVx=0, kbVy=0, kbVz=0;
             game->getEntityManager()->consumeEntityMotion(playerEntityId, kbVx, kbVy, kbVz);
-            velocity.x += (float)kbVx;
-            velocity.y += (float)kbVy;
-            velocity.z += (float)kbVz;
+            velocity.x += kbVx;
+            velocity.y += kbVy;
+            velocity.z += kbVz;
         }
     }
 
@@ -113,27 +113,27 @@ void Collision::tick() {
     ClientEngine::getInstance()->getGame()->getEntityManager()->tick(1);
     // 旁观者模式（无碰撞飞行）
     if (noClip) {
-        const float SPEED = 0.5f;
-        glm::vec3 front, right;
-        float cosYaw = cosf(yaw), sinYaw = sinf(yaw);
-        float cosPitch = cosf(pitch), sinPitch = sinf(pitch);
-        front = glm::normalize(glm::vec3(-sinYaw * cosPitch, -sinPitch, cosYaw * cosPitch));
-        right = glm::normalize(glm::cross(front, glm::vec3(0,1,0)));
+        const double SPEED = 0.5;
+        glm::dvec3 front, right;
+        double cosYaw = cos(yaw), sinYaw = sin(yaw);
+        double cosPitch = cos(pitch), sinPitch = sin(pitch);
+        front = glm::normalize(glm::dvec3(-sinYaw * cosPitch, -sinPitch, cosYaw * cosPitch));
+        right = glm::normalize(glm::cross(front, glm::dvec3(0,1,0)));
 
-        glm::vec3 move(0,0,0);
+        glm::dvec3 move(0,0,0);
         if (keyW) move += front;
         if (keyS) move -= front;
         if (keyA) move -= right;
         if (keyD) move += right;
-        float jdy = joystickDY.load();
-        if (fabs(jdy) > 0.1f) move += front * (-jdy);
-        float jdx = joystickDX.load();
-        if (fabs(jdx) > 0.1f) move += right * jdx;
-        if (glm::length(move) > 0.001f) move = glm::normalize(move) * SPEED;
+        double jdy = joystickDY.load();
+        if (fabs(jdy) > 0.1) move += front * (-jdy);
+        double jdx = joystickDX.load();
+        if (fabs(jdx) > 0.1) move += right * jdx;
+        if (glm::length(move) > 0.001) move = glm::normalize(move) * SPEED;
         if (jumpPressed) move.y += SPEED;
         if (keyDown) move.y -= SPEED;
         position += move;
-        velocity = glm::vec3(0);
+        velocity = glm::dvec3(0);
         onGround = false;
         return;
     }
@@ -142,8 +142,8 @@ void Collision::tick() {
     movePlayer();
 
     // 2. 边界限位（原版有，防止超界）
-    position.x = std::clamp(position.x, -2.9999999E7f, 2.9999999E7f);
-    position.z = std::clamp(position.z, -2.9999999E7f, 2.9999999E7f);
+    position.x = std::clamp(position.x, -2.9999999E7, 2.9999999E7);
+    position.z = std::clamp(position.z, -2.9999999E7, 2.9999999E7);
 
 }
 
@@ -155,11 +155,11 @@ void Collision::movePlayer() {
     // 重力（非飞行时）
     if (!isFlying) {
         velocity.y -= GRAVITY;
-        if (velocity.y < -3.0f) velocity.y = -3.0f;
+        if (velocity.y < -3.0) velocity.y = -3.0;
     }
 
     // 输入加速度
-    applyInputs(isFlying ? 0.02f : (onGround ? 0.216f : 0.02f)); // 简化，实际需根据摩擦计算
+    applyInputs(isFlying ? 0.02 : (onGround ? 0.216 : 0.02)); // 简化，实际需根据摩擦计算
 
     // 跳跃
     if (jumpPressed && onGround && !isFlying) {
@@ -170,15 +170,15 @@ void Collision::movePlayer() {
 
     // 飞行垂直控制
     if (isFlying) {
-        if (jumpPressed) velocity.y = 0.4f;
-        else if (keyDown) velocity.y = -0.4f;
-        else velocity.y *= 0.6f;
+        if (jumpPressed) velocity.y = 0.4;
+        else if (keyDown) velocity.y = -0.4;
+        else velocity.y *= 0.6;
     }
 
     // 限速
-    float horiz = sqrtf(velocity.x*velocity.x + velocity.z*velocity.z);
-    float speedCap = keySprint ? SPRINT_MOVE_SPEED : MOVE_SPEED;
-    if (isFlying) speedCap = 0.5f;
+    double horiz = sqrt(velocity.x*velocity.x + velocity.z*velocity.z);
+    double speedCap = keySprint ? SPRINT_MOVE_SPEED : MOVE_SPEED;
+    if (isFlying) speedCap = 0.5;
     if (horiz > speedCap) {
         velocity.x = velocity.x / horiz * speedCap;
         velocity.z = velocity.z / horiz * speedCap;
@@ -189,17 +189,17 @@ void Collision::movePlayer() {
 
     // 水平摩擦
     if (onGround) {
-        velocity.x *= 0.6f;
-        velocity.z *= 0.6f;
+        velocity.x *= 0.6;
+        velocity.z *= 0.6;
     } else {
-        velocity.x *= 0.98f;
-        velocity.z *= 0.98f;
+        velocity.x *= 0.98;
+        velocity.z *= 0.98;
     }
 
     // 微小速度归零
-    if (fabsf(velocity.x) < 0.003f) velocity.x = 0.0f;
-    if (fabsf(velocity.y) < 0.003f) velocity.y = 0.0f;
-    if (fabsf(velocity.z) < 0.003f) velocity.z = 0.0f;
+    if (fabs(velocity.x) < 0.003) velocity.x = 0.0;
+    if (fabs(velocity.y) < 0.003) velocity.y = 0.0;
+    if (fabs(velocity.z) < 0.003) velocity.z = 0.0;
 
     // 检查特殊方块（粘液块、灵魂沙等）
     checkInsideBlocks();
@@ -209,36 +209,36 @@ void Collision::movePlayer() {
 void Collision::applyMovement() {
     if (noClip) return;
 
-    glm::vec3 movement = velocity;
+    glm::dvec3 movement = velocity;
 
-    if (glm::length(stuckSpeedMultiplier - glm::vec3(1.0f)) > EPSILON) {
+    if (glm::length(stuckSpeedMultiplier - glm::dvec3(1.0)) > EPSILON) {
         movement *= stuckSpeedMultiplier;
-        stuckSpeedMultiplier = glm::vec3(1.0f);
-        velocity = glm::vec3(0.0f);
+        stuckSpeedMultiplier = glm::dvec3(1.0);
+        velocity = glm::dvec3(0.0);
     }
 
     AABB playerAABB = getPlayerAABB();
-    glm::vec3 movementBefore = movement;
+    glm::dvec3 movementBefore = movement;
 
     // 1. 碰撞检测
-    if (glm::length(movement) > 0.0f) {
+    if (glm::length(movement) > 0.0) {
         movement = collideBoundingBox(playerAABB, movement);
     }
 
     // 2. 简化踏步逻辑
-    if ((onGround || (movement.y != movementBefore.y && movementBefore.y < 0.0f)) &&
+    if ((onGround || (movement.y != movementBefore.y && movementBefore.y < 0.0)) &&
         (movement.x != movementBefore.x || movement.z != movementBefore.z)) {
 
         // 尝试抬高 STEP_HEIGHT (0.6) 并水平移动
-        glm::vec3 stepUpMovement = collideBoundingBox(playerAABB,
-                                                      glm::vec3(movementBefore.x, STEP_HEIGHT, movementBefore.z));
+        glm::dvec3 stepUpMovement = collideBoundingBox(playerAABB,
+                                                      glm::dvec3(movementBefore.x, STEP_HEIGHT, movementBefore.z));
         // 如果踏步后的水平位移更远，则应用踏步
         if (stepUpMovement.x * stepUpMovement.x + stepUpMovement.z * stepUpMovement.z >
             movement.x * movement.x + movement.z * movement.z) {
             // 应用踏步位移，并处理竖直下降
             movement = stepUpMovement +
                        collideBoundingBox(playerAABB.offset(stepUpMovement.x, stepUpMovement.y, stepUpMovement.z),
-                                          glm::vec3(0.0f, -stepUpMovement.y + movementBefore.y, 0.0f));
+                                          glm::dvec3(0.0, -stepUpMovement.y + movementBefore.y, 0.0));
         }
     }
 
@@ -253,32 +253,32 @@ void Collision::applyMovement() {
     bool collisionZ = movementBefore.z != movement.z;
     horizontalCollision = collisionX || collisionZ;
 
-    onGround = (movementBefore.y < 0.0f && collisionY);
+    onGround = (movementBefore.y < 0.0 && collisionY);
 
     // 5. 速度归零
-    if (collisionX) velocity.x = 0.0f;
-    if (collisionZ) velocity.z = 0.0f;
+    if (collisionX) velocity.x = 0.0;
+    if (collisionZ) velocity.z = 0.0;
     if (collisionY) {
-        velocity.y = 0.0f; // 简化：蹲下不处理
+        velocity.y = 0.0; // 简化：蹲下不处理
     }
 }
 // ---------- AABB 碰撞检测----------
-glm::vec3 Collision::collideBoundingBox(const AABB& aabb, const glm::vec3& movement) const {
+glm::dvec3 Collision::collideBoundingBox(const AABB& aabb, const glm::dvec3& movement) const {
     // 1. 使用膨胀的 AABB 收集碰撞箱
-    glm::vec3 center = aabb.getCenter();
-    glm::vec3 half = aabb.getHalfSize();
-    glm::vec3 newCenter = center + movement * 0.5f;
-    glm::vec3 newHalf = half + glm::abs(movement) * 0.5f;
+    glm::dvec3 center = aabb.getCenter();
+    glm::dvec3 half = aabb.getHalfSize();
+    glm::dvec3 newCenter = center + movement * 0.5;
+    glm::dvec3 newHalf = half + glm::abs(movement) * 0.5;
     AABB movementExtended(newCenter.x - newHalf.x, newCenter.y - newHalf.y, newCenter.z - newHalf.z,
                           newCenter.x + newHalf.x, newCenter.y + newHalf.y, newCenter.z + newHalf.z);
 
     std::vector<AABB> colliders;
-    int minX = (int)floorf(movementExtended.minX);
-    int maxX = (int)floorf(movementExtended.maxX + EPSILON);
-    int minY = (int)floorf(movementExtended.minY) - 1;  // 注意：减 1
-    int maxY = (int)floorf(movementExtended.maxY + EPSILON);
-    int minZ = (int)floorf(movementExtended.minZ);
-    int maxZ = (int)floorf(movementExtended.maxZ + EPSILON);
+    int minX = (int)floor(movementExtended.minX);
+    int maxX = (int)floor(movementExtended.maxX + EPSILON);
+    int minY = (int)floor(movementExtended.minY) - 1;  // 注意：减 1
+    int maxY = (int)floor(movementExtended.maxY + EPSILON);
+    int minZ = (int)floor(movementExtended.minZ);
+    int maxZ = (int)floor(movementExtended.maxZ + EPSILON);
 
     for (int y = minY; y <= maxY; ++y)
         for (int z = minZ; z <= maxZ; ++z)
@@ -290,10 +290,10 @@ glm::vec3 Collision::collideBoundingBox(const AABB& aabb, const glm::vec3& movem
     if (colliders.empty()) return movement;
 
     // 2. 使用原始 aabb 进行碰撞修正（与之前相同）
-    glm::vec3 collidedMovement = movement;
+    glm::dvec3 collidedMovement = movement;
     AABB movedAABB = aabb;
     collideOneAxis(movedAABB, collidedMovement, 1, colliders);
-    if (fabsf(collidedMovement.x) > fabsf(collidedMovement.z)) {
+    if (fabs(collidedMovement.x) > fabs(collidedMovement.z)) {
         collideOneAxis(movedAABB, collidedMovement, 0, colliders);
         collideOneAxis(movedAABB, collidedMovement, 2, colliders);
     } else {
@@ -304,21 +304,21 @@ glm::vec3 Collision::collideBoundingBox(const AABB& aabb, const glm::vec3& movem
     return collidedMovement;
 }
 
-void Collision::collideOneAxis(AABB& aabb, glm::vec3& movement, int axis, const std::vector<AABB>& colliders) const {
-    if (fabsf(movement[axis]) < EPSILON) {
-        movement[axis] = 0.0f;
+void Collision::collideOneAxis(AABB& aabb, glm::dvec3& movement, int axis, const std::vector<AABB>& colliders) const {
+    if (fabs(movement[axis]) < EPSILON) {
+        movement[axis] = 0.0;
         return;
     }
 
     int axis1 = (axis + 1) % 3;
     int axis2 = (axis + 2) % 3;
 
-    float aabbMin[3] = {aabb.minX, aabb.minY, aabb.minZ};
-    float aabbMax[3] = {aabb.maxX, aabb.maxY, aabb.maxZ};
+    double aabbMin[3] = {aabb.minX, aabb.minY, aabb.minZ};
+    double aabbMax[3] = {aabb.maxX, aabb.maxY, aabb.maxZ};
 
     for (const auto& collider : colliders) {
-        float collMin[3] = {collider.minX, collider.minY, collider.minZ};
-        float collMax[3] = {collider.maxX, collider.maxY, collider.maxZ};
+        double collMin[3] = {collider.minX, collider.minY, collider.minZ};
+        double collMax[3] = {collider.maxX, collider.maxY, collider.maxZ};
 
         // 检查其他两个轴是否重叠
         if (aabbMax[axis1] - EPSILON > collMin[axis1] &&
@@ -326,23 +326,23 @@ void Collision::collideOneAxis(AABB& aabb, glm::vec3& movement, int axis, const 
             aabbMax[axis2] - EPSILON > collMin[axis2] &&
             aabbMin[axis2] + EPSILON < collMax[axis2]) {
 
-            if (movement[axis] > 0.0f) {
+            if (movement[axis] > 0.0) {
                 // 只有方块在玩家上方才修正
                 if (aabbMax[axis] - EPSILON <= collMin[axis]) {
-                    float newMove = collMin[axis] - aabbMax[axis];
+                    double newMove = collMin[axis] - aabbMax[axis];
                     if (newMove < movement[axis]) movement[axis] = newMove;
                 }
             } else { // movement[axis] < 0.0f
                 // 只有方块在玩家下方才修正
                 if (aabbMin[axis] + EPSILON >= collMax[axis]) {
-                    float newMove = collMax[axis] - aabbMin[axis];
+                    double newMove = collMax[axis] - aabbMin[axis];
                     if (newMove > movement[axis]) movement[axis] = newMove;
                 }
             }
         }
     }
 
-    glm::vec3 translation(0.0f, 0.0f, 0.0f);
+    glm::dvec3 translation(0.0, 0.0, 0.0);
     translation[axis] = movement[axis];
     aabb.translate(translation);
 }
@@ -353,29 +353,29 @@ void Collision::checkInsideBlocks() {
 }
 
 // ---------- 输入处理 ----------
-glm::vec3 Collision::getInputVector() const {
-    glm::vec3 front, right;
-    float cosYaw = cosf(yaw), sinYaw = sinf(yaw);
-    float cosPitch = cosf(pitch), sinPitch = sinf(pitch);
-    front = glm::normalize(glm::vec3(-sinYaw * cosPitch, -sinPitch, cosYaw * cosPitch));
-    right = glm::normalize(glm::cross(front, glm::vec3(0,1,0)));
+glm::dvec3 Collision::getInputVector() const {
+    glm::dvec3 front, right;
+    double cosYaw = cos(yaw), sinYaw = sin(yaw);
+    double cosPitch = cos(pitch), sinPitch = sin(pitch);
+    front = glm::normalize(glm::dvec3(-sinYaw * cosPitch, -sinPitch, cosYaw * cosPitch));
+    right = glm::normalize(glm::cross(front, glm::dvec3(0,1,0)));
 
-    glm::vec3 move(0,0,0);
-    if (keyW) move += glm::vec3(front.x, 0, front.z);
-    if (keyS) move -= glm::vec3(front.x, 0, front.z);
+    glm::dvec3 move(0,0,0);
+    if (keyW) move += glm::dvec3(front.x, 0, front.z);
+    if (keyS) move -= glm::dvec3(front.x, 0, front.z);
     if (keyA) move -= right;
     if (keyD) move += right;
-    float jdy = joystickDY.load();
-    if (fabs(jdy) > 0.1f) move += glm::vec3(front.x, 0, front.z) * (-jdy);
-    float jdx = joystickDX.load();
-    if (fabs(jdx) > 0.1f) move += right * jdx;
+    double jdy = joystickDY.load();
+    if (fabs(jdy) > 0.1) move += glm::dvec3(front.x, 0, front.z) * (-jdy);
+    double jdx = joystickDX.load();
+    if (fabs(jdx) > 0.1) move += right * jdx;
 
-    if (glm::length(move) > 1.0f) move = glm::normalize(move);
+    if (glm::length(move) > 1.0) move = glm::normalize(move);
     return move;
 }
 
-void Collision::applyInputs(float strength) {
-    glm::vec3 input = getInputVector();
+void Collision::applyInputs(double strength) {
+    glm::dvec3 input = getInputVector();
     if (glm::length(input) < EPSILON) return;
 
     // 直接累加，因为 input 已经是世界坐标系下的方向
@@ -385,7 +385,7 @@ void Collision::applyInputs(float strength) {
 
 // ---------- AABB 获取 ----------
 AABB Collision::getPlayerAABB() const {
-    float hw = PLAYER_WIDTH * 0.5f;
+    double hw = PLAYER_WIDTH * 0.5;
     return AABB(position.x - hw, position.y, position.z - hw,
                 position.x + hw, position.y + PLAYER_HEIGHT, position.z + hw);
 }
@@ -409,7 +409,7 @@ std::vector<AABB> Collision::getBlockAABBs(int blockX, int blockY, int blockZ) c
     auto* atlas = ClientEngine::getInstance()->getTextureAtlas();
     if (!atlas || !atlas->isInitialized()) {
         float h = meta.height;
-        if (h <= 0.0f) return {};
+        if (h <= 0.0) return {};
         return {AABB((float)blockX, (float)blockY, (float)blockZ,
                      (float)(blockX+1), (float)blockY + h, (float)(blockZ+1))};
     }
@@ -422,8 +422,14 @@ std::vector<AABB> Collision::getBlockAABBs(int blockX, int blockY, int blockZ) c
     std::vector<AABB> result;
     result.reserve(boxes.size());
     for (const auto& cb : boxes) {
-        result.push_back(AABB(blockX + cb.minX, blockY + cb.minY, blockZ + cb.minZ,
-                              blockX + cb.maxX, blockY + cb.maxY, blockZ + cb.maxZ));
+        result.push_back(AABB(
+                (double)blockX + (double)cb.minX,
+                (double)blockY + (double)cb.minY,
+                (double)blockZ + (double)cb.minZ,
+                (double)blockX + (double)cb.maxX,
+                (double)blockY + (double)cb.maxY,
+                (double)blockZ + (double)cb.maxZ
+        ));
     }
     return result;
 }
@@ -441,9 +447,10 @@ glm::vec3 Collision::getVelocity() const {
 
 glm::vec3 Collision::getSmoothPosition() const {
     std::lock_guard<std::mutex> lock(mutex);
-    float alpha = accumulatedTime / TICK_DURATION;
-    alpha = std::clamp(alpha, 0.0f, 1.0f);
-    return prevPosition + (position - prevPosition) * alpha;
+    double alpha = accumulatedTime / TICK_DURATION;
+    alpha = std::clamp(alpha, 0.0, 1.0);
+    glm::dvec3 smooth = prevPosition + (position - prevPosition) * alpha;
+    return glm::vec3((float)smooth.x, (float)smooth.y, (float)smooth.z);
 }
 
 bool Collision::isOnGround() const {
@@ -453,8 +460,8 @@ bool Collision::isOnGround() const {
 
 void Collision::setPosition(float x, float y, float z) {
     std::lock_guard<std::mutex> lock(mutex);
-    position = glm::vec3(x, y, z);
-    velocity = glm::vec3(0.0f);
+    position = glm::dvec3(x, y, z);
+    velocity = glm::dvec3(0.0);
     onGround = false;
     LOGI("Player position set to (%.2f, %.2f, %.2f)", x, y, z);
 }
