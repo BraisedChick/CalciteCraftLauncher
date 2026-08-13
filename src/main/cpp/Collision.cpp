@@ -110,7 +110,7 @@ void Collision::update(float deltaTime, float camPitch, float camYaw, glm::vec3*
 // ---------- 物理核心----------
 void Collision::tick() {
     if (!chunkManager) return;
-
+    ClientEngine::getInstance()->getGame()->getEntityManager()->tick(1);
     // 旁观者模式（无碰撞飞行）
     if (noClip) {
         const float SPEED = 0.5f;
