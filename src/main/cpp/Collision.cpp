@@ -458,7 +458,7 @@ bool Collision::isOnGround() const {
     return onGround;
 }
 
-void Collision::setPosition(float x, float y, float z) {
+void Collision::setPosition(double x, double y, double z) {
     std::lock_guard<std::mutex> lock(mutex);
     position = glm::dvec3(x, y, z);
     velocity = glm::dvec3(0.0);

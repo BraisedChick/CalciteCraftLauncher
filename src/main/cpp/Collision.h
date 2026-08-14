@@ -73,7 +73,7 @@ public:
     glm::vec3 getVelocity() const;
     glm::vec3 getSmoothPosition() const;
     bool isOnGround() const;
-    void setPosition(float x, float y, float z);
+    void setPosition(double x, double y, double z);
     void setChunkManager(ChunkManager* mgr);
     bool hasChunkManager() const;
     void resetMovement();
