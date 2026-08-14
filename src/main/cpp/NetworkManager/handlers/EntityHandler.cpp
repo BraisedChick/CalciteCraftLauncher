@@ -3,6 +3,7 @@
 #include "utils.h"
 #include "EntityManager.h"
 #include "Entity.h"
+#include "NetworkManager/PacketIds.h"
 
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundAddEntityPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundAddMobPacket.hpp"
@@ -22,11 +23,7 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
             break;
 #endif
 
-#if PROTOCOL_VERSION < 762
-        case 0x00:
-#else
-        case 0x01:
-#endif
+        case ClientboundAddEntityPacket:
         { // Spawn Entity
             if (data.size() <= startPos + 1) break;
             ProtocolCraft::ClientboundAddEntityPacket pkt;
@@ -51,7 +48,7 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
         }
 
 #if PROTOCOL_VERSION < 759
-        case 0x02: { // Spawn Mob
+        case ClientboundAddMobPacket: { // Add Mob
             ProtocolCraft::ClientboundAddMobPacket pkt;
             std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
             auto iter = pktData.cbegin();
@@ -98,11 +95,7 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
         }
 #endif
 
-#if PROTOCOL_VERSION < 762
-        case 0x2A:
-#else
-        case 0x2C:
-#endif
+        case ClientboundMoveEntityPacketPosRot:
         { // Entity Position and Rotation
             ProtocolCraft::ClientboundMoveEntityPacketPosRot pkt;
             std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
@@ -116,11 +109,7 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
             break;
         }
 
-#if PROTOCOL_VERSION < 762
-        case 0x29:
-#else
-        case 0x2B:
-#endif
+        case ClientboundMoveEntityPacketPos:
         { // Entity Position
             ProtocolCraft::ClientboundMoveEntityPacketPos pkt;
             std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
@@ -131,11 +120,7 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
             break;
         }
 
-#if PROTOCOL_VERSION < 762
-        case 0x2B:
-#else
-        case 0x2D:
-#endif
+        case ClientboundMoveEntityPacketRot:
         { // Entity Rotation
             ProtocolCraft::ClientboundMoveEntityPacketRot pkt;
             std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
@@ -148,11 +133,7 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
             break;
         }
 
-#if PROTOCOL_VERSION < 762
-        case 0x62:
-#else
-        case 0x68:
-#endif
+        case ClientboundTeleportEntityPacket:
         { // Teleport Entity
             ProtocolCraft::ClientboundTeleportEntityPacket pkt;
             std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
@@ -166,11 +147,7 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
             break;
         }
 
-#if PROTOCOL_VERSION < 762
-        case 0x3A:
-#else
-        case 0x3E:
-#endif
+        case ClientboundRemoveEntitiesPacket:
         { // Remove Entities
             ProtocolCraft::ClientboundRemoveEntitiesPacket pkt;
             std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
@@ -184,11 +161,7 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
             break;
         }
 
-#if PROTOCOL_VERSION < 762
-        case 0x4F:
-#else
-        case 0x54:
-#endif
+        case ClientboundSetEntityMotionPacket:
         { // Set Entity Motion
             ProtocolCraft::ClientboundSetEntityMotionPacket pkt;
             std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
@@ -199,11 +172,8 @@ void NetworkManager::handleEntity(int packetId, const std::vector<uint8_t>& data
                 pkt.GetEntityId(), pkt.GetXA(), pkt.GetYA(), pkt.GetZA());
             break;
         }
-#if PROTOCOL_VERSION < 762
-        case 0x3E:   // 1.18.2 ClientboundRotateHeadPacket
-#else
-        case 0x41:   // 1.19.4+ ClientboundRotateHeadPacket
-#endif
+
+        case ClientboundRotateHeadPacket:
         {
             ProtocolCraft::ClientboundRotateHeadPacket pkt;
             std::vector<unsigned char> pktData(data.begin() + startPos, data.end());

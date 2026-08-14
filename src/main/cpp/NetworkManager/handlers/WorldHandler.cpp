@@ -4,6 +4,7 @@
 #include "ChunkManager.h"
 #include "Light.h"
 #include "Renderer/ChunkMeshScheduler.h"
+#include "NetworkManager/PacketIds.h"
 
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundLevelChunkWithLightPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundBlockUpdatePacket.hpp"
@@ -13,11 +14,7 @@
 
 void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data, size_t startPos) {
     switch (packetId) {
-#if PROTOCOL_VERSION < 762
-        case 0x22:
-#else
-        case 0x24:
-#endif
+        case ClientboundLevelChunkWithLightPacket:
         { // Chunk Data
             {
                 std::lock_guard<std::mutex> lock(m_engine->netMutex);
@@ -26,11 +23,7 @@ void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data,
             break;
         }
 
-#if PROTOCOL_VERSION < 762
-        case 0x0C:
-#else
-        case 0x0A:
-#endif
+        case ClientboundBlockUpdatePacket:
         { // Block Update
             ProtocolCraft::ClientboundBlockUpdatePacket blockPacket;
             std::vector<unsigned char> packetData(data.begin() + startPos, data.end());
@@ -75,12 +68,8 @@ void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data,
             break;
         }
 
-#if PROTOCOL_VERSION < 762
-        case 0x1D:
-#else
-        case 0x1E:
-#endif
-        { // Forget Level Chunk（服务端权威卸载）
+        case ClientboundForgetLevelChunkPacket:
+        { // Forget Level Chunk
             try {
                 ProtocolCraft::ClientboundForgetLevelChunkPacket forgetPacket;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
@@ -95,11 +84,7 @@ void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data,
             break;
         }
 
-#if PROTOCOL_VERSION < 762
-        case 0x25:
-#else
-        case 0x27:
-#endif
+        case ClientboundLightUpdatePacket:
         { // Light Update
             try {
                 ProtocolCraft::ClientboundLightUpdatePacket lightPacket;
@@ -158,11 +143,7 @@ void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data,
             break;
         }
 
-#if PROTOCOL_VERSION < 762
-        case 0x3F:
-#else
-        case 0x43:
-#endif
+        case ClientboundSectionBlocksUpdatePacket:
         { // Section Blocks Update
             ProtocolCraft::ClientboundSectionBlocksUpdatePacket sectionPacket;
             std::vector<unsigned char> packetData(data.begin() + startPos, data.end());

@@ -24,11 +24,7 @@ void NetworkManager::handlePlayerStatus(int packetId, const std::vector<uint8_t>
             break;
 #endif
 
-#if PROTOCOL_VERSION < 762
-        case 0x21:
-#else
-        case 0x23:
-#endif
+        case ClientboundKeepAlivePacket:
         { // Keep Alive
             if (data.size() - startPos >= 8) {
                 long long keepAliveId = 0;
@@ -120,11 +116,7 @@ void NetworkManager::handlePlayerStatus(int packetId, const std::vector<uint8_t>
             break;
         }
 
-#if PROTOCOL_VERSION < 762
-        case 0x35:
-#else
-        case 0x38:
-#endif
+        case ClientboundPlayerCombatKillPacket:
         { // Combat Kill (death message)
             ProtocolCraft::ClientboundPlayerCombatKillPacket killPacket;
             std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
@@ -139,11 +131,7 @@ void NetworkManager::handlePlayerStatus(int packetId, const std::vector<uint8_t>
             break;
         }
 
-#if PROTOCOL_VERSION < 762
-        case 0x51:
-#else
-        case 0x56:
-#endif
+        case ClientboundSetExperiencePacket:
         { // Set Experience
             ProtocolCraft::ClientboundSetExperiencePacket expPacket;
             std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
@@ -156,11 +144,7 @@ void NetworkManager::handlePlayerStatus(int packetId, const std::vector<uint8_t>
             break;
         }
 
-#if PROTOCOL_VERSION < 762
-        case 0x52:
-#else
-        case 0x57:
-#endif
+        case ClientboundSetHealthPacket:
         { // Set Health
             ProtocolCraft::ClientboundSetHealthPacket healthPacket;
             std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
@@ -174,11 +158,7 @@ void NetworkManager::handlePlayerStatus(int packetId, const std::vector<uint8_t>
             break;
         }
 
-#if PROTOCOL_VERSION < 762
-        case 0x59:
-#else
-        case 0x5E:
-#endif
+        case ClientboundSetTimePacket:
         { // Set Time
             ProtocolCraft::ClientboundSetTimePacket timePacket;
             std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
@@ -189,11 +169,7 @@ void NetworkManager::handlePlayerStatus(int packetId, const std::vector<uint8_t>
             break;
         }
 
-#if PROTOCOL_VERSION < 762
-        case 0x48:
-#else
-        case 0x4D:
-#endif
+        case ClientboundSetCarriedItemPacket:
         { // Set Carried Item
             ProtocolCraft::ClientboundSetCarriedItemPacket carriedPacket;
             std::vector<unsigned char> pktData(data.begin() + startPos, data.end());

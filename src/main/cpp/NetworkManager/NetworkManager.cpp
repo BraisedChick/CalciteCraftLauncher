@@ -4,7 +4,6 @@
 #include "Compression.h"
 #include "utils.h"
 #include "ClientEngine/GameEngine.h"
-#include "NetworkManager/handlers/PacketHandlerBase.h"
 #include "ChunkManager.h"
 #include "Renderer/ChunkMeshScheduler.h"
 #include "Light.h"
@@ -146,7 +145,7 @@ bool NetworkManager::sendRawPacket(const std::vector<uint8_t>& fullPacketData) {
     finalPacket.insert(finalPacket.end(), lenBytes.begin(), lenBytes.end());
     finalPacket.insert(finalPacket.end(), packetData.begin(), packetData.end());
 
-    // 如果启用了 AES 加密，原地加密整个数据 — 参考 Botcraft TCP_Com::SendPacket
+    // 如果启用了 AES 加密，原地加密整个数据
     if (isEncrypted()) {
         encrypter->Encrypt(finalPacket.data(), finalPacket.data(), finalPacket.size());
     }
@@ -158,7 +157,7 @@ bool NetworkManager::sendRawPacket(const std::vector<uint8_t>& fullPacketData) {
 std::vector<uint8_t> NetworkManager::receivePacket() {
     if (!connected) return {};
 
-    // 如果启用了 AES 加密，需要先逐字节读取并解密 — 参考 Botcraft TCP_Com
+    // 如果启用了 AES 加密，需要先逐字节读取并解密
     // 因为加密后包长度 VarInt 也被加密了，需要边读边解密
     if (isEncrypted()) {
         return receiveEncryptedPacket();
@@ -486,11 +485,8 @@ void NetworkManager::startPlayLoop() {
         pos = resp.size() - remaining;
 
         // 服务器踢出（Disconnect 包）：解析原因后退出主循环，由 DisconnectedScreen 展示
-#if PROTOCOL_VERSION >= 762
-        if (pid == 0x19) {
-#else
-        if (pid == 0x1A) {
-#endif
+        if (pid == ClientboundDisconnectPacket) {
+
             try {
                 ProtocolCraft::ClientboundDisconnectPacket disconnectPacket;
                 std::vector<unsigned char> pktData(resp.begin() + pos, resp.end());
@@ -532,13 +528,11 @@ void NetworkManager::startPlayLoop() {
         }
 
         // 紧急包（延迟敏感）：位置、方块更新、生命、保活、游戏事件
-#if PROTOCOL_VERSION >= 762
-        if (pid == 0x3C || pid == 0x0A || pid == 0x43 || pid == 0x57 ||
-            pid == 0x23 || pid == 0x1F || pid == 0x41) {
-#else
-        if (pid == 0x38 || pid == 0x0C || pid == 0x3F || pid == 0x52 ||
-            pid == 0x21 || pid == 0x1E || pid == 0x3D) {
-#endif
+        if (pid == ClientboundPlayerPositionPacket || pid == ClientboundBlockUpdatePacket ||
+            pid == ClientboundSectionBlocksUpdatePacket || pid == ClientboundSetHealthPacket ||
+            pid == ClientboundKeepAlivePacket || pid == ClientboundGameEventPacket ||
+            pid == ClientboundRespawnPacket)
+        {
             std::lock_guard<std::mutex> lock(urgentQueueMutex);
             urgentQueue.push({pid, std::move(resp), pos});
             urgentCV.notify_one();
@@ -589,7 +583,7 @@ void NetworkManager::enqueueChunkUnload(int chunkX, int chunkZ) {
 
 /**
  * 加密模式下的数据包接收
- * 参考 Botcraft TCP_Com::RecvPacket 的方式：逐字节读取 → 解密 → 拼接
+ * 逐字节读取 → 解密 → 拼接
  * AES CFB8 是流加密，可以逐字节处理
  */
 std::vector<uint8_t> NetworkManager::receiveEncryptedPacket() {
