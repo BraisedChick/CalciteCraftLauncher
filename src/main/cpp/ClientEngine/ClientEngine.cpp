@@ -253,7 +253,7 @@ void ClientEngine::renderLoop() {
             // 更新玩家物理（传入视角方向计算移动）
             float camPitch = Camera::getInstance().getPitch();
             float camYaw = Camera::getInstance().getYaw();
-            glm::vec3 physPos;
+            glm::dvec3 physPos;
             bool onGround = false;
             game->getCollision()->update(deltaTime, camPitch, camYaw, &physPos, &onGround);
 

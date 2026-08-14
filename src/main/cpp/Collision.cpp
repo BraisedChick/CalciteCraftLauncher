@@ -63,7 +63,7 @@ void Collision::resetMovement() {
     joystickDY.store(0.0);
 }
 
-void Collision::update(float deltaTime, float camPitch, float camYaw, glm::vec3* outPosition, bool* outOnGround) {
+void Collision::update(float deltaTime, float camPitch, float camYaw, glm::dvec3* outPosition, bool* outOnGround) {
     std::lock_guard<std::mutex> lock(mutex);
 
     pitch = camPitch;

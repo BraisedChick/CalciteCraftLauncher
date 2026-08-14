@@ -66,7 +66,7 @@ public:
 
     void setKeyState(int key, bool pressed);
     void setJoystickInput(float dx, float dy);
-    void update(float deltaTime, float camPitch, float camYaw, glm::vec3* outPosition = nullptr, bool* outOnGround = nullptr);
+    void update(float deltaTime, float camPitch, float camYaw, glm::dvec3* outPosition = nullptr, bool* outOnGround = nullptr);
     void setGameMode(int mode);
     int getGameMode() const { return gameMode; }
     glm::vec3 getPosition() const;
