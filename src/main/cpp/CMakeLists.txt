@@ -96,6 +96,7 @@ set(APP_SOURCES
     gui/InventoryScreen.cpp
     gui/PauseScreen.cpp
     gui/ChatScreen.cpp
+    gui/DragHelper.cpp
     ResourcepackManager.cpp
     PlayerInventory.cpp
     Raycast.cpp

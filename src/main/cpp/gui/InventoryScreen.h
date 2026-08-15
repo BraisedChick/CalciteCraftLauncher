@@ -3,6 +3,7 @@
 #include "Screen.h"
 #include <GLES3/gl3.h>
 #include <vector>
+#include "DragHelper.h"   // 新增
 
 // 背包界面（对应 MC 的 InventoryScreen）
 class InventoryScreen : public Screen {
@@ -17,9 +18,6 @@ private:
     void renderFurnace(float w, float h);
     void renderChest(float w, float h, int containerType);
 
-    // 背包拖拽（Quick Craft）状态
-    int quickcraftStatus = 0;
-    std::vector<int> quickcraftSlots;
-    int quickcraftStartSlot = -1;
-    bool isDraggingSlot = false;
+    // 拖拽辅助（取代原有的三个拖拽成员变量）
+    DragHelper m_dragHelper;
 };
