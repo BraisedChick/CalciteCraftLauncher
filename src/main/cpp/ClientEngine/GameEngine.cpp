@@ -896,28 +896,54 @@ void GameEngine::sendContainerClose() {
 
     auto& inv = *m_inventory;
     const auto& containerSlots = inv.getContainerSlots();
-    if (containerSlots.size() >= 46) {
-        std::vector<InvSlot> updatedSlots(inv.getSlotCount());
-        for (int i = 0; i < inv.getSlotCount() && i < 46; i++) {
-            if (i >= 0 && i < 9) {
-                updatedSlots[i] = inv.getSlot(i);
-            } else if (i == 45) {
-                updatedSlots[i] = inv.getSlot(i);
-            }
+    if (containerSlots.empty()) return;
+
+    // ---- 根据容器类型计算背包偏移 ----
+    int containerType = GameUI::getInstance().getOpenContainerType();
+    int mainStart = 0, hotbarStart = 0;
+
+    if (containerType == 2 || containerType == 5) { // 箱子
+        int rows = (containerType == 5) ? 6 : 3;
+        mainStart = rows * 9;
+        hotbarStart = mainStart + 27;
+    } else if (containerType == 11) { // 工作台
+        mainStart = 10;
+        hotbarStart = 37;
+    } else if (containerType == 13) { // 熔炉
+        mainStart = 3;
+        hotbarStart = 30;
+    } else {
+        // 未知类型：从末尾倒数36格（通用降级）
+        if (containerSlots.size() >= 36) {
+            mainStart = (int)containerSlots.size() - 36;
+            hotbarStart = mainStart + 27;
+        } else {
+            return; // 无法确定，跳过同步
         }
-        for (int i = 0; i < 27 && 10 + i < (int)containerSlots.size() && 9 + i < (int)updatedSlots.size(); i++) {
-            updatedSlots[9 + i] = containerSlots[10 + i];
-        }
-        for (int i = 0; i < 9 && 37 + i < (int)containerSlots.size() && 36 + i < (int)updatedSlots.size(); i++) {
-            updatedSlots[36 + i] = containerSlots[37 + i];
-        }
-        inv.setContent(0, updatedSlots);
-        LOGI("ContainerClose: synced %zu container slots to player inventory", containerSlots.size());
     }
 
+    // ---- 构建完整更新后的物品栏 ----
+    std::vector<InvSlot> updatedSlots(inv.getSlotCount());
+    // 复制所有当前槽位（保护合成格、装备、副手等）
+    for (int i = 0; i < inv.getSlotCount(); ++i) {
+        updatedSlots[i] = inv.getSlot(i);
+    }
+
+    // 更新主背包（slots 9~35）
+    for (int i = 0; i < 27 && mainStart + i < (int)containerSlots.size(); ++i) {
+        updatedSlots[9 + i] = containerSlots[mainStart + i];
+    }
+    // 更新快捷栏（slots 36~44）
+    for (int i = 0; i < 9 && hotbarStart + i < (int)containerSlots.size(); ++i) {
+        updatedSlots[36 + i] = containerSlots[hotbarStart + i];
+    }
+
+    inv.setContent(0, updatedSlots);
+    LOGI("ContainerClose: synced from container type %d", containerType);
+
+    // ---- 发送关闭包 ----
     ProtocolCraft::ServerboundContainerClosePacket closePacket;
     closePacket.SetContainerId((unsigned char)containerId);
-
     ProtocolCraft::WriteContainer writeData;
     closePacket.Write(writeData);
     net->sendRawPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
