@@ -25,7 +25,10 @@ void InventoryScreen::render(int mouseX, int mouseY) {
     float h = io.DisplaySize.y;
 
     int containerType = GameUI::getInstance().getOpenContainerType();
-    if (containerType == 11) {
+    if (containerType == 2 || containerType == 5) {
+        // 直接传递 containerType，让 renderChest 自己判断是单箱还是双箱
+        renderChest(w, h, containerType);
+    } else if (containerType == 11) {
         renderCraftingTable(w, h);
     } else if (containerType == 13) {
         // 13 = furnace（1.18.2 与 1.19.4 相同）
@@ -905,6 +908,213 @@ void InventoryScreen::renderFurnace(float w, float h) {
     }
 
     // 光标上的物品
+    const InvSlot& cursor = inv.getCursorItem();
+    if (cursor.present && cursor.itemId > 0) {
+        float mx = io.MousePos.x - INV_SLOT * 0.5f;
+        float my = io.MousePos.y - INV_SLOT * 0.5f;
+        renderItem(mx, my, cursor);
+    }
+
+    ImGui::End();
+}
+// ============================================================
+// 箱子界面（containerType == 2 或 5）2是单格箱子，5是双格箱子
+// 纹理：textures/gui/container/generic_54.png（256x256 图集）
+// 容器槽位：0-(n*9-1) = 箱子格子（单格=9个，双格=18个）
+// 玩家背包槽位 n*9-(n*9+26) = 主背包
+// 快捷栏槽位 n*9+27-(n*9+35) = 快捷栏
+// ============================================================
+void InventoryScreen::renderChest(float w, float h, int containerType) {
+    ImGuiIO& io = ImGui::GetIO();
+
+    const float INV_SLOT = 50.0f;
+    const float TEX_SLOT = 18.0f;
+    float S = INV_SLOT / TEX_SLOT;
+
+    auto* game = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+    if (!game) return;
+    auto& inv = *game->getInventory();
+    const auto& containerSlots = inv.getContainerSlots();
+
+    // ---- 根据 containerType 确定行数 ----
+    int chestRows = 3;                         // 默认单格箱子
+    if (containerType == 5) chestRows = 6;     // 双格箱子
+
+    // ---- 纹理参数 ----
+    const float TEX_CONTAINER_W = 176.0f;
+    const float CHEST_AREA_H = chestRows * 18.0f + 17.0f;
+    const float PLAYER_AREA_H = 96.0f;
+    const float PLAYER_UV_Y_START = 126.0f / 256.0f;
+    const float PLAYER_UV_Y_END   = (126.0f + 96.0f) / 256.0f;
+    const float CHEST_OFFSET = (chestRows-3) * 18.0f;
+
+    float containerW = TEX_CONTAINER_W * S;
+    float containerH = (CHEST_AREA_H + PLAYER_AREA_H) * S;
+    float containerX = (w - containerW) * 0.5f;
+    float containerY = h * 0.5f - containerH * 0.5f;
+
+
+    // ---- 背景遮罩 ----
+    ImGui::GetForegroundDrawList()->AddRectFilled(
+            ImVec2(0, 0), ImVec2(w, h), IM_COL32(0, 0, 0, 160));
+
+    // ---- 绘制箱子纹理 ----
+    ImTextureID bgTex = getGuiTextureId("container/generic_54");
+    if (bgTex != 0) {
+        addNearestSamplerCallback(ImGui::GetForegroundDrawList());
+        // 箱子区域
+        ImGui::GetForegroundDrawList()->AddImage(
+                bgTex,
+                ImVec2(containerX, containerY),
+                ImVec2(containerX + containerW, containerY + CHEST_AREA_H * S),
+                ImVec2(0.0f, 0.0f),
+                ImVec2(TEX_CONTAINER_W / 256.0f, CHEST_AREA_H / 256.0f));
+        // 玩家背包区域
+        ImGui::GetForegroundDrawList()->AddImage(
+                bgTex,
+                ImVec2(containerX, containerY + CHEST_AREA_H * S),
+                ImVec2(containerX + containerW, containerY + (CHEST_AREA_H + PLAYER_AREA_H) * S),
+                ImVec2(0.0f, PLAYER_UV_Y_START),
+                ImVec2(TEX_CONTAINER_W / 256.0f, PLAYER_UV_Y_END));
+    }
+
+    // ---- 标题 ----
+    const char* title = (containerType == 5) ? "大型箱子" : "箱子";
+    ImVec2 titleSize = ImGui::CalcTextSize(title);
+    ImGui::GetForegroundDrawList()->AddText(
+            ImVec2(containerX + (containerW - titleSize.x) * 0.5f,
+                   containerY + 6.0f * S),
+            IM_COL32(55, 55, 55, 255), title);
+
+    // ---- 辅助 Lambda（renderItem / handleSlotClick 完全不变） ----
+    auto renderItem = [&](float sx, float sy, const InvSlot& slot) {
+        if (!slot.present || slot.itemId <= 0) return;
+        std::string itemName = ClientEngine::getInstance()->getBlockRegistry()->getItemName(slot.itemId);
+        if (itemName.empty()) return;
+        ImTextureID tex = getItemIconTexture(itemName);
+        if (tex == 0) return;
+        addNearestSamplerCallback(ImGui::GetForegroundDrawList());
+        float pad = 5.0f;
+        float iconSize = INV_SLOT - pad * 2;
+        ImGui::GetForegroundDrawList()->AddImage(
+                tex,
+                ImVec2(sx + pad, sy + pad),
+                ImVec2(sx + pad + iconSize, sy + pad + iconSize));
+        if (slot.count > 1) {
+            char countStr[8];
+            snprintf(countStr, sizeof(countStr), "%d", slot.count);
+            ImVec2 textSize = ImGui::CalcTextSize(countStr);
+            ImGui::GetForegroundDrawList()->AddText(
+                    ImVec2(sx + INV_SLOT - textSize.x - 3,
+                           sy + INV_SLOT - textSize.y - 2),
+                    IM_COL32(255, 255, 255, 255), countStr);
+        }
+        // 耐久条
+        if (slot.maxDamage > 0) {
+            float pad = 5.0f;
+            float durBarY = sy + INV_SLOT - 7.0f;
+            float durBarH = 3.0f;
+            float durBarX = sx + pad;
+            float durBarW = INV_SLOT - pad * 2;
+            float ratio = 1.0f - (float)slot.damage / (float)slot.maxDamage;
+            ratio = std::max(0.0f, std::min(1.0f, ratio));
+            ImGui::GetForegroundDrawList()->AddRectFilled(
+                    ImVec2(durBarX, durBarY), ImVec2(durBarX + durBarW, durBarY + durBarH),
+                    IM_COL32(0, 0, 0, 150), 1.0f);
+            ImU32 durColor;
+            if (ratio > 0.5f) durColor = IM_COL32(64, 255, 64, 255);
+            else if (ratio > 0.25f) durColor = IM_COL32(255, 255, 64, 255);
+            else durColor = IM_COL32(255, 64, 64, 255);
+            ImGui::GetForegroundDrawList()->AddRectFilled(
+                    ImVec2(durBarX, durBarY), ImVec2(durBarX + durBarW * ratio, durBarY + durBarH),
+                    durColor, 1.0f);
+        }
+    };
+
+    auto getContainerSlot = [&](int index) -> InvSlot {
+        if (index >= 0 && index < (int)containerSlots.size()) {
+            return containerSlots[index];
+        }
+        return InvSlot{};
+    };
+
+    auto handleSlotClick = [&](float sx, float sy, int containerSlot, const char* id) {
+        ImGui::SetCursorScreenPos(ImVec2(sx, sy));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.1f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.2f));
+        char btnId[32];
+        snprintf(btnId, sizeof(btnId), "##%s", id);
+        ImGui::InvisibleButton(btnId, ImVec2(INV_SLOT, INV_SLOT));
+        auto* eng = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+        if (!eng) { ImGui::PopStyleColor(3); return; }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+            eng->sendContainerClick(containerSlot, 0);
+        }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+            eng->sendContainerClick(containerSlot, 1);
+        }
+        ImGui::PopStyleColor(3);
+    };
+
+    // ---- ImGui 窗口 ----
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::Begin("##ChestClick", nullptr,
+                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                 ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground |
+                 ImGuiWindowFlags_NoNav);
+
+    // ---- 绘制箱子格子（偏移 7, 17） ----
+    float chestStartX = containerX + 7.0f * S;
+    float chestStartY = containerY + 17.0f * S;
+    for (int row = 0; row < chestRows; row++) {
+        for (int col = 0; col < 9; col++) {
+            float sx = chestStartX + col * INV_SLOT;
+            float sy = chestStartY + row * INV_SLOT;
+            int slotIdx = row * 9 + col;
+            renderItem(sx, sy, getContainerSlot(slotIdx));
+            char id[16];
+            snprintf(id, sizeof(id), "chest_%d", slotIdx);
+            handleSlotClick(sx, sy, slotIdx, id);
+        }
+    }
+
+    // ---- 绘制玩家主背包（修正 Y：83 + chestRows * 18） ----
+    float playerStartX = containerX + 7.0f * S;
+    float playerStartY = containerY + (CHEST_OFFSET + 84.0f) * S;   // 关键修复
+    for (int row = 0; row < 3; row++) {
+        for (int col = 0; col < 9; col++) {
+            float sx = playerStartX + col * INV_SLOT;
+            float sy = playerStartY + row * INV_SLOT;
+            int slotIdx = chestRows * 9 + row * 9 + col;
+            renderItem(sx, sy, getContainerSlot(slotIdx));
+            char id[16];
+            snprintf(id, sizeof(id), "main_%d", slotIdx);
+            handleSlotClick(sx, sy, slotIdx, id);
+        }
+    }
+
+    // ---- 绘制快捷栏（修正 Y：141，固定） ----
+    float hotbarStartY = containerY + ((CHEST_OFFSET) + 142.0f) * S;                      // 关键修复
+    for (int col = 0; col < 9; col++) {
+        float sx = playerStartX + col * INV_SLOT;
+        float sy = hotbarStartY;
+        int slotIdx = chestRows * 9 + 27 + col;
+        if (col == inv.getSelectedSlot()) {
+            ImGui::GetForegroundDrawList()->AddRect(
+                    ImVec2(sx - 2, sy - 2),
+                    ImVec2(sx + INV_SLOT + 2, sy + INV_SLOT + 2),
+                    IM_COL32(255, 255, 255, 255), 3.0f, 0, 2.5f);
+        }
+        renderItem(sx, sy, getContainerSlot(slotIdx));
+        char id[16];
+        snprintf(id, sizeof(id), "hot_%d", col);
+        handleSlotClick(sx, sy, slotIdx, id);
+    }
+
+    // ---- 光标物品 ----
     const InvSlot& cursor = inv.getCursorItem();
     if (cursor.present && cursor.itemId > 0) {
         float mx = io.MousePos.x - INV_SLOT * 0.5f;
