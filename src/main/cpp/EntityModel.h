@@ -61,6 +61,7 @@ public:
     static const EntityModel& getGhast();
     static const EntityModel& getItem();
     static const EntityModel& getSkeleton();
+    static const EntityModel& getSheep();
 
     // 初始化所有模型（在渲染前调用一次）
     static void initializeAll();
@@ -79,6 +80,7 @@ private:
     static EntityModel buildGhast();
     static EntityModel buildItem();
     static EntityModel buildSkeleton();
+    static EntityModel buildSheep();
     // 添加部件（内部使用）
     void addPart(const std::string& name, int startVertex, int vertexCount, const glm::vec3& pivot);
 
@@ -93,7 +95,12 @@ private:
     void buildBox(float ox, float oy, float oz,
                   float w, float h, float d,
                   float u, float v, float texW, float texH);
-
+    void buildRotatedBox(float ox, float oy, float oz,
+                         float w, float h, float d,
+                         float u, float v,
+                         float texW, float texH,
+                         const glm::vec3& axis, float angle,
+                         const glm::vec3& translation);
     // 设置默认布局（x,y,z,u,v 全 float）
     void setupDefaultLayout();
 
@@ -112,5 +119,6 @@ private:
     static EntityModel s_ghast;
     static EntityModel s_item;
     static EntityModel s_skeleton;
+    static EntityModel s_sheep;
     static bool s_initialized;
 };

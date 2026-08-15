@@ -507,11 +507,16 @@ void GLEntityRenderer::renderAll(const std::vector<Entity>& entities,
                 break;
             }
 
-            case EntityType::COW:
-            case EntityType::SHEEP: {
+            case EntityType::COW: {
                 glm::mat4 mvp = vp * baseModelMatrix;
                 glUniformMatrix4fv(m_uMVP, 1, GL_FALSE, &mvp[0][0]);
                 renderQuadruped(EntityModel::getCow(), iyaw, iheadYaw, entity.pitch);
+                break;
+            }
+            case EntityType::SHEEP: {
+                glm::mat4 mvp = vp * baseModelMatrix;
+                glUniformMatrix4fv(m_uMVP, 1, GL_FALSE, &mvp[0][0]);
+                renderQuadruped(EntityModel::getSheep(), iyaw, iheadYaw, entity.pitch);
                 break;
             }
 

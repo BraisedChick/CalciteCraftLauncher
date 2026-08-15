@@ -1,7 +1,8 @@
 #include "EntityModel.h"
 #include <glm/glm.hpp>    // 仅用于 vec3 运算
 #include <cstring>
-
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/constants.hpp>
 // ---------- 静态成员定义 ----------
 EntityModel EntityModel::s_humanoid;
 EntityModel EntityModel::s_quadruped;
@@ -11,6 +12,7 @@ EntityModel EntityModel::s_creeper;
 EntityModel EntityModel::s_slime;
 EntityModel EntityModel::s_ghast;
 EntityModel EntityModel::s_skeleton;
+EntityModel EntityModel::s_sheep;
 EntityModel EntityModel::s_item;
 bool EntityModel::s_initialized = false;
 
@@ -71,6 +73,57 @@ void EntityModel::buildBox(float ox, float oy, float oz,
     addFace(p1, p5, p6, p2, u + d + w, v + d, d, h, texW, texH); // Right
 }
 
+void EntityModel::buildRotatedBox(float ox, float oy, float oz,
+                                  float w, float h, float d,
+                                  float u, float v,
+                                  float texW, float texH,
+                                  const glm::vec3& axis, float angle,
+                                  const glm::vec3& translation) {
+    // 六个面的局部顶点
+    // 顶面 (y = oy+h)
+    glm::vec3 top[4] = { {ox, oy + h, oz}, {ox + w, oy + h, oz}, {ox + w, oy + h, oz + d}, {ox, oy + h, oz + d} };
+    // 底面 (y = oy)
+    glm::vec3 bottom[4] = { {ox, oy, oz}, {ox + w, oy, oz}, {ox + w, oy, oz + d}, {ox, oy, oz + d} };
+    // 前面 (z = oz)
+    glm::vec3 front[4] = { {ox, oy + h, oz}, {ox + w, oy + h, oz}, {ox + w, oy, oz}, {ox, oy, oz} };
+    // 后面 (z = oz + d)
+    glm::vec3 back[4] = { {ox, oy + h, oz + d}, {ox + w, oy + h, oz + d}, {ox + w, oy, oz + d}, {ox, oy, oz + d} };
+    // 左面 (x = ox)
+    glm::vec3 left[4] = { {ox, oy + h, oz}, {ox, oy + h, oz + d}, {ox, oy, oz + d}, {ox, oy, oz} };
+    // 右面 (x = ox + w)
+    glm::vec3 right[4] = { {ox + w, oy + h, oz}, {ox + w, oy + h, oz + d}, {ox + w, oy, oz + d}, {ox + w, oy, oz} };
+
+    // 应用旋转和平移
+    glm::mat4 rot = glm::rotate(glm::mat4(1.0f), angle, axis);
+    glm::mat4 trans = glm::translate(glm::mat4(1.0f), translation);
+    glm::mat4 transform = trans * rot;
+
+    auto transformPoint = [&](const glm::vec3& p) {
+        glm::vec4 v = transform * glm::vec4(p, 1.0f);
+        return glm::vec3(v);
+    };
+
+    glm::vec3 tTop[4], tBottom[4], tFront[4], tBack[4], tLeft[4], tRight[4];
+    for (int i = 0; i < 4; ++i) {
+        tTop[i] = transformPoint(top[i]);
+        tBottom[i] = transformPoint(bottom[i]);
+        tFront[i] = transformPoint(front[i]);
+        tBack[i] = transformPoint(back[i]);
+        tLeft[i] = transformPoint(left[i]);
+        tRight[i] = transformPoint(right[i]);
+    }
+
+    // 纹理尺寸对应几何尺寸
+    float uw = w, uh = h, ud = d;
+
+    // 六个面，纹理参数与手动构建一致
+    addFace(tTop[0], tTop[1], tTop[2], tTop[3], u + ud,      v,         uw, ud, texW, texH);
+    addFace(tBottom[0], tBottom[1], tBottom[2], tBottom[3], u + ud + uw, v,         uw, ud, texW, texH);
+    addFace(tFront[0], tFront[1], tFront[2], tFront[3], u + ud + uw + ud, v + ud, uw, uh, texW, texH);
+    addFace(tBack[0], tBack[1], tBack[2], tBack[3], u + ud,      v + ud, uw, uh, texW, texH);
+    addFace(tLeft[0], tLeft[1], tLeft[2], tLeft[3], u,           v + ud, ud, uh, texW, texH);
+    addFace(tRight[0], tRight[1], tRight[2], tRight[3], u + ud + uw, v + ud, ud, uh, texW, texH);
+}
 void EntityModel::addPart(const std::string& name, int startVertex, int vertexCount, const glm::vec3& pivot) {
     // 存储时转为块单位（1px = 1/16 block）
     m_parts.push_back({name, startVertex, vertexCount, pivot / 16.0f});
@@ -228,6 +281,27 @@ EntityModel EntityModel::buildSpider() {
     return model;
 }
 
+EntityModel EntityModel::buildSheep() {
+    EntityModel model;
+    const float TW = 64.0f, TH = 32.0f;
+
+    // 头部
+    model.buildBox(-3, 14, -14, 6, 6, 8, 0, 0, TW, TH);
+
+    // 身体
+    model.buildRotatedBox(-4, -10, -7, 8, 16, 6, 28, 8, TW, TH,
+                          glm::vec3(1,0,0), glm::radians(90.0f),
+                          glm::vec3(0, 11, 2));
+
+    // 四条腿
+    model.buildBox(-5, 0,  5, 4, 12, 4, 0, 16, TW, TH);
+    model.buildBox( 1, 0,  5, 4, 12, 4, 0, 16, TW, TH);
+    model.buildBox(-5, 0, -7, 4, 12, 4, 0, 16, TW, TH);
+    model.buildBox( 1, 0, -7, 4, 12, 4, 0, 16, TW, TH);
+
+    model.setupDefaultLayout();
+    return model;
+}
 EntityModel EntityModel::buildCreeper() {
     EntityModel model;
     const float QW = 64.0f, QH = 32.0f;
@@ -298,6 +372,7 @@ void EntityModel::initializeAll() {
     s_slime = buildSlime();
     s_ghast = buildGhast();
     s_skeleton = buildSkeleton();
+    s_sheep = buildSheep();
     s_item = buildItem();
     s_initialized = true;
 }
@@ -311,3 +386,4 @@ const EntityModel& EntityModel::getSlime() { return s_slime; }
 const EntityModel& EntityModel::getGhast() { return s_ghast; }
 const EntityModel& EntityModel::getSkeleton() { return s_skeleton; }
 const EntityModel& EntityModel::getItem() { return s_item; }
+const EntityModel& EntityModel::getSheep() { return s_sheep; }
