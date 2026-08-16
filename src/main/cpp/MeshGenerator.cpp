@@ -204,19 +204,25 @@ static int8_t transformCullface(int8_t cullface, const ElementRotation& elemRot,
 // grass_block 的 #overlay 元素作为普通面进入 base 批次，与底面完全共面且顶点
 // 同源逐位一致，依赖全局 LEQUAL 深度测试后画覆盖，透明像素由 cutout discard 丢弃
 static void generateFromModel(
-    std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
-    const ResolvedBlockModel& model,
-    float blockX, float blockY, float blockZ,  // 方块世界坐标
-    const int32_t neighborStates[6],           // 6 个方向的邻居 blockState
-    uint8_t tintR, uint8_t tintG, uint8_t tintB,
-    int biomeId,
-    int bsRotX, int bsRotY) {
-
-    // 面剔除检测：直接读取预计算的 isFullBlock + isOpaque（无锁）
-    auto isNeighborSolid = [](int32_t state) -> bool {
+        std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
+        const ResolvedBlockModel& model,
+        float blockX, float blockY, float blockZ,
+        const int32_t neighborStates[6],
+        uint8_t tintR, uint8_t tintG, uint8_t tintB,
+        int biomeId,
+        int bsRotX, int bsRotY,
+        const BlockMetadata& currentMeta)   // 新增
+{
+    auto isNeighborOccluding = [&](int32_t state) -> bool {
         if (state == 0) return false;
-        const auto& meta = ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(state);
-        return meta.isFullBlock && meta.isOpaque;
+        const auto& neighborMeta = ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(state);
+        if (!neighborMeta.isFullBlock) return false;
+        if (neighborMeta.isOpaque) return true;
+        // 两者都是完整透明 → 遮挡
+        if (currentMeta.isFullBlock && !currentMeta.isOpaque) {
+            return true;
+        }
+        return false;
     };
 
     // bsRotX/bsRotY 是整块常量，其 cos/sin 预计算一次（避免下面每顶点重算）
@@ -255,7 +261,7 @@ static void generateFromModel(
             if (face.cullface >= 0 && face.cullface < 6) {
                 int8_t actualCullface = transformCullface(face.cullface, elem.rotation, bsRotX, bsRotY);
                 int32_t neighbor = neighborStates[FACEDIR_TO_FACE[actualCullface]];
-                if (neighbor != 0 && isNeighborSolid(neighbor)) {
+                if (neighbor != 0 && isNeighborOccluding(neighbor)) {
                     continue; // 被邻居遮挡，跳过该面
                 }
             }
@@ -586,11 +592,21 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
         return 0;
     };
 
-    // 面剔除检测：几何完整且不透明的方块才会遮挡相邻面
+    // 不透明固体遮挡（用于水等）
     auto isSolid = [](int32_t state) -> bool {
         if (state == 0) return false;
         const auto& meta = ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(state);
         return meta.isFullBlock && meta.isOpaque;
+    };
+
+    // 新增 isOccluding：完整方块且（不透明 或 同为完整透明）时遮挡（用于普通方块）
+    auto isOccluding = [&](int32_t neighborState, const BlockMetadata& currentMeta) -> bool {
+        if (neighborState == 0) return false;
+        const auto& neighborMeta = ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(neighborState);
+        if (!neighborMeta.isFullBlock) return false;
+        if (neighborMeta.isOpaque) return true;
+        if (currentMeta.isFullBlock && !currentMeta.isOpaque) return true;
+        return false;
     };
 
     // 模型缓存：按方块名缓存 getBlockModel 结果，避免重复 string map 查找
@@ -733,7 +749,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                                         n,
                                         tintR, tintG, tintB,
                                         biomeId,
-                                        modelEntry.rotX, modelEntry.rotY);
+                                        modelEntry.rotX, modelEntry.rotY, blockMeta);
                                 countModel++;
                                 renderedAny = true;
                             }
@@ -751,7 +767,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                                 n,
                                 tintR, tintG, tintB,
                                 biomeId,
-                                0, 0);
+                                0, 0, blockMeta);
                         countModel++;
                         continue;
                     }
@@ -786,7 +802,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
 
                 // ===== 普通不透明方块 =====
                 countCubic++;
-                bool renderTop = (n[TOP] == 0) || !isSolid(n[TOP]);
+                bool renderTop = (n[TOP] == 0) || !isOccluding(n[TOP], blockMeta);
                 bool isSnowCovered = (blockMeta.isGrassBlock && n[TOP] != 0 &&
                                       ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(n[TOP]).isSnow);
                 bool isGrassSide = blockMeta.isGrassBlock && !isSnowCovered;
@@ -801,7 +817,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                 }
 
                 // 底面
-                if (isFullBlockHeight && (n[BOTTOM] == 0 || !isSolid(n[BOTTOM]))) {
+                if (isFullBlockHeight && (n[BOTTOM] == 0 || !isOccluding(n[BOTTOM], blockMeta))) {
                     addCubicFace(baseVertices, baseIndices, BOTTOM,
                                  posX, posY, posZ, blockHeight,
                                  static_cast<float>(tex.bottom), tintR, tintG, tintB, 255);
@@ -810,7 +826,7 @@ MeshGenerator::SectionMeshOutput MeshGenerator::generateSectionMesh(const ChunkS
                 // 4 个侧面 (FRONT, BACK, RIGHT, LEFT → n[face])
                 static const int SIDE_FACES[] = {FRONT, BACK, RIGHT, LEFT};
                 for (int sf : SIDE_FACES) {
-                    if (n[sf] != 0 && isSolid(n[sf])) continue;
+                    if (n[sf] != 0 && isOccluding(n[sf], blockMeta)) continue;
 
                     float sideTex;
                     uint8_t sr = 255, sg = 255, sb = 255;
