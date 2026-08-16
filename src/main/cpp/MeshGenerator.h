@@ -9,13 +9,6 @@
 
 class MeshGenerator {
 public:
-    struct BlockFace {
-        float x, y, z;
-        float nx, ny, nz;
-        float u, v;
-        uint8_t r, g, b;
-    };
-
     // 网格生成输出：包含顶点、索引、草覆盖层索引数和水索引数
     struct SectionMeshOutput {
         std::vector<Vertex> vertices;
