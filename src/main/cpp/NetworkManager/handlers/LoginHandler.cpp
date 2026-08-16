@@ -10,6 +10,7 @@
 #include "BiomeColorManager.h"
 #include "ChunkManager.h"
 #include "Renderer/GLRenderer.h"
+#include "NetworkManager/PacketIds.h"
 
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundLoginPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundGameEventPacket.hpp"
@@ -17,11 +18,8 @@
 
 void NetworkManager::handleLogin(int packetId, const std::vector<uint8_t>& data, size_t startPos) {
     switch (packetId) {
-#if PROTOCOL_VERSION < 762
-        case 0x26:
-#else
-        case 0x28:
-#endif
+
+        case ClientboundLoginPacket:
         { // Login (Play) - 玩家初始状态
             LOGI("Received ClientboundLoginPacket (Play)");
 
@@ -202,11 +200,7 @@ void NetworkManager::handleLogin(int packetId, const std::vector<uint8_t>& data,
             break;
         }
 
-#if PROTOCOL_VERSION < 762
-        case 0x1E:
-#else
-        case 0x1F:
-#endif
+        case ClientboundGameEventPacket:
         { // Game Event
             ProtocolCraft::ClientboundGameEventPacket gameEventPacket;
             std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
@@ -222,11 +216,7 @@ void NetworkManager::handleLogin(int packetId, const std::vector<uint8_t>& data,
             break;
         }
 
-#if PROTOCOL_VERSION < 762
-        case 0x3D:
-#else
-        case 0x41:
-#endif
+        case ClientboundRespawnPacket:
         { // Respawn
             ProtocolCraft::ClientboundRespawnPacket respawnPacket;
             std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
