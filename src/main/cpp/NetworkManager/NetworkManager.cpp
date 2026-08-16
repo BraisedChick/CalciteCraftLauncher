@@ -447,9 +447,6 @@ void NetworkManager::parseChunkDataPacket(const std::vector<uint8_t>& data, size
     }
 }
 
-size_t NetworkManager::calculateNBTSize(const std::vector<uint8_t>& data, size_t startPos) {
-    return 0;
-}
 
 bool NetworkManager::sendPacket(const std::vector<uint8_t>& data) {
     return sendRawPacket(data);
