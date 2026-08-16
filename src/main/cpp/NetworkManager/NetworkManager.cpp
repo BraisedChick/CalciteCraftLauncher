@@ -392,7 +392,8 @@ void NetworkManager::parseChunkDataPacket(const std::vector<uint8_t>& data, size
     try {
         m_engine->chunkManager->loadChunk(cx, cz, rawData, true, bitMask,
                                           emptyHeightmaps, emptyBlockEntities,
-                                          m_engine->dimensionMinY);
+                                          m_engine->dimensionMinY,
+                                          m_engine->dimensionHeight);
 
         // 提取光照数据
         auto chunk = m_engine->chunkManager->getChunk(cx, cz);

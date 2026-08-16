@@ -7,12 +7,12 @@ void ChunkManager::loadChunk(int x, int z, const std::vector<uint8_t>& data,
                               bool fullChunk, long long primaryBitMask,
                               const std::vector<uint8_t>& heightmaps,
                               const std::vector<uint8_t>& blockEntities,
-                              int dimensionMinY) {
+                              int dimensionMinY, int dimensionHeight) {
     std::unique_lock<std::shared_mutex> lock(mutex);
 
     try {
         auto chunk = parser.parseChunkData(x, z, data, fullChunk, primaryBitMask,
-                                           heightmaps, blockEntities, dimensionMinY);
+                                           heightmaps, blockEntities, dimensionMinY, dimensionHeight);
 
         ChunkPos pos{x, z};
         chunks[pos] = std::move(chunk);

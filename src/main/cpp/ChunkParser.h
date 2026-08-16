@@ -17,7 +17,8 @@ public:
         long long primaryBitMask,
         const std::vector<uint8_t>& heightmaps,
         const std::vector<uint8_t>& blockEntities,
-        int dimensionMinY = 0
+        int dimensionMinY,
+        int dimensionHeight
     );
     
     // 版本特定的解析方法
@@ -38,7 +39,8 @@ public:
         const std::vector<uint8_t>& data,
         long long primaryBitMask,
         const std::vector<uint8_t>& heightmaps,
-        int dimensionMinY
+        int dimensionMinY,
+        int dimensionHeight
     );
     
     std::unique_ptr<Chunk> parseLatestChunk(      // 1.20.5+

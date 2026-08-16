@@ -15,7 +15,7 @@ public:
                    bool fullChunk, long long primaryBitMask,
                    const std::vector<uint8_t>& heightmaps,
                    const std::vector<uint8_t>& blockEntities,
-                   int dimensionMinY = 0);
+                   int dimensionMinY, int dimensionHeight);
     
     // 获取区块（返回 shared_ptr，线程安全）
     std::shared_ptr<const Chunk> getChunk(int x, int z) const;

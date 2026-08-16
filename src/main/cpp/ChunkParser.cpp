@@ -146,7 +146,8 @@ std::unique_ptr<Chunk> ChunkParser::parseChunkData(
     long long primaryBitMask,
     const std::vector<uint8_t>& heightmapsData,
     const std::vector<uint8_t>& blockEntitiesData,
-    int dimensionMinY
+    int dimensionMinY,
+    int dimensionHeight
 ) {
     // 编译期根据 PROTOCOL_VERSION 宏选择区块解析方法
 #if PROTOCOL_VERSION >= 766
@@ -156,7 +157,7 @@ std::unique_ptr<Chunk> ChunkParser::parseChunkData(
 #elif PROTOCOL_VERSION >= 757
     // 1.18+ Extended
     return parseExtendedChunk(chunkX, chunkZ, data, primaryBitMask,
-                              heightmapsData, dimensionMinY);
+                              heightmapsData, dimensionMinY, dimensionHeight);
 #elif PROTOCOL_VERSION >= 404
     // 1.13-1.17 Modern
     return parseModernChunk(chunkX, chunkZ, data, primaryBitMask);
@@ -287,36 +288,34 @@ bool ChunkParser::parseBiomes(std::vector<int32_t>& biomesOut,
 }
 
 std::unique_ptr<Chunk> ChunkParser::parseExtendedChunk(
-    int chunkX, int chunkZ,
-    const std::vector<uint8_t>& data,
-    long long primaryBitMask,
-    const std::vector<uint8_t>& heightmapsData,
-    int dimensionMinY
+        int chunkX, int chunkZ,
+        const std::vector<uint8_t>& data,
+        long long primaryBitMask,
+        const std::vector<uint8_t>& heightmapsData,
+        int dimensionMinY,
+        int dimensionHeight
 ) {
+    auto chunk = std::make_unique<Chunk>(chunkX, chunkZ);
 
-	auto chunk = std::make_unique<Chunk>(chunkX, chunkZ);
+    // 1. 设置正确的维度范围
+    chunk->dimension.minY = dimensionMinY;
+    chunk->dimension.maxY = dimensionMinY + dimensionHeight;
+
+    // 2. 根据实际高度重新分配 sections
+    int sectionCount = dimensionHeight / SECTION_HEIGHT;  // 下界 128/16=8，主世界 384/16=24
+    chunk->sections.clear();
+    chunk->sections.resize(sectionCount);
+    for (int i = 0; i < sectionCount; ++i) {
+        int y = dimensionMinY + i * SECTION_HEIGHT;
+        auto sec = std::make_unique<ChunkSection>(y);
+        sec->isEmpty = true;
+        chunk->sections[i] = std::move(sec);
+    }
+
     size_t pos = 0;
-    
-    // 用实际维度参数覆盖 Chunk 默认维度（主世界 vs 下界/末地）
-    if (dimensionMinY != chunk->dimension.minY) {
-        chunk->dimension.minY = dimensionMinY;
-        chunk->dimension.maxY = dimensionMinY + ((int)chunk->sections.size() * SECTION_HEIGHT);
-    }
-    
-    // Initialize all sections as empty
-    for (size_t i = 0; i < chunk->sections.size(); i++) {
-        if (!chunk->sections[i]) {
-            auto emptySection = std::make_unique<ChunkSection>();
-            emptySection->y = chunk->dimension.minY + (i * SECTION_HEIGHT);
-            emptySection->isEmpty = true;
-            chunk->sections[i] = std::move(emptySection);
-        }
-    }
-    
-    // Parse ALL sections sequentially (Botcraft style - no bitmask)
-    // Minecraft 1.18+ sends all sections in order, including empty ones
-    int sectionCount = chunk->dimension.getSectionCount();
-    for (int sectionY = 0; sectionY < sectionCount; sectionY++) {
+
+    // ==================== 核心循环（完整保留） ====================
+    for (int sectionY = 0; sectionY < sectionCount; ++sectionY) {
         // Check if we have enough data for block_count
         if (pos + 2 > data.size()) {
             LOGE("Not enough data for section %d at pos=%zu, data.size=%zu", sectionY, pos, data.size());
