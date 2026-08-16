@@ -14,6 +14,7 @@
 #include "PanoramaView.h"
 #include "ChunkOcclusionCuller.h"
 #include "VulkanSkyRenderer.h"
+#include "VulkanPanoramaViewRenderer.h"
 // VMA 句柄前置声明（完整定义在 VulkanRenderer.cpp 随 VMA_IMPLEMENTATION 展开，
 // 与 vk_mem_alloc.h 内部的 VK_DEFINE_HANDLE 重复 typedef 同一类型，合法）
 VK_DEFINE_HANDLE(VmaAllocator)
@@ -71,6 +72,7 @@ private:
     // 顶点/索引存于共享网格池（meshPool）块内区间，绘制用 firstIndex/vertexOffset 寻址，
     // 索引顺序 base | overlay | water 三段合并
     std::unique_ptr<VulkanSkyRenderer> skyRenderer;
+    std::unique_ptr<VulkanPanoramaViewRenderer> panoramaViewRenderer;
     struct ChunkSectionRenderData {
         int sectionY = 0;
         int poolBlock = -1;               // 所属网格池块下标
@@ -162,10 +164,6 @@ private:
     void destroyGuiTextures();
     std::unordered_map<std::string, GuiTexture> guiTextureCache;
 
-    // 主界面旋转全景背景（像素/几何/MVP 由 PanoramaView 提供，这里只管 Vulkan 资源与绘制）
-    bool initPanorama();
-    void renderPanorama(VkCommandBuffer cmd);
-    void destroyPanoramaResources();
 
     std::vector<char> readFile(const std::string& filename);
     VkShaderModule createShaderModule(const std::vector<char>& code);
@@ -298,25 +296,5 @@ private:
     // Section 级 BFS 遮挡剔除（与 GL 后端共用同一实现）
     ChunkOcclusionCuller occlusionCuller;
     bool occlusionDirty = true;  // 渲染缓存增删后置位，触发下帧重算
-
-    // 全景背景资源（cubemap + 独立管线，仅菜单模式使用）
-    PanoramaView panoramaView;
-    bool panoramaInitAttempted = false;
-    bool panoramaReady = false;
-    VkImage panoramaImage = VK_NULL_HANDLE;
-    VmaAllocation panoramaImageMemory = VK_NULL_HANDLE;
-    VkImageView panoramaImageView = VK_NULL_HANDLE;      // VK_IMAGE_VIEW_TYPE_CUBE
-    VkSampler panoramaSampler = VK_NULL_HANDLE;
-    VkBuffer panoramaVertexBuffer = VK_NULL_HANDLE;
-    VmaAllocation panoramaVertexMemory = VK_NULL_HANDLE;
-    VkBuffer panoramaIndexBuffer = VK_NULL_HANDLE;
-    VmaAllocation panoramaIndexMemory = VK_NULL_HANDLE;
-    uint32_t panoramaIndexCount = 0;
-    VkDescriptorSetLayout panoramaSetLayout = VK_NULL_HANDLE;
-    VkDescriptorPool panoramaDescriptorPool = VK_NULL_HANDLE;
-    VkDescriptorSet panoramaDescriptorSet = VK_NULL_HANDLE;
-    VkPipelineLayout panoramaPipelineLayout = VK_NULL_HANDLE;
-    VkPipeline panoramaPipeline = VK_NULL_HANDLE;
-
 
 };
