@@ -425,35 +425,10 @@ void GLEntityRenderer::renderAll(const std::vector<Entity>& entities,
         glUniform1i(m_uTexture, 0);
         glUniform1i(m_uHasTexture, tex ? 1 : 0);
 
-        // 无纹理 fallback 颜色
+        // 无纹理 fallback 紫色
         if (!tex) {
-            switch (entity.type) {
-                case EntityType::ZOMBIE: case EntityType::ZOMBIE_VILLAGER:
-                    glUniform4f(m_uColor, 0.2f, 0.5f, 0.2f, 1.0f); break;
-                case EntityType::SKELETON:
-                    glUniform4f(m_uColor, 0.8f, 0.8f, 0.8f, 1.0f); break;
-                case EntityType::CREEPER:
-                    glUniform4f(m_uColor, 0.1f, 0.7f, 0.1f, 1.0f); break;
-                case EntityType::PLAYER:
-                    glUniform4f(m_uColor, 0.2f, 0.4f, 0.8f, 1.0f); break;
-                case EntityType::PIG: case EntityType::COW: case EntityType::SHEEP:
-                case EntityType::CHICKEN: case EntityType::HORSE:
-                    glUniform4f(m_uColor, 0.6f, 0.4f, 0.2f, 1.0f); break;
-                case EntityType::SPIDER:
-                    glUniform4f(m_uColor, 0.3f, 0.2f, 0.1f, 1.0f); break;
-                case EntityType::SLIME:
-                    glUniform4f(m_uColor, 0.3f, 0.8f, 0.3f, 0.7f); break;
-                case EntityType::GHAST:
-                    glUniform4f(m_uColor, 0.9f, 0.9f, 0.9f, 1.0f); break;
-                case EntityType::BLAZE:
-                    glUniform4f(m_uColor, 1.0f, 0.7f, 0.0f, 1.0f); break;
-                case EntityType::ITEM:
-                    glUniform4f(m_uColor, 0.8f, 0.6f, 0.2f, 1.0f); break;
-                default:
-                    glUniform4f(m_uColor, 0.5f, 0.5f, 0.5f, 1.0f); break;
-            }
+            glUniform4f(m_uColor, 0.8f, 0.0f, 0.8f, 1.0f);
         }
-
         // 插值旋转
         float iyaw = entity.bodyYaw;
         float iheadYaw = entity.headYaw;
