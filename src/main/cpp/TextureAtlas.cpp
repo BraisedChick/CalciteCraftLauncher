@@ -617,18 +617,6 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
     LOGI("TextureAtlas initialized: %d texture layers, %d block mappings",
          getLayerCount(), (int)blockTextureMap.size());
 
-    {
-        int count = 0;
-        for (const auto& [key, val] : blockTextureMap) {
-            LOGI("  BlockMap[%s] = top:%s side:%s bottom:%s", key.c_str(),
-                 val.top.c_str(), val.side.c_str(), val.bottom.c_str());
-            if (++count >= 20) break;
-        }
-    }
-
-    for (int i = 0; i < std::min(20, getLayerCount()); i++) {
-        LOGI("  Layer %d: %s", i, textureList[i].c_str());
-    }
 
     return true;
 }
