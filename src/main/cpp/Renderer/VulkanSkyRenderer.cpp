@@ -208,14 +208,12 @@ bool VulkanSkyRenderer::init() {
         return false;
     }
 
-    // 2. 加载 8 个月相纹理（失败时用 sunTextureView 作为后备，避免空指针）
+    // 2. 加载 8 个月相纹理
     for (int phase = 0; phase < 8; ++phase) {
         const char* path = SkyRenderer::getMoonPhasePath(phase);
         if (!loadCelestialTexture(path, moonTextureImages[phase], moonTextureMemories[phase], moonTextureViews[phase])) {
-            LOGE("Failed to load moon phase %d, using sun as fallback", phase);
-            // 直接复制 sun 的 view 引用（注意：同一个 view，但只读，安全）
-            moonTextureViews[phase] = sunTextureView;
-            // 图像和内存仍为空，但 view 非空即可
+            LOGE("Failed to load moon phase %d texture: %s", phase, path);
+            return false;
         }
     }
 
@@ -688,41 +686,73 @@ void VulkanSkyRenderer::render(VkCommandBuffer cmd, const glm::mat4& viewMatrix,
 void VulkanSkyRenderer::destroy() {
     if (!initialized) return;
 
-    // 管线
-    if (skyColorPipeline) { vkDestroyPipeline(device, skyColorPipeline, nullptr); skyColorPipeline = VK_NULL_HANDLE; }
-    if (skyColorPipelineLayout) { vkDestroyPipelineLayout(device, skyColorPipelineLayout, nullptr); skyColorPipelineLayout = VK_NULL_HANDLE; }
-    if (skyTexturePipeline) { vkDestroyPipeline(device, skyTexturePipeline, nullptr); skyTexturePipeline = VK_NULL_HANDLE; }
-    if (skyTexturePipelineLayout) { vkDestroyPipelineLayout(device, skyTexturePipelineLayout, nullptr); skyTexturePipelineLayout = VK_NULL_HANDLE; }
-
-    // 描述符
-    if (skyTextureDescriptorPool) { vkDestroyDescriptorPool(device, skyTextureDescriptorPool, nullptr); skyTextureDescriptorPool = VK_NULL_HANDLE; }
-    if (skyTextureSetLayout) { vkDestroyDescriptorSetLayout(device, skyTextureSetLayout, nullptr); skyTextureSetLayout = VK_NULL_HANDLE; }
-    if (skyTextureSampler) { vkDestroySampler(device, skyTextureSampler, nullptr); skyTextureSampler = VK_NULL_HANDLE; }
-    skyDescriptorSetSun = VK_NULL_HANDLE;
-    for (int i = 0; i < 8; ++i) skyDescriptorSetMoon[i] = VK_NULL_HANDLE;
-
-    // 纹理（注意：如果某月相使用了 sun 的回退，销毁时需避免 double-free）
-    // 为安全，只销毁 sun 和自己持有的 moon，若 moon 指向 sun 则跳过销毁。
-    auto destroyTex = [&](VkImage& img, VmaAllocation& alloc, VkImageView& view) {
-        if (view && view != sunTextureView) {  // 若不是 sun 的回退引用
-            vkDestroyImageView(device, view, nullptr);
-            view = VK_NULL_HANDLE;
-        }
-        if (img && img != sunTextureImage) {
-            vmaDestroyImage(allocator, img, alloc);
-            img = VK_NULL_HANDLE;
-            alloc = VK_NULL_HANDLE;
-        }
-    };
-    if (sunTextureView) { vkDestroyImageView(device, sunTextureView, nullptr); sunTextureView = VK_NULL_HANDLE; }
-    if (sunTextureImage) { vmaDestroyImage(allocator, sunTextureImage, sunTextureMemory); sunTextureImage = VK_NULL_HANDLE; sunTextureMemory = VK_NULL_HANDLE; }
-    for (int i = 0; i < 8; ++i) {
-        destroyTex(moonTextureImages[i], moonTextureMemories[i], moonTextureViews[i]);
+    // ---------- 销毁管线 ----------
+    if (skyColorPipeline) {
+        vkDestroyPipeline(device, skyColorPipeline, nullptr);
+        skyColorPipeline = VK_NULL_HANDLE;
+    }
+    if (skyColorPipelineLayout) {
+        vkDestroyPipelineLayout(device, skyColorPipelineLayout, nullptr);
+        skyColorPipelineLayout = VK_NULL_HANDLE;
+    }
+    if (skyTexturePipeline) {
+        vkDestroyPipeline(device, skyTexturePipeline, nullptr);
+        skyTexturePipeline = VK_NULL_HANDLE;
+    }
+    if (skyTexturePipelineLayout) {
+        vkDestroyPipelineLayout(device, skyTexturePipelineLayout, nullptr);
+        skyTexturePipelineLayout = VK_NULL_HANDLE;
     }
 
-    // 销毁缓冲（与之前相同）
+    // ---------- 销毁描述符相关 ----------
+    if (skyTextureDescriptorPool) {
+        vkDestroyDescriptorPool(device, skyTextureDescriptorPool, nullptr);
+        skyTextureDescriptorPool = VK_NULL_HANDLE;
+    }
+    if (skyTextureSetLayout) {
+        vkDestroyDescriptorSetLayout(device, skyTextureSetLayout, nullptr);
+        skyTextureSetLayout = VK_NULL_HANDLE;
+    }
+    if (skyTextureSampler) {
+        vkDestroySampler(device, skyTextureSampler, nullptr);
+        skyTextureSampler = VK_NULL_HANDLE;
+    }
+    skyDescriptorSetSun = VK_NULL_HANDLE;
+    for (int i = 0; i < 8; ++i) {
+        skyDescriptorSetMoon[i] = VK_NULL_HANDLE;
+    }
+
+    // ---------- 销毁月相纹理（8个月相各自独立，先销毁月相） ----------
+    for (int i = 0; i < 8; ++i) {
+        if (moonTextureViews[i] != VK_NULL_HANDLE) {
+            vkDestroyImageView(device, moonTextureViews[i], nullptr);
+            moonTextureViews[i] = VK_NULL_HANDLE;
+        }
+        if (moonTextureImages[i] != VK_NULL_HANDLE) {
+            vmaDestroyImage(allocator, moonTextureImages[i], moonTextureMemories[i]);
+            moonTextureImages[i] = VK_NULL_HANDLE;
+            moonTextureMemories[i] = VK_NULL_HANDLE;
+        }
+    }
+
+    // ---------- 销毁太阳纹理 ----------
+    if (sunTextureView != VK_NULL_HANDLE) {
+        vkDestroyImageView(device, sunTextureView, nullptr);
+        sunTextureView = VK_NULL_HANDLE;
+    }
+    if (sunTextureImage != VK_NULL_HANDLE) {
+        vmaDestroyImage(allocator, sunTextureImage, sunTextureMemory);
+        sunTextureImage = VK_NULL_HANDLE;
+        sunTextureMemory = VK_NULL_HANDLE;
+    }
+
+    // ---------- 销毁缓冲区 ----------
     auto destroyBuf = [&](VkBuffer& buf, VmaAllocation& alloc) {
-        if (buf) { vmaDestroyBuffer(allocator, buf, alloc); buf = VK_NULL_HANDLE; alloc = VK_NULL_HANDLE; }
+        if (buf) {
+            vmaDestroyBuffer(allocator, buf, alloc);
+            buf = VK_NULL_HANDLE;
+            alloc = VK_NULL_HANDLE;
+        }
     };
     destroyBuf(skyTopVertexBuffer, skyTopVertexMemory);
     destroyBuf(skySunVertexBuffer, skySunVertexMemory);
