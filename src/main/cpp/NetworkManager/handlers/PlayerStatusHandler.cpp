@@ -16,6 +16,7 @@
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundPlayerCombatKillPacket.hpp"
 #include "protocolCraft/Packets/Game/Serverbound/ServerboundAcceptTeleportationPacket.hpp"
 #include "protocolCraft/Packets/Game/Serverbound/ServerboundMovePlayerPacketPosRot.hpp"
+#include "protocolCraft/Packets/Game/Serverbound/ServerboundKeepAlivePacket.hpp"
 
 void NetworkManager::handlePlayerStatus(int packetId, const std::vector<uint8_t>& data, size_t startPos) {
     switch (packetId) {
@@ -26,26 +27,24 @@ void NetworkManager::handlePlayerStatus(int packetId, const std::vector<uint8_t>
 
         case ClientboundKeepAlivePacket:
         { // Keep Alive
-            if (data.size() - startPos >= 8) {
-                long long keepAliveId = 0;
-                for (int i = 0; i < 8; i++) {
-                    keepAliveId = (keepAliveId << 8) | data[startPos + i];
-                }
+            ProtocolCraft::ClientboundKeepAlivePacket keepAlivePacket;
+            std::vector<unsigned char> packetData(data.begin() + startPos, data.end());
+            auto iter = packetData.cbegin();
+            size_t length = packetData.size();
 
-                std::vector<uint8_t> response;
-#if PROTOCOL_VERSION >= 762
-                response.push_back(0x12);
-#else
-                response.push_back(0x0F);
-#endif
-                for (int i = 7; i >= 0; i--) {
-                    response.push_back((keepAliveId >> (i * 8)) & 0xFF);
-                }
+            keepAlivePacket.Read(iter, length);
 
-                bool sent = sendPacket(response);
-                if (!sent) {
-                    LOGE("Failed to send KeepAlive response!");
-                }
+            // 创建响应数据包
+            ProtocolCraft::ServerboundKeepAlivePacket responsePacket;
+            responsePacket.SetId_(keepAlivePacket.GetId_());
+
+            // 序列化并发送响应
+            ProtocolCraft::WriteContainer writeData;
+            responsePacket.Write(writeData);
+            bool sent = sendPacket(std::vector<uint8_t>(writeData.begin(), writeData.end()));
+
+            if (!sent) {
+                LOGE("Failed to send KeepAlive response!");
             }
             break;
         }
