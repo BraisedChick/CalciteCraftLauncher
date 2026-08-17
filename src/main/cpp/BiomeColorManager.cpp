@@ -22,10 +22,9 @@ bool BiomeColorManager::initialize() {
         LOGE("Failed to load colormap PNGs, using fallback defaults");
     }
 
-    loadBiomeDefaults();
-
+    // 不再加载硬编码的 biome 数据，等待服务器数据
     ready = true;
-    LOGI("BiomeColorManager initialized successfully");
+    LOGI("BiomeColorManager initialized successfully (dynamic mode)");
     return true;
 }
 
@@ -68,23 +67,6 @@ bool BiomeColorManager::loadColormaps() {
     return true;
 }
 
-// 1.18.2 默认 biome 注册顺序（name → ID），共 62 个
-static const char* BIOME_NAMES[] = {
-    "ocean", "plains", "desert", "windswept_hills", "forest",
-    "taiga", "swamp", "river", "nether_wastes", "the_end",
-    "frozen_ocean", "frozen_river", "snowy_plains", "snowy_beach",
-    "windswept_gravelly_hills", "flower_forest", "birch_forest",
-    "dark_forest", "old_growth_birch_forest", "old_growth_pine_taiga",
-    "old_growth_spruce_taiga", "snowy_taiga", "savanna",
-    "savanna_plateau", "badlands", "wooded_badlands", "eroded_badlands",
-    "meadow", "grove", "snowy_slopes", "frozen_peaks", "jagged_peaks",
-    "stony_peaks", "mushroom_fields", "dripstone_caves", "lush_caves",
-    "deep_ocean", "deep_cold_ocean", "deep_frozen_ocean",
-    "deep_lukewarm_ocean", "warm_ocean", "lukewarm_ocean", "cold_ocean",
-    "sunflower_plains", "windswept_savanna", "bamboo_jungle", "jungle",
-    "sparse_jungle", "beach", "stony_shore"
-};
-static const int BIOME_NAME_COUNT = sizeof(BIOME_NAMES) / sizeof(BIOME_NAMES[0]);
 
 // 解析 JSON 中的数值（简单实现）
 static float parseJsonFloat(const std::string& json, const std::string& key) {
@@ -111,134 +93,176 @@ static int parseJsonInt(const std::string& json, const std::string& key) {
     return (int)val;
 }
 
-bool BiomeColorManager::loadBiomeDefaults() {
-    LOGI("Loading biome defaults from ZIP...");
 
-    // 一次遍历 ZIP，读取所有群系 JSON（减少 50+ 次独立 ZIP 查找）
-    auto files = TextureLoader::readAllTextFromZip("worldgen/biome/");
-    if (files.empty()) {
-        LOGW("No biome files found in ZIP at worldgen/biome/");
-        return false;
-    }
-
-    // 构建文件名 → 内容的映射表
-    std::unordered_map<std::string, std::string> biomeFiles;
-    for (auto& [path, content] : files) {
-        // 提取 biome name: "worldgen/biome/plains.json" → "plains"
-        size_t slashPos = path.rfind('/');
-        size_t dotPos = path.rfind('.');
-        if (slashPos == std::string::npos || dotPos == std::string::npos || dotPos <= slashPos) continue;
-        std::string name = path.substr(slashPos + 1, dotPos - slashPos - 1);
-        biomeFiles[std::move(name)] = std::move(content);
-    }
-
-    int loaded = 0;
-    int maxId = BIOME_NAME_COUNT < BIOME_COUNT ? BIOME_NAME_COUNT : BIOME_COUNT;
-    for (int id = 0; id < maxId; id++) {
-        const char* name = BIOME_NAMES[id];
-        auto it = biomeFiles.find(name);
-        if (it == biomeFiles.end()) continue;
-
-        const std::string& content = it->second;
-
-        float temp = parseJsonFloat(content, "temperature");
-        float downfall = parseJsonFloat(content, "downfall");
-
-        if (temp != -1.0f) biomes[id].temperature = temp;
-        if (downfall != -1.0f) biomes[id].downfall = downfall;
-
-        // 解析 water_color（在 effects 对象内）
-        std::string effectsKey = "\"effects\":";
-        size_t effectsPos = content.find(effectsKey);
-        if (effectsPos != std::string::npos) {
-            size_t effectsEnd = content.find("}", effectsPos);
-            if (effectsEnd != std::string::npos) {
-                std::string effects = content.substr(effectsPos, effectsEnd - effectsPos + 1);
-                int waterColor = parseJsonInt(effects, "water_color");
-                if (waterColor >= 0) {
-                    biomes[id].hasFixedWaterColor = true;
-                    biomes[id].fixedWaterR = (uint8_t)((waterColor >> 16) & 0xFF);
-                    biomes[id].fixedWaterG = (uint8_t)((waterColor >> 8) & 0xFF);
-                    biomes[id].fixedWaterB = (uint8_t)(waterColor & 0xFF);
-                }
-                int grassColor = parseJsonInt(effects, "grass_color");
-                if (grassColor >= 0) {
-                    biomes[id].hasFixedGrassColor = true;
-                    biomes[id].fixedGrassR = (uint8_t)((grassColor >> 16) & 0xFF);
-                    biomes[id].fixedGrassG = (uint8_t)((grassColor >> 8) & 0xFF);
-                    biomes[id].fixedGrassB = (uint8_t)(grassColor & 0xFF);
-                }
-                int foliageColor = parseJsonInt(effects, "foliage_color");
-                if (foliageColor >= 0) {
-                    biomes[id].hasFixedFoliageColor = true;
-                    biomes[id].fixedFoliageR = (uint8_t)((foliageColor >> 16) & 0xFF);
-                    biomes[id].fixedFoliageG = (uint8_t)((foliageColor >> 8) & 0xFF);
-                    biomes[id].fixedFoliageB = (uint8_t)(foliageColor & 0xFF);
-                }
-            }
-        }
-
-        loaded++;
-    }
-
-    LOGI("Loaded %d biome defaults from ZIP", loaded);
-    return loaded > 0;
+void BiomeColorManager::clear() {
+    biomeRegistry.clear();
+    serverIdToInternalId.clear();
+    serverIdToName.clear();
+    internalIdToServerId.clear();
+    LOGI("Biome registry cleared");
 }
 
 void BiomeColorManager::applyServerBiomeMapping(const std::map<std::string, BiomeEntry>& serverBiomes) {
     LOGI("Applying server biome registry mapping with %zu entries", serverBiomes.size());
 
+    // 清理旧数据
+    clear();
+
     int loadedCount = 0;
-    for (const auto& [name, entry] : serverBiomes) {
-        // 从 "minecraft:ocean" 格式提取名称
-        std::string biomeName = name;
-        size_t colonPos = biomeName.find(':');
-        if (colonPos != std::string::npos) {
-            biomeName = biomeName.substr(colonPos + 1);
-        }
+    for (const auto& [fullName, entry] : serverBiomes) {
+        // 解析 biome 名称
+        std::string biomeName = parseBiomeName(fullName);
 
-        // 在 BIOME_NAMES 中找到匹配的本地索引
-        int localId = -1;
-        for (int i = 0; i < BIOME_NAME_COUNT; i++) {
-            if (biomeName == BIOME_NAMES[i]) {
-                localId = i;
-                break;
-            }
-        }
+        // 查找或创建注册表项
+        BiomeRegistryEntry& registryEntry = getOrRegisterBiome(biomeName, -1); // serverId 将在之后设置
 
-        if (localId < 0 || localId >= BIOME_COUNT) {
-            LOGW("Server biome '%s' not found in local BIOME_NAMES, skipping", name.c_str());
-            continue;
-        }
+        // 设置数据
+        registryEntry.data = entry;
+        registryEntry.name = fullName;
 
-        biomes[localId] = entry;
         loadedCount++;
+        LOGI("Registered biome: %s (temperature: %.2f, downfall: %.2f)",
+             biomeName.c_str(), entry.temperature, entry.downfall);
     }
 
-    LOGI("Applied %d server biome mappings", loadedCount);
+    LOGI("Registered %d server biome mappings", loadedCount);
 }
 
 void BiomeColorManager::setServerIdMapping(const std::map<int32_t, int32_t>& mapping) {
-    serverIdToLocal = mapping;
-    LOGI("Server biome ID mapping set (direct) with %zu entries", mapping.size());
-}
+    // 清理旧的映射
+    serverIdToInternalId.clear();
+    serverIdToName.clear();
 
-void BiomeColorManager::setServerIdMapping(const std::map<int32_t, std::string>& serverIdToName) {
-    serverIdToLocal.clear();
-    for (const auto& [serverId, name] : serverIdToName) {
-        std::string biomeName = name;
-        size_t colonPos = biomeName.find(':');
-        if (colonPos != std::string::npos) {
-            biomeName = biomeName.substr(colonPos + 1);
-        }
-        for (int i = 0; i < BIOME_NAME_COUNT; i++) {
-            if (biomeName == BIOME_NAMES[i]) {
-                serverIdToLocal[serverId] = i;
+    for (const auto& [serverId, internalId] : mapping) {
+        // 查找注册表项
+        auto it = biomeRegistry.begin();
+        for (; it != biomeRegistry.end(); ++it) {
+            if (it->second->internalId == internalId) {
+                // 设置映射
+                serverIdToInternalId[serverId] = internalId;
+                serverIdToName[serverId] = it->second->name;
+
+                // 设置服务器 ID
+                it->second->serverId = serverId;
+
+                // 设置反向映射
+                internalIdToServerId[internalId] = serverId;
+
+                LOGI("Mapped server ID %d to internal ID %d (%s)",
+                     serverId, internalId, it->second->name.c_str());
                 break;
             }
         }
+
+        if (it == biomeRegistry.end()) {
+            LOGW("Could not find internal ID %d in registry for server ID %d",
+                 internalId, serverId);
+        }
     }
-    LOGI("Server biome ID mapping set (by name) with %zu entries", serverIdToLocal.size());
+
+    LOGI("Server biome ID mapping set (direct) with %zu entries", serverIdToInternalId.size());
+}
+
+void BiomeColorManager::setServerIdMapping(const std::map<int32_t, std::string>& serverIdToNameParam) {
+    // 清理旧的映射
+    serverIdToInternalId.clear();
+    serverIdToName.clear();
+
+    for (const auto& [serverId, fullName] : serverIdToNameParam) {
+        // 解析 biome 名称
+        std::string biomeName = parseBiomeName(fullName);
+
+        // 查找注册表项
+        auto it = biomeRegistry.find(biomeName);
+        if (it != biomeRegistry.end()) {
+            // 设置映射
+            serverIdToInternalId[serverId] = it->second->internalId;
+            serverIdToName[serverId] = fullName;
+
+            // 设置服务器 ID
+            it->second->serverId = serverId;
+
+            // 设置反向映射
+            internalIdToServerId[it->second->internalId] = serverId;
+
+            LOGI("Mapped server ID %d to internal ID %d (%s)",
+                 serverId, it->second->internalId, biomeName.c_str());
+        } else {
+            LOGW("Could not find biome registry entry for server ID %d (%s)",
+                 serverId, fullName.c_str());
+        }
+    }
+
+    LOGI("Server biome ID mapping set (by name) with %zu entries", serverIdToInternalId.size());
+}
+
+std::string BiomeColorManager::parseBiomeName(const std::string& fullName) const {
+    size_t colonPos = fullName.find(':');
+    if (colonPos != std::string::npos) {
+        return fullName.substr(colonPos + 1);
+    }
+    return fullName;
+}
+
+BiomeColorManager::BiomeRegistryEntry& BiomeColorManager::getOrRegisterBiome(const std::string& name, int32_t serverId) {
+    auto it = biomeRegistry.find(name);
+    if (it != biomeRegistry.end()) {
+        return *it->second;
+    }
+
+    // 创建新的注册表项
+    auto entry = std::make_unique<BiomeRegistryEntry>();
+    entry->name = name;
+    entry->serverId = serverId;
+    int32_t newInternalId = static_cast<int32_t>(biomeRegistry.size());
+    entry->internalId = newInternalId;
+
+    // 维护映射
+    internalIdToName[newInternalId] = name;
+    internalIdToServerId[newInternalId] = serverId;
+
+    // 存储并返回引用
+    BiomeRegistryEntry* entryPtr = entry.get();
+    biomeRegistry[name] = std::move(entry);
+
+    LOGI("Created new biome registry entry: %s (internal ID: %d)",
+         name.c_str(), newInternalId);
+
+    return *entryPtr;
+}
+
+const BiomeColorManager::BiomeEntry* BiomeColorManager::getBiomeEntry(int32_t serverBiomeId) const {
+    auto it = serverIdToInternalId.find(serverBiomeId);
+    if (it == serverIdToInternalId.end()) {
+        return nullptr;
+    }
+
+    int32_t internalId = it->second;
+
+    // 使用 internalIdToName 映射找到名称
+    auto nameIt = internalIdToName.find(internalId);
+    if (nameIt == internalIdToName.end()) {
+        return nullptr;
+    }
+
+    // 然后在 biomeRegistry 中查找
+    auto registryIt = biomeRegistry.find(nameIt->second);
+    if (registryIt == biomeRegistry.end()) {
+        return nullptr;
+    }
+
+    return &registryIt->second->data;
+}
+
+const std::string& BiomeColorManager::getBiomeName(int32_t serverBiomeId) const {
+    static std::string empty = "";
+
+    auto it = serverIdToName.find(serverBiomeId);
+    if (it != serverIdToName.end()) {
+        return it->second;
+    }
+
+    return empty;
 }
 
 void BiomeColorManager::sampleColor(const std::vector<uint8_t>& colormap,
@@ -273,14 +297,33 @@ void BiomeColorManager::sampleColor(const std::vector<uint8_t>& colormap,
     }
 }
 
-void BiomeColorManager::getGrassColor(int32_t biomeId, uint8_t& r, uint8_t& g, uint8_t& b) const {
-    biomeId = resolveBiomeId(biomeId);
-    if (!ready || biomeId < 0 || biomeId >= BIOME_COUNT) {
+void BiomeColorManager::getGrassColor(int32_t serverBiomeId, uint8_t& r, uint8_t& g, uint8_t& b) const {
+    if (!ready) {
         r = 255; g = 255; b = 255;
         return;
     }
 
-    const auto& entry = biomes[biomeId];
+    // 查找内部映射
+    auto it = serverIdToInternalId.find(serverBiomeId);
+    if (it == serverIdToInternalId.end()) {
+        LOGW("Server biome ID %d not found in registry", serverBiomeId);
+        r = 255; g = 255; b = 255;
+        return;
+    }
+
+    int32_t internalId = it->second;
+    auto nameIt = internalIdToName.find(internalId);
+    if (nameIt == internalIdToName.end()) {
+        r = 255; g = 255; b = 255;
+        return;
+    }
+    auto registryIt = biomeRegistry.find(nameIt->second);
+    if (registryIt == biomeRegistry.end()) {
+        r = 255; g = 255; b = 255;
+        return;
+    }
+
+    const auto& entry = registryIt->second->data;
 
     // 如果有固定颜色（如沼泽），使用固定值
     if (entry.hasFixedGrassColor) {
@@ -293,7 +336,6 @@ void BiomeColorManager::getGrassColor(int32_t biomeId, uint8_t& r, uint8_t& g, u
     // 从 colormap 采样
     if (!grassColormap.empty()) {
         // Minecraft 原版：grass 使用调整后的降雨量 (downfall * temperature)
-        // 先用 clamped 后的温度乘降水，再算 y 坐标。否则负温度会导致 y 坐标落在底部
         float clampedTemp = std::max(0.0f, std::min(1.0f, entry.temperature));
         float adjustedDownfall = clampedTemp * std::max(0.0f, std::min(1.0f, entry.downfall));
         sampleColor(grassColormap, clampedTemp, adjustedDownfall, r, g, b);
@@ -301,18 +343,36 @@ void BiomeColorManager::getGrassColor(int32_t biomeId, uint8_t& r, uint8_t& g, u
         // fallback
         r = 170; g = 68; b = 170;
     }
-
 }
 
 
-void BiomeColorManager::getFoliageColor(int32_t biomeId, uint8_t& r, uint8_t& g, uint8_t& b) const {
-    biomeId = resolveBiomeId(biomeId);
-    if (!ready || biomeId < 0 || biomeId >= BIOME_COUNT) {
+void BiomeColorManager::getFoliageColor(int32_t serverBiomeId, uint8_t& r, uint8_t& g, uint8_t& b) const {
+    if (!ready) {
         r = 255; g = 255; b = 255;
         return;
     }
 
-    const auto& entry = biomes[biomeId];
+    // 查找内部映射
+    auto it = serverIdToInternalId.find(serverBiomeId);
+    if (it == serverIdToInternalId.end()) {
+        LOGW("Server biome ID %d not found in registry", serverBiomeId);
+        r = 255; g = 255; b = 255;
+        return;
+    }
+
+    int32_t internalId = it->second;
+    auto nameIt = internalIdToName.find(internalId);
+    if (nameIt == internalIdToName.end()) {
+        r = 255; g = 255; b = 255;
+        return;
+    }
+    auto registryIt = biomeRegistry.find(nameIt->second);
+    if (registryIt == biomeRegistry.end()) {
+        r = 255; g = 255; b = 255;
+        return;
+    }
+
+    const auto& entry = registryIt->second->data;
 
     // 如果有固定树叶颜色（如沼泽），使用固定值
     if (entry.hasFixedFoliageColor) {
@@ -333,14 +393,33 @@ void BiomeColorManager::getFoliageColor(int32_t biomeId, uint8_t& r, uint8_t& g,
     }
 }
 
-void BiomeColorManager::getWaterColor(int32_t biomeId, uint8_t& r, uint8_t& g, uint8_t& b) const {
-    biomeId = resolveBiomeId(biomeId);
-    if (!ready || biomeId < 0 || biomeId >= BIOME_COUNT) {
+void BiomeColorManager::getWaterColor(int32_t serverBiomeId, uint8_t& r, uint8_t& g, uint8_t& b) const {
+    if (!ready) {
         r = 0x3F; g = 0x76; b = 0xE4;
         return;
     }
 
-    const auto& entry = biomes[biomeId];
+    // 查找内部映射
+    auto it = serverIdToInternalId.find(serverBiomeId);
+    if (it == serverIdToInternalId.end()) {
+        // 使用默认水色
+        r = 0x3F; g = 0x76; b = 0xE4;
+        return;
+    }
+
+    int32_t internalId = it->second;
+    auto nameIt = internalIdToName.find(internalId);
+    if (nameIt == internalIdToName.end()) {
+        r = 0x3F; g = 0x76; b = 0xE4;
+        return;
+    }
+    auto registryIt = biomeRegistry.find(nameIt->second);
+    if (registryIt == biomeRegistry.end()) {
+        r = 0x3F; g = 0x76; b = 0xE4;
+        return;
+    }
+
+    const auto& entry = registryIt->second->data;
 
     if (entry.hasFixedWaterColor) {
         r = entry.fixedWaterR;
