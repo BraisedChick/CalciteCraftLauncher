@@ -152,7 +152,6 @@ TextureData TextureLoader::loadFromZip(const std::string& filename) {
 
     stbi_image_free(imageData);
 
-    LOGI("Loaded texture from ZIP: %s (%dx%d)", filename.c_str(), width, height);
     return result;
 }
 
