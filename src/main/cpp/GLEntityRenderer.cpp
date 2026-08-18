@@ -427,7 +427,12 @@ void GLEntityRenderer::renderAll(const std::vector<Entity>& entities,
 
         // 无纹理 fallback 紫色
         if (!tex) {
-            glUniform4f(m_uColor, 0.8f, 0.0f, 0.8f, 1.0f);
+            if (entity.type == EntityType::ITEM) {
+                glUniform4f(m_uColor, 0.8f, 0.6f, 0.2f, 1.0f);
+            }
+            else {
+                glUniform4f(m_uColor, 0.8f, 0.0f, 0.8f, 1.0f);
+            }
         }
         // 插值旋转
         float iyaw = entity.bodyYaw;
