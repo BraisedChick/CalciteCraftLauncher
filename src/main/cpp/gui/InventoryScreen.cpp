@@ -79,6 +79,8 @@ void InventoryScreen::renderPlayerInventory(float w, float h) {
     const float TEX_CRAFT_TOP = 18.0f;
     const float TEX_RESULT_LEFT = 154.0f;
     const float TEX_RESULT_TOP = 28.0f;
+    const float TEX_ARMOR_X = 7.0f;
+    const float TEX_ARMOR_Y_START = 8.0f;
 
     float containerW = TEX_CONTAINER_W * S;
     float containerH = TEX_CONTAINER_H * S;
@@ -92,6 +94,35 @@ void InventoryScreen::renderPlayerInventory(float w, float h) {
     // 背景遮罩
     ImGui::GetForegroundDrawList()->AddRectFilled(
         ImVec2(0, 0), ImVec2(w, h), IM_COL32(0, 0, 0, 160));
+
+    // 渲染装备槽位
+    auto renderArmorSlot = [&](int equipmentSlotIndex, float sx, float sy, const InvSlot& slot) {
+        // 背景图已经包含了装备槽位的纹理，我们只需要渲染物品
+        if (slot.present && slot.itemId > 0) {
+            std::string itemName = ClientEngine::getInstance()->getBlockRegistry()->getItemName(slot.itemId);
+            if (!itemName.empty()) {
+                ImTextureID tex = getItemIconTexture(itemName);
+                if (tex != 0) {
+                    addNearestSamplerCallback(ImGui::GetForegroundDrawList());
+                    float pad = 4.0f;
+                    float iconSize = INV_SLOT - pad * 2;
+                    ImGui::GetForegroundDrawList()->AddImage(
+                        tex,
+                        ImVec2(sx + pad, sy + pad),
+                        ImVec2(sx + pad + iconSize, sy + pad + iconSize));
+                    if (slot.count > 1) {
+                        char countStr[8];
+                        snprintf(countStr, sizeof(countStr), "%d", slot.count);
+                        ImVec2 textSize = ImGui::CalcTextSize(countStr);
+                        ImGui::GetForegroundDrawList()->AddText(
+                            ImVec2(sx + INV_SLOT - textSize.x - 3,
+                                   sy + INV_SLOT - textSize.y - 2),
+                            IM_COL32(255, 255, 255, 255), countStr);
+                    }
+                }
+            }
+        }
+    };
 
     // 容器纹理（双后端：GL=ResourcepackManager，Vulkan=VulkanRenderer）
     ImTextureID bgTex = getGuiTextureId("container/inventory");
@@ -289,6 +320,33 @@ void InventoryScreen::renderPlayerInventory(float w, float h) {
     float resultY = containerY + TEX_RESULT_TOP * S;
     renderItem(resultX, resultY, inv.getCraftResult());
     handleSlotClick(resultX, resultY, 0, "craft_result");
+
+    // 装备槽位（5-8）
+    float armorStartX = containerX + TEX_ARMOR_X * S;
+    for (int i = 0; i < 4; i++) {
+        float armorY = containerY + (TEX_ARMOR_Y_START + i * 18.0f) * S;
+        renderArmorSlot(i, armorStartX, armorY, inv.getArmorSlot(i));
+
+        // 处理装备槽点击
+        ImGui::SetCursorScreenPos(ImVec2(armorStartX, armorY));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.1f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.2f));
+        char armorId[16];
+        snprintf(armorId, sizeof(armorId), "armor_%d", i);
+        ImGui::InvisibleButton(armorId, ImVec2(INV_SLOT, INV_SLOT));
+        auto* eng = ClientEngine::getInstance() ? ClientEngine::getInstance()->getGame() : nullptr;
+        if (eng) {
+            int armorSlotIdx = 5 + i;  // 5-8 对应装备槽位
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+                eng->sendContainerClick(armorSlotIdx, 0);
+            }
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                eng->sendContainerClick(armorSlotIdx, 1);
+            }
+        }
+        ImGui::PopStyleColor(3);
+    }
 
     // ---- 拖拽预测渲染 ----
     m_dragHelper.renderPrediction(io, inv, renderItem, getSlotScreenPos, containerId, INV_SLOT);

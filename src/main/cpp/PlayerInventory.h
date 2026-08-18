@@ -45,6 +45,9 @@ public:
     void setLocalSlot(int index, const InvSlot& item);
     int getSlotCount() const { return (int)slots.size(); }
 
+    // 装备槽位访问（0=头盔, 1=胸甲, 2=护腿, 3=鞋子）
+    const InvSlot& getArmorSlot(int equipmentSlot) const;
+
     // 合成格子访问（2x2 合成格：slots 1-4，结果槽：slot 0）
     const InvSlot& getCraftSlot(int index) const;  // index 0-3 对应 slots 1-4
     const InvSlot& getCraftResult() const;          // slot 0

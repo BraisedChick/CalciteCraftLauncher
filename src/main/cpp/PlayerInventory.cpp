@@ -82,6 +82,20 @@ void PlayerInventory::setSlot(int containerId, int slot, const InvSlot& item) {
             slots[slot] = item;
         }
     }
+
+    // 更新装备槽位时的额外处理
+    if (containerId == 0) {
+        // 检查是否是装备槽位（5-8）
+        if (slot >= 5 && slot <= 8) {
+            int equipmentSlot = slot - 5;
+            if (equipmentSlot >= 0 && equipmentSlot < 4) {
+                // 更新装备槽位
+                if (slot >= 0 && slot < (int)slots.size()) {
+                    slots[slot] = item;
+                }
+            }
+        }
+    }
     // containerId = -1 表示鼠标上的物品（游标），暂不处理
 }
 
@@ -122,6 +136,19 @@ const InvSlot& PlayerInventory::getSlot(int index) const {
     std::lock_guard<std::mutex> lock(mutex);
     if (index < 0 || index >= (int)slots.size()) return empty;
     return slots[index];
+}
+
+// 获取装备槽位
+const InvSlot& PlayerInventory::getArmorSlot(int equipmentSlot) const {
+    static InvSlot empty;
+    // equipmentSlot: 0=头盔, 1=胸甲, 2=护腿, 3=鞋子
+    if (equipmentSlot < 0 || equipmentSlot > 3) return empty;
+    int slotIndex = 5 + equipmentSlot;
+    if (slotIndex < (int)slots.size()) {
+        std::lock_guard<std::mutex> lock(mutex);
+        return slots[slotIndex];
+    }
+    return empty;
 }
 
 void PlayerInventory::setLocalSlot(int index, const InvSlot& item) {
