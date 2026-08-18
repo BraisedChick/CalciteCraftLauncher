@@ -119,6 +119,8 @@ void InventoryScreen::renderPlayerInventory(float w, float h) {
                                    sy + INV_SLOT - textSize.y - 2),
                             IM_COL32(255, 255, 255, 255), countStr);
                     }
+                    // 添加耐久条
+                    renderDurabilityBar(ImGui::GetForegroundDrawList(), sx, sy, INV_SLOT, slot.damage, slot.maxDamage);
                 }
             }
         }
