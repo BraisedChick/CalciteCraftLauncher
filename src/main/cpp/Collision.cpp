@@ -138,10 +138,14 @@ void Collision::tick() {
         return;
     }
 
-    // 1. 调用 movePlayer (LivingEntity::travel)
+    // 1. 流体检测与游泳状态更新（对应 Entity::baseTick / Player::updateSwimming）
+    fluidPhysics();
+    updateSwimming();
+
+    // 2. 调用 movePlayer (LivingEntity::travel)
     movePlayer();
 
-    // 2. 边界限位（原版有，防止超界）
+    // 3. 边界限位（原版有，防止超界）
     position.x = std::clamp(position.x, -2.9999999E7, 2.9999999E7);
     position.z = std::clamp(position.z, -2.9999999E7, 2.9999999E7);
 
@@ -149,60 +153,187 @@ void Collision::tick() {
 
 // ---------- LivingEntity::travel 等价 ----------
 void Collision::movePlayer() {
-    // 省略水中/岩浆/鞘翅等特殊情况，仅实现普通地面移动
-    // 若有这些需求可后续补充
+    // 微小速度归零（原版在 LivingEntity::aiStep 中、速度累积前执行）
+    if (fabs(velocity.x) < 0.003) velocity.x = 0.0;
+    if (fabs(velocity.y) < 0.003) velocity.y = 0.0;
+    if (fabs(velocity.z) < 0.003) velocity.z = 0.0;
 
-    // 重力（非飞行时）
-    if (!isFlying) {
-        velocity.y -= GRAVITY;
-        if (velocity.y < -3.0) velocity.y = -3.0;
+    // ===== 水中下潜：按住下蹲键附加向下速度（原版 LocalPlayer::aiStep）=====
+    if (inWater && keyDown && !isFlying) {
+        velocity.y -= 0.03999999910593033;
     }
 
-    // 输入加速度
-    applyInputs(isFlying ? 0.02 : (onGround ? 0.216 : 0.02)); // 简化，实际需根据摩擦计算
-
-    // 跳跃
-    if (jumpPressed && onGround && !isFlying) {
-        velocity.y = JUMP_VELOCITY;
-        onGround = false;
-        jumpPressed = false;
-    }
-
-    // 飞行垂直控制
+    // ===== 飞行垂直控制 =====
     if (isFlying) {
         if (jumpPressed) velocity.y = 0.4;
         else if (keyDown) velocity.y = -0.4;
         else velocity.y *= 0.6;
     }
 
-    // 限速
-    double horiz = sqrt(velocity.x*velocity.x + velocity.z*velocity.z);
-    double speedCap = keySprint ? SPRINT_MOVE_SPEED : MOVE_SPEED;
-    if (isFlying) speedCap = 0.5;
-    if (horiz > speedCap) {
-        velocity.x = velocity.x / horiz * speedCap;
-        velocity.z = velocity.z / horiz * speedCap;
+    // ===== 游泳时沿视线方向补偿垂直速度（原版 LivingEntity::aiStep）=====
+    if (swimming && !isFlying) {
+        double frontY = -sin(pitch);  // front_vector.y
+        bool condition = frontY <= 0.0 || jumpPressed;
+        if (!condition) {
+            // 抬头时，若头顶上方一格仍是水，也允许下潜/上浮
+            condition = isWaterAt((int)floor(position.x),
+                                  (int)floor(position.y + 1.0 - 0.1),
+                                  (int)floor(position.z));
+        }
+        if (condition) {
+            velocity.y += (frontY - velocity.y) * (frontY < -0.2 ? 0.085 : 0.06);
+        }
     }
 
-    // 执行移动
-    applyMovement();
+    // ===== 跳跃（原版 InputsToJump）=====
+    if (jumpPressed && !isFlying) {
+        if (inWater) {
+            // 在水中：按住跳跃键持续上浮，无需触地
+            velocity.y += 0.03999999910593033;
+        } else if (onGround) {
+            velocity.y = JUMP_VELOCITY;
+            onGround = false;
+            jumpPressed = false;
+        }
+    }
 
-    // 水平摩擦
-    if (onGround) {
-        velocity.x *= 0.6;
-        velocity.z *= 0.6;
+    const double drag = GRAVITY;  // 原版重力 0.08/tick
+
+    if (inWater && !isFlying) {
+        // ===== 水中移动（原版 LivingEntity::travel 水分支）=====
+        const double initY = position.y;
+        // 游泳（冲刺下潜）时阻尼 0.9，普通踩水 0.8；Depth Strider 附魔未实现
+        const double waterSlowDown = swimming ? 0.9 : 0.8;
+
+        applyInputs(0.02);  // 水中移动加速度大幅降低
+        applyMovement();
+
+        velocity.x *= waterSlowDown;
+        velocity.y *= 0.800000011920929;
+        velocity.z *= waterSlowDown;
+
+        if (!swimming) {
+            // 水中重力衰减为 drag/16，接近下沉终速时吸附到 -0.003
+            if (velocity.y < 0.0 &&
+                fabs(velocity.y + drag / 16.0) < 1e-5 &&
+                fabs(velocity.y - drag / 16.0) > 1e-5) {
+                velocity.y = -0.003;
+            }
+            velocity.y -= drag / 16.0;
+        }
+
+        // 水面处撞墙且上方 0.6 格有空位时，自动抬升上岸
+        if (horizontalCollision &&
+            isAABBEmpty(getPlayerAABB() + velocity +
+                        glm::dvec3(0.0, STEP_HEIGHT - (position.y - initY), 0.0))) {
+            velocity.y = 0.30000001192092896;
+        }
     } else {
-        velocity.x *= 0.98;
-        velocity.z *= 0.98;
-    }
+        // ===== 地面/空中/飞行移动 =====
+        // 输入加速度
+        applyInputs(isFlying ? 0.02 : (onGround ? 0.216 : 0.02)); // 简化，实际需根据摩擦计算
 
-    // 微小速度归零
-    if (fabs(velocity.x) < 0.003) velocity.x = 0.0;
-    if (fabs(velocity.y) < 0.003) velocity.y = 0.0;
-    if (fabs(velocity.z) < 0.003) velocity.z = 0.0;
+        // 限速
+        double horiz = sqrt(velocity.x*velocity.x + velocity.z*velocity.z);
+        double speedCap = keySprint ? SPRINT_MOVE_SPEED : MOVE_SPEED;
+        if (isFlying) speedCap = 0.5;
+        if (horiz > speedCap) {
+            velocity.x = velocity.x / horiz * speedCap;
+            velocity.z = velocity.z / horiz * speedCap;
+        }
+
+        // 执行移动（用当前速度先位移，与原版 travel 一致）
+        applyMovement();
+
+        // 重力在位移之后施加（若提前一 tick 施加重力，首 tick 跳跃高度
+        // 会从 0.42 降到 0.34，总跳跃高度不足 1 格，无法跳上方块）
+        if (!isFlying) {
+            velocity.y -= drag;
+            if (velocity.y < -3.0) velocity.y = -3.0;
+        }
+
+        // 水平摩擦
+        if (onGround) {
+            velocity.x *= 0.6;
+            velocity.z *= 0.6;
+        } else {
+            velocity.x *= 0.98;
+            velocity.z *= 0.98;
+        }
+    }
 
     // 检查特殊方块（粘液块、灵魂沙等）
     checkInsideBlocks();
+}
+
+// ---------- 流体检测（Entity::updateFluidHeightAndDoFluidPushing 等价，未含流动推动）----------
+void Collision::fluidPhysics() {
+    inWater = false;
+    underWater = false;
+    if (!chunkManager) return;
+
+    // 与 Botcraft 一致：轻微收缩玩家碰撞箱后遍历其中所有方块
+    AABB aabb = getPlayerAABB().inflate(-0.001);
+    // 眼睛高度 ≈ 1.62（站立）
+    double eyeHeight = position.y + PLAYER_HEIGHT - 0.18;
+
+    int minX = (int)floor(aabb.minX), maxX = (int)floor(aabb.maxX);
+    int minY = (int)floor(aabb.minY), maxY = (int)floor(aabb.maxY);
+    int minZ = (int)floor(aabb.minZ), maxZ = (int)floor(aabb.maxZ);
+
+    for (int x = minX; x <= maxX; ++x)
+        for (int y = minY; y <= maxY; ++y)
+            for (int z = minZ; z <= maxZ; ++z) {
+                if (!isWaterAt(x, y, z)) continue;
+                inWater = true;
+                // 简化：水面高度按 1.0 计（未解析 waterlogged / 流水 level 属性）
+                if (y + 1.0 >= eyeHeight) underWater = true;
+            }
+}
+
+// ---------- 游泳状态（Player::updateSwimming 等价）----------
+void Collision::updateSwimming() {
+    if (isFlying) {
+        swimming = false;
+        return;
+    }
+    if (swimming) {
+        // 维持游泳：仍需保持冲刺且身体在水里
+        swimming = keySprint && inWater;
+    } else {
+        // 进入游泳：冲刺 + 完全没入水下 + 脚下方块是水
+        swimming = keySprint && underWater &&
+                   isWaterAt((int)floor(position.x),
+                             (int)floor(position.y),
+                             (int)floor(position.z));
+    }
+}
+
+// ---------- 判断某坐标是否为水 ----------
+bool Collision::isWaterAt(int x, int y, int z) const {
+    if (!chunkManager) return false;
+    auto chunk = chunkManager->getChunk(x >> 4, z >> 4);
+    if (!chunk || !chunk->isLoaded) return false;
+    int32_t state = chunk->getBlockState(x & 15, y, z & 15);
+    if (state == 0) return false;
+    return ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(state).isWater;
+}
+
+// ---------- AABB 内是否无任何碰撞箱（原版 World.isFree 等价）----------
+bool Collision::isAABBEmpty(const AABB& aabb) const {
+    int minX = (int)floor(aabb.minX), maxX = (int)floor(aabb.maxX + EPSILON);
+    int minY = (int)floor(aabb.minY), maxY = (int)floor(aabb.maxY + EPSILON);
+    int minZ = (int)floor(aabb.minZ), maxZ = (int)floor(aabb.maxZ + EPSILON);
+
+    for (int y = minY; y <= maxY; ++y)
+        for (int z = minZ; z <= maxZ; ++z)
+            for (int x = minX; x <= maxX; ++x) {
+                auto boxes = getBlockAABBs(x, y, z);
+                for (const auto& box : boxes) {
+                    if (box.intersects(aabb)) return false;
+                }
+            }
+    return true;
 }
 
 // ---------- Entity::move 等价 ----------

@@ -101,6 +101,11 @@ private:
     double accumulatedTime = 0.0;
     double pitch = 0.0, yaw = 0.0;
 
+    // 流体状态（对应原版 Entity.in_water / under_water / Player.Swimming flag）
+    bool inWater = false;     // AABB 与任意水源方块相交
+    bool underWater = false;  // 眼睛高度没入水中
+    bool swimming = false;    // 冲刺+水下 → 游泳（水中阻尼更小）
+
     ChunkManager* chunkManager = nullptr;
     mutable std::mutex mutex;
 
@@ -129,10 +134,16 @@ private:
     void collideOneAxis(AABB& aabb, glm::dvec3& movement, int axis, const std::vector<AABB>& colliders) const;
     void checkInsideBlocks();
 
+    // 水中物理（对应 Botcraft FluidPhysics / UpdateSwimming）
+    void fluidPhysics();
+    void updateSwimming();
+    bool isWaterAt(int x, int y, int z) const;
+    bool isAABBEmpty(const AABB& aabb) const;
+
     AABB getPlayerAABB() const;
     // 注意：这里不再重复声明 getBlockAABBs
 
-    bool isSwimming() const { return false; } // 暂时留空
+    bool isSwimming() const { return swimming; }
     glm::dvec3 getInputVector() const;
     void applyInputs(double strength);
 };
