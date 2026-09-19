@@ -247,9 +247,11 @@ void Collision::movePlayer() {
 
         // 重力在位移之后施加（若提前一 tick 施加重力，首 tick 跳跃高度
         // 会从 0.42 降到 0.34，总跳跃高度不足 1 格，无法跳上方块）
+        // 原版 LivingEntity::travel L2086-2092：d2 -= gravity 后还有一步 d2 * 0.98 的 y 阻尼，
+        // 递推 v=(v-0.08)*0.98 使跳跃峰值精确为 1.2522 格、下落终速自然收敛到 -3.92
         if (!isFlying) {
             velocity.y -= drag;
-            if (velocity.y < -3.0) velocity.y = -3.0;
+            velocity.y *= 0.98;
         }
 
         // 水平摩擦
@@ -536,6 +538,19 @@ std::vector<AABB> Collision::getBlockAABBs(int blockX, int blockY, int blockZ) c
 
     const auto& meta = ClientEngine::getInstance()->getBlockRegistry()->getBlockMetadata(state);
     if (meta.isPlant || meta.isWater || meta.isNoCollision) return {};
+
+    // 雪层碰撞原版实现在 SnowLayerBlock#getCollisionShape 中硬编码为 SHAPE_BY_LAYER[layers - 1]，
+    // 即碰撞顶面比视觉顶面低一层（2/16），玩家会陷进雪里一层深；1 层雪完全没有碰撞。
+    // 资源包模型 JSON 只有视觉高度，无法从 getBlockCollisionBoxes 得到正确碰撞盒，必须特判。
+    // 例：草方块+3 层雪视觉高 1.375，实际碰撞高 1.25，恰好可被跳跃峰值 1.2522 跳上
+    if (meta.isSnow) {
+        int layers = (state - meta.minStateId) + 1;
+        if (layers <= 1) return {};
+        if (layers > 8) layers = 8;
+        double h = (layers - 1) * (2.0 / 16.0);
+        return {AABB((double)blockX, (double)blockY, (double)blockZ,
+                     (double)blockX + 1.0, (double)blockY + h, (double)blockZ + 1.0)};
+    }
 
     auto* atlas = ClientEngine::getInstance()->getTextureAtlas();
     if (!atlas || !atlas->isInitialized()) {
