@@ -51,6 +51,8 @@ void MultiplayerScreen::renderServerList() {
     float w = io.DisplaySize.x;
     float h = io.DisplaySize.y;
 
+    // 背景透出旋转全景图：仿原版 Screen 子页面"全景 + 半透明黑遮罩"（alpha 160），
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 160));
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(io.DisplaySize);
     ImGui::Begin("Multiplayer", nullptr,
@@ -364,6 +366,7 @@ void MultiplayerScreen::renderServerList() {
     }
 
     ImGui::End();
+    ImGui::PopStyleColor(); // WindowBg
 }
 
 void MultiplayerScreen::renderAddServer() {
@@ -371,6 +374,8 @@ void MultiplayerScreen::renderAddServer() {
     float w = io.DisplaySize.x;
     float h = io.DisplaySize.y;
 
+    // 同服务器列表：半透明遮罩透出旋转全景
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 160));
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(io.DisplaySize);
     ImGui::Begin("AddServer", nullptr,
@@ -429,6 +434,7 @@ void MultiplayerScreen::renderAddServer() {
     }
 
     ImGui::End();
+    ImGui::PopStyleColor(); // WindowBg
 }
 
 void MultiplayerScreen::connectToServer(const ServerInfo& server) {
