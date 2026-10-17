@@ -153,11 +153,11 @@ private:
     GLuint textureArrayID = 0;  // 纹理数组（替代单个 textureID）
     GLuint lightmapTextureID = 0;  // 光照贴图纹理（Sampler2，默认白色=全亮）
 
-    // ===== Mojang 官方着色器程序 =====
-    ShaderProgramInfo shaderSolid;         // rendertype_solid（不透明）
-    ShaderProgramInfo shaderCutout;        // rendertype_cutout（镂空，alpha<0.1 丢弃）
-    ShaderProgramInfo shaderCutoutMipped;  // rendertype_cutout_mipped（带 mipmap 的镂空）
-    ShaderProgramInfo shaderTranslucent;   // rendertype_translucent（半透明）
+    // ===== 着色器程序 =====
+    ShaderProgramInfo shaderSolid;         // chunk_solid（不透明）
+    ShaderProgramInfo shaderCutout;        // chunk_cutout（镂空，alpha<0.1 丢弃）
+    ShaderProgramInfo shaderCutoutMipped;  // chunk_cutout_mipped（带 mipmap 的镂空）
+    ShaderProgramInfo shaderTranslucent;   // chunk_translucent（半透明）
 
     float cameraMatrix[16];
     float projectionMatrix[16];

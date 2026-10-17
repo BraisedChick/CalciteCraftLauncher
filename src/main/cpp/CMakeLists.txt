@@ -78,6 +78,7 @@ set(APP_SOURCES
     PanoramaView.cpp
     SkyRenderer.cpp
     TextureLoader.cpp
+    AssetStore.cpp
     BlockRegistry.cpp
     Camera.cpp
     Collision.cpp

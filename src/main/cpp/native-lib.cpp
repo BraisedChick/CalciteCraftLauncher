@@ -5,12 +5,14 @@
 #include <android/asset_manager_jni.h>
 #include <android/log.h>
 #include <cstring>
+#include <dirent.h>
 #include "ClientEngine/ClientEngine.h"
 #include "ClientEngine/GameEngine.h"
 #include "Renderer/VulkanRenderer.h"
 #include "Renderer/GLRenderer.h"
 #include "utils.h"
 #include "TextureLoader.h"
+#include "AssetStore.h"
 #include "ResourcepackManager.h"
 #include "Collision.h"
 #include "gui/GameUI.h"
@@ -209,6 +211,57 @@ Java_com_calcite_MainActivity_setTextureZipPath(
     TextureLoader::setZipPath(path);
     JNI_LOGI("Texture ZIP path set to: %s", path);
     env->ReleaseStringUTFChars(zipPath, path);
+}
+
+// 哈希资产库根目录（Java 侧 getExternalFilesDir("assets")）；
+// 库未就绪（未下载/无 index）时 setRoot 失败，官方资源缺失
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_calcite_MainActivity_setAssetStorePath(
+        JNIEnv* env,
+        jobject thiz,
+        jstring storePath) {
+
+    const char* path = env->GetStringUTFChars(storePath, nullptr);
+    bool ok = AssetStore::getInstance().setRoot(path);
+    JNI_LOGI("Asset store path set to: %s (ready=%d)", path, ok ? 1 : 0);
+    env->ReleaseStringUTFChars(storePath, path);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+// vanilla 底层根目录（<assets 根>/vanilla，最新正式版 client.jar 解包产物）；
+// 返回目录是否存在且非空，TextureLoader 纹理/模型的兜底源
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_calcite_MainActivity_setVanillaRootPath(
+        JNIEnv* env,
+        jobject thiz,
+        jstring rootPath) {
+
+    const char* path = env->GetStringUTFChars(rootPath, nullptr);
+    TextureLoader::setVanillaRoot(path);
+    bool nonEmpty = false;
+    if (DIR* d = opendir(path)) {
+        struct dirent* e;
+        while ((e = readdir(d)) != nullptr) {
+            if (strcmp(e->d_name, ".") != 0 && strcmp(e->d_name, "..") != 0) {
+                nonEmpty = true;
+                break;
+            }
+        }
+        closedir(d);
+    }
+    JNI_LOGI("Vanilla root path set to: %s (ready=%d)", path, nonEmpty ? 1 : 0);
+    env->ReleaseStringUTFChars(rootPath, path);
+    return nonEmpty ? JNI_TRUE : JNI_FALSE;
+}
+
+// 资源来源优先级开关（实验用）：true = 官方新版 vanilla 层优先，false = 服务器 ZIP 优先
+extern "C" JNIEXPORT void JNICALL
+Java_com_calcite_MainActivity_setPreferVanillaResources(
+        JNIEnv* env,
+        jobject thiz,
+        jboolean prefer) {
+
+    TextureLoader::setPreferVanilla(prefer == JNI_TRUE);
 }
 
 extern "C" JNIEXPORT void JNICALL

@@ -4,17 +4,7 @@
 #include "Renderer/GLRenderer.h"
 #include "ClientEngine/ClientEngine.h"
 #include <android/log.h>
-#include <fstream>
-#include <sstream>
-
-// 从文件系统读取（开发阶段 fallback）
-static std::string readFileFromDisk(const std::string& path) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) return "";
-    std::stringstream ss;
-    ss << file.rdbuf();
-    return ss.str();
-}
+#include <android/asset_manager.h>
 
 #define LOG_TAG "Resourcepack"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -199,235 +189,68 @@ void ResourcepackManager::clear() {
 }
 
 // ============================================================
-// 着色器加载（Mojang → GLES）
+// 着色器加载
+//
+// 改这些文件时需与两处契约对齐：
+//   1) 顶点输入布局 = GLRenderer::processCompletedWork 里的 PackedVertex
+//      loc 0 Position vec3 / loc 1 UV0 vec2(归一化) / loc 2 TexIndex float
+//      loc 3 Color vec4(归一化) / loc 4 Normal vec4(地形管线未使用) /
+//      loc 5 UV2 vec2(原值，光照贴图坐标 block*16+8, sky*16+8)
+//      location 只由着色器里的 layout(location = N) 单点定义，C++ 侧不再 glBindAttribLocation
+//   2) uniform 名称 = loadShaderProgram() 末尾按名取位置的那批
+//      ModelViewMat / ProjMat / ChunkOffset / ColorModulator / FogStart /
+//      FogEnd / FogColor / FogShape / Sampler0 / Sampler2
 // ============================================================
+namespace {
 
-// 读取并预处理着色器源文件
-std::string ResourcepackManager::loadShaderSource(const std::string& shaderPath) {
-    if (shaderPath.empty()) return "";
+// assets 内的目录前缀
+constexpr const char* kShaderAssetDir = "shaders/opengl/";
+
+struct BuiltinShaderProgram {
+    const char* name;     // loadShaderProgram() 传入的程序名
+    const char* vertex;   // kShaderAssetDir 下的文件名
+    const char* fragment;
+};
+
+// 四个程序共用一份顶点着色器，片段着色器只差 alpha 丢弃阈值
+constexpr BuiltinShaderProgram kBuiltinShaderPrograms[] = {
+    {"chunk_solid",         "chunk.vsh", "chunk_solid.fsh"},          // 不透明
+    {"chunk_cutout",        "chunk.vsh", "chunk_cutout.fsh"},         // 镂空（草、花、栅栏）
+    {"chunk_cutout_mipped", "chunk.vsh", "chunk_cutout_mipped.fsh"},  // 镂空 + mipmap
+    {"chunk_translucent",   "chunk.vsh", "chunk_translucent.fsh"},    // 半透明（水）
+};
+
+const BuiltinShaderProgram* findBuiltinShader(const std::string& name) {
+    for (const auto& p : kBuiltinShaderPrograms) {
+        if (name == p.name) return &p;
+    }
+    return nullptr;
+}
+
+// 从 APK assets 读取着色器源码，失败返回空串
+std::string readShaderAsset(const char* fileName) {
+    if (!fileName) return "";
+
+    AAssetManager* am = TextureLoader::getAssetManager();
+    if (!am) return "";
+
+    std::string path = std::string(kShaderAssetDir) + fileName;
+    AAsset* asset = AAssetManager_open(am, path.c_str(), AASSET_MODE_BUFFER);
+    if (!asset) return "";
+
     std::string content;
+    const void* buffer = AAsset_getBuffer(asset);
+    off_t length = AAsset_getLength(asset);
+    if (buffer && length > 0) {
+        // AAsset_close 后 buffer 失效，必须先复制出来
+        content.assign(static_cast<const char*>(buffer), static_cast<size_t>(length));
+    }
+    AAsset_close(asset);
 
-    // 1) 尝试从 ZIP 读取（着色器都在 core/ 和 include/ 下）
-    content = TextureLoader::readTextFromZip("shaders/core/" + shaderPath);
-    if (content.empty()) {
-        content = TextureLoader::readTextFromZip("shaders/include/" + shaderPath);
-    }
-
-    // 2) ZIP 失败时，尝试从磁盘读取
-    if (content.empty()) {
-        content = readFileFromDisk("shaders/core/" + shaderPath);
-    }
-    if (content.empty()) {
-        content = readFileFromDisk("shaders/include/" + shaderPath);
-    }
-
-    if (content.empty()) {
-        LOGE("Failed to read shader: %s", shaderPath.c_str());
-        return "";
-    }
-    // 递归解析 #moj_import
-    return resolveImports(content, 0);
+    return content;
 }
 
-// 递归解析 #moj_import <...>
-std::string ResourcepackManager::resolveImports(const std::string& source, int depth) {
-    if (depth > 16) {
-        LOGE("Shader #moj_import recursion too deep");
-        return source;
-    }
-    std::string result;
-    size_t pos = 0;
-    while (pos < source.size()) {
-        size_t importPos = source.find("#moj_import", pos);
-        if (importPos == std::string::npos) {
-            result += source.substr(pos);
-            break;
-        }
-        // 复制 #moj_import 之前的文本
-        result += source.substr(pos, importPos - pos);
-        // 找到 < 和 >
-        size_t openPos = source.find('<', importPos);
-        size_t closePos = source.find('>', importPos);
-        if (openPos == std::string::npos || closePos == std::string::npos || closePos <= openPos) {
-            LOGE("Malformed #moj_import");
-            result += source.substr(importPos, (closePos != std::string::npos ? closePos + 1 : source.size() - importPos));
-            pos = (closePos != std::string::npos) ? closePos + 1 : source.size();
-            continue;
-        }
-        std::string includeFile = source.substr(openPos + 1, closePos - openPos - 1);
-        // 加载包含文件
-        std::string includeContent = TextureLoader::readTextFromZip("shaders/include/" + includeFile);
-        if (includeContent.empty()) {
-            // 文件系统回退
-            includeContent = readFileFromDisk("shaders/include/" + includeFile);
-        }
-        if (includeContent.empty()) {
-            LOGE("Failed to load include: %s", includeFile.c_str());
-            result += "// MISSING INCLUDE: " + includeFile + "\n";
-        } else {
-            // 递归处理包含文件中的 #moj_import
-            includeContent = resolveImports(includeContent, depth + 1);
-            result += includeContent;
-        }
-        pos = closePos + 1;
-    }
-    return result;
-}
-
-// 转换 #version 150 → #version 300 es，并适配纹理数组 + Mojang attribute layout
-std::string ResourcepackManager::convertGLtoGLES(const std::string& source, bool isVertex) {
-    // ===== 1. 去除所有 #version 行（包括 include 文件带入的）=====
-    std::string cleaned;
-    size_t pos = 0;
-    while (pos < source.size()) {
-        size_t vPos = source.find("#version", pos);
-        if (vPos == std::string::npos) {
-            cleaned += source.substr(pos);
-            break;
-        }
-        // 复制 #version 之前的内容
-        cleaned += source.substr(pos, vPos - pos);
-        // 跳过整行
-        size_t eol = source.find('\n', vPos);
-        if (eol != std::string::npos) {
-            pos = eol + 1;
-        } else {
-            pos = source.size();
-        }
-    }
-
-    // ===== 2. 构建最终着色器：#version 300 es 头 =====
-    std::string result = "#version 300 es\n";
-    if (!isVertex) {
-        result += "precision mediump float;\n";
-        result += "precision highp sampler2DArray;\n";
-    }
-
-    // ===== 3. 所有 ivec2 → vec2 转换（GLSL ES 3.0 不支持 ivec2/float 混合运算）=====
-    // 替换所有出现的 "ivec2"，无论后面跟什么（UV2, uv 等）
-    {
-        std::string src = cleaned;
-        cleaned.clear();
-        size_t p = 0;
-        while (p < src.size()) {
-            size_t found = src.find("ivec2", p);
-            if (found == std::string::npos) {
-                cleaned += src.substr(p);
-                break;
-            }
-            cleaned += src.substr(p, found - p);
-            cleaned += "vec2";
-            p = found + 5;  // len("ivec2")
-        }
-    }
-
-    // ===== 4. sampler2D Sampler0 → sampler2DArray Sampler0（仅主纹理采样器）=====
-    {
-        size_t p = 0;
-        std::string src = cleaned;
-        cleaned.clear();
-        while (p < src.size()) {
-            size_t found = src.find("sampler2D Sampler0", p);
-            if (found != std::string::npos) {
-                cleaned += src.substr(p, found - p);
-                cleaned += "sampler2DArray Sampler0";
-                p = found + 18;  // len("sampler2D Sampler0")
-                continue;
-            }
-            cleaned += src.substr(p);
-            break;
-        }
-    }
-
-    // ===== 5. 注入纹理数组相关变量和 texture 调用改写 =====
-    if (isVertex) {
-        // 顶点着色器：注入 layout locations + TexIndex 属性 + fragTexIndex 输出
-        // 注入 layout locations：按着色器声明顺序 Position → Color → UV0 → UV2 → Normal
-        // 并插入我们的 TexIndex 属性
-        {
-            std::string src = cleaned;
-            cleaned.clear();
-
-            // 辅助 lambda：查找并替换原始声明为带 layout 的版本
-            auto replaceAttr = [&](const std::string& decl, const std::string& layoutDecl) -> bool {
-                size_t pos = src.find(decl);
-                if (pos == std::string::npos) return false;
-                cleaned += src.substr(0, pos);
-                cleaned += layoutDecl + "\n";
-                size_t eol = src.find('\n', pos);
-                src = (eol != std::string::npos) ? src.substr(eol + 1) : "";
-                return true;
-            };
-
-            // Position -> layout 0
-            if (!replaceAttr("in vec3 Position", "layout(location = 0) in vec3 Position;")) {
-                cleaned = src; goto endLayout;
-            }
-
-            // Color -> layout 3（在原声明位置处理，保证顺序）
-            replaceAttr("in vec4 Color", "layout(location = 3) in vec4 Color;");
-
-            // UV0 -> layout 1
-            replaceAttr("in vec2 UV0", "layout(location = 1) in vec2 UV0;");
-
-            // 注入 TexIndex -> layout 2
-            cleaned += "layout(location = 2) in float TexIndex;\n";
-
-            // UV2 -> layout 5
-            replaceAttr("in vec2 UV2", "layout(location = 5) in vec2 UV2;");
-
-            // Normal -> layout 4
-            replaceAttr("in vec3 Normal", "layout(location = 4) in vec3 Normal;");
-
-            // 剩余内容
-            cleaned += src;
-endLayout:;
-        }
-
-        // 在 "out vec4 normal" 后注入 fragTexIndex 输出（flat 防止插值）
-        {
-            std::string needle = "out vec4 normal;";
-            size_t found = cleaned.find(needle);
-            if (found != std::string::npos) {
-                cleaned.insert(found + needle.size(), "\nflat out float fragTexIndex;");
-            }
-        }
-
-        // 在 "texCoord0 = UV0;" 后注入 fragTexIndex = round(TexIndex)
-        {
-            std::string needle = "texCoord0 = UV0;";
-            size_t found = cleaned.find(needle);
-            if (found != std::string::npos) {
-                cleaned.insert(found + needle.size(), "\n    fragTexIndex = round(TexIndex);");
-            }
-        }
-    } else {
-        // 片段着色器：注入 fragTexIndex 输入（flat） + 改写 texture 调用
-
-        // 在 "in vec4 normal" 后注入 flat fragTexIndex
-        {
-            std::string needle = "in vec4 normal;";
-            size_t found = cleaned.find(needle);
-            if (found != std::string::npos) {
-                cleaned.insert(found + needle.size(), "\nflat in float fragTexIndex;");
-            }
-        }
-
-        // 替换 texture(Sampler0, texCoord0) → texture(Sampler0, vec3(texCoord0, round(fragTexIndex)))
-        {
-            std::string needle = "texture(Sampler0, texCoord0)";
-            size_t found = cleaned.find(needle);
-            while (found != std::string::npos) {
-                // 替换 texture 调用
-                cleaned.replace(found, needle.size(), "texture(Sampler0, vec3(texCoord0, round(fragTexIndex)))");
-                found = cleaned.find(needle, found + 45);
-            }
-        }
-    }
-
-    result += cleaned;
-    return result;
-}
+}  // namespace
 
 GLuint ResourcepackManager::compileShader(GLenum type, const std::string& source) {
     GLuint shader = glCreateShader(type);
@@ -449,13 +272,8 @@ GLuint ResourcepackManager::compileShader(GLenum type, const std::string& source
 
 GLuint ResourcepackManager::linkProgram(GLuint vert, GLuint frag) {
     GLuint program = glCreateProgram();
-    // 绑定 Mojang attribute locations（与顶点着色器 layout 一致）
-    glBindAttribLocation(program, 0, "Position");
-    glBindAttribLocation(program, 1, "UV0");
-    glBindAttribLocation(program, 2, "TexIndex");
-    glBindAttribLocation(program, 3, "Color");
-    glBindAttribLocation(program, 4, "Normal");
-    glBindAttribLocation(program, 5, "UV2");
+    // attribute location 由着色器源码里的 layout(location = N) 显式指定，
+    // 这里不再 glBindAttribLocation，避免与 PackedVertex 布局产生两处定义
     glAttachShader(program, vert);
     glAttachShader(program, frag);
     glLinkProgram(program);
@@ -479,38 +297,21 @@ ShaderProgramInfo ResourcepackManager::loadShaderProgram(const std::string& name
 
     ShaderProgramInfo info;
 
-    // 加载顶点和片段着色器源
-    std::string vertPath = name + ".vsh";
-    std::string fragPath = name + ".fsh";
-
-    std::string vertSource = loadShaderSource(vertPath);
-    std::string fragSource = loadShaderSource(fragPath);
-
-    if (vertSource.empty() || fragSource.empty()) {
-        LOGE("Failed to load shader sources for: %s", name.c_str());
+    // 只认内置着色器表：源码位于 assets/shaders/opengl/，已是 #version 300 es
+    const BuiltinShaderProgram* builtin = findBuiltinShader(name);
+    if (!builtin) {
+        LOGE("Unknown shader program: %s", name.c_str());
         shaderCache[name] = info;
         return info;
     }
 
-    // 转换为 GLES（适配纹理数组）
-    vertSource = convertGLtoGLES(vertSource, true);   // isVertex=true
-    fragSource = convertGLtoGLES(fragSource, false);   // isVertex=false
-
-    // 调试：首次加载 rendertype_cutout 时打印转换后的顶点着色器
-    if (name == "rendertype_cutout" && vertSource.find("layout") != std::string::npos) {
-        LOGI("=== Converted vertex shader for %s ===", name.c_str());
-        // 只打印前 60 行避免日志过长
-        size_t newlineCount = 0;
-        size_t pos = 0;
-        while (newlineCount < 60 && pos < vertSource.size()) {
-            size_t nl = vertSource.find('\n', pos);
-            if (nl == std::string::npos) break;
-            std::string line = vertSource.substr(pos, nl - pos);
-            LOGI("VS[%zu]: %s", newlineCount, line.c_str());
-            pos = nl + 1;
-            newlineCount++;
-        }
-        LOGI("=== End vertex shader (showing %zu lines) ===", newlineCount);
+    std::string vertSource = readShaderAsset(builtin->vertex);
+    std::string fragSource = readShaderAsset(builtin->fragment);
+    if (vertSource.empty() || fragSource.empty()) {
+        LOGE("Missing built-in shader asset: %s (shaders/opengl/%s or %s)",
+             name.c_str(), builtin->vertex, builtin->fragment);
+        shaderCache[name] = info;
+        return info;
     }
 
     // 编译

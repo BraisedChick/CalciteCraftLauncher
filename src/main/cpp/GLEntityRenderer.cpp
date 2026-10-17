@@ -155,25 +155,27 @@ GLuint GLEntityRenderer::getEntityTexture(const Entity& entity) {
             texPath = "entity/spider/spider";
             break;
         case EntityType::PIG:
-            texPath = "entity/pig/pig";
+            // 26.x 起猪/牛/鸡按生物群系拆成 cold/temperate/warm 三套，取 temperate 作中性默认
+            texPath = "entity/pig/pig_temperate";
             break;
         case EntityType::COW:
-            texPath = "entity/cow/cow";
+            texPath = "entity/cow/cow_temperate";
             break;
         case EntityType::SHEEP:
             texPath = "entity/sheep/sheep";
             break;
         case EntityType::CHICKEN:
-            texPath = "entity/chicken";
+            texPath = "entity/chicken/chicken_temperate";
             break;
         case EntityType::PLAYER:
-            texPath = "entity/steve";
+            // 玩家默认皮肤 26.x 从 textures/entity/steve.png 挪到 textures/entity/player/{wide,slim}/
+            texPath = "entity/player/wide/steve";
             break;
         case EntityType::SLIME:
             texPath = "entity/slime/slime";
             break;
         case EntityType::BLAZE:
-            texPath = "entity/blaze";
+            texPath = "entity/blaze/blaze";
             break;
         case EntityType::GHAST:
             texPath = "entity/ghast/ghast";
@@ -182,7 +184,8 @@ GLuint GLEntityRenderer::getEntityTexture(const Entity& entity) {
             texPath = "entity/wolf/wolf";
             break;
         case EntityType::CAT:
-            texPath = "entity/cat/black";
+            // 26.x 的猫纹贴图统一加了 cat_ 前缀（black → cat_black）
+            texPath = "entity/cat/cat_black";
             break;
         case EntityType::VILLAGER:
             texPath = "entity/villager/villager";
@@ -191,7 +194,7 @@ GLuint GLEntityRenderer::getEntityTexture(const Entity& entity) {
             texPath = "entity/iron_golem/iron_golem";
             break;
         case EntityType::WITCH:
-            texPath = "entity/witch";
+            texPath = "entity/witch/witch";
             break;
         case EntityType::PIGLIN:
             texPath = "entity/piglin/piglin";
@@ -201,8 +204,7 @@ GLuint GLEntityRenderer::getEntityTexture(const Entity& entity) {
             return 0;
     }
 
-    std::string filename = texPath + ".png";
-    TextureData tex = TextureLoader::loadPNG(filename);
+    TextureData tex = TextureLoader::loadPNG(texPath + ".png");
 
     GLuint glTex = 0;
     if (tex.data && tex.width > 0 && tex.height > 0) {

@@ -1,5 +1,6 @@
 #define MINIVORBIS_DATA_SOURCE_IMPL
 #include "MusicManager.h"
+#include "AssetStore.h"
 #include <android/log.h>
 #include <sys/stat.h>
 #include <cstring>
@@ -147,17 +148,23 @@ void MusicManager::setVolume(float volume) {
     if (engine) ma_engine_set_volume(engine.get(), musicVolume);
 }
 
-std::string MusicManager::extractOggToTemp(const std::string& resourcePath) {
-    std::string path = std::string("/storage/emulated/0/Android/data/com.calcite/files/sounds/") + resourcePath + ".ogg";
-    FILE* f = fopen(path.c_str(), "rb");
-    if (f) { fclose(f); return path; }
-    LOGE("extractOggToTemp: sound not found at %s", path.c_str());
+std::string MusicManager::resolveSoundPath(const std::string& resourcePath) {
+    // 哈希资产库是唯一来源（旧 files/sounds 目录回退已删除）：
+    // index key = "sounds/<resourcePath>.ogg"，objects 即真实文件，
+    // ov_fopen 可直接流式读取，无需解压临时文件
+    std::string objPath = AssetStore::getInstance().getObjectPath(
+        "sounds/" + resourcePath + ".ogg");
+    if (!objPath.empty()) {
+        FILE* f = fopen(objPath.c_str(), "rb");
+        if (f) { fclose(f); return objPath; }
+    }
+    LOGE("resolveSoundPath: sound not found in asset store: %s", resourcePath.c_str());
     return "";
 }
 
 void MusicManager::startPlaying(const std::string& resourcePath) {
     if (!engine) return;
-    std::string filePath = extractOggToTemp(resourcePath);
+    std::string filePath = resolveSoundPath(resourcePath);
     if (filePath.empty()) { LOGE("Cannot play music: %s", resourcePath.c_str()); return; }
 
     auto* ds = new MinivorbisDataSource();
@@ -220,8 +227,8 @@ void MusicManager::stopPlaying() {
 
 void MusicManager::loadClickSound() {
     if (clickSoundLoaded) return;
-    std::string filePath = extractOggToTemp("random/click_stereo");
-    if (filePath.empty()) filePath = extractOggToTemp("random/click");
+    std::string filePath = resolveSoundPath("random/click_stereo");
+    if (filePath.empty()) filePath = resolveSoundPath("random/click");
     if (filePath.empty()) { LOGW("Click sound not found"); return; }
 
     OggVorbis_File vf;
@@ -266,7 +273,7 @@ void MusicManager::playClickSound() {
 
 void MusicManager::playOneShot(const std::string& resourcePath) {
     if (!initialized || !engine) return;
-    std::string filePath = extractOggToTemp(resourcePath);
+    std::string filePath = resolveSoundPath(resourcePath);
     if (filePath.empty()) return;
     OggVorbis_File vf;
     if (ov_fopen(filePath.c_str(), &vf) != 0) return;

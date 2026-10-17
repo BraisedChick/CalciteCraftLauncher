@@ -46,7 +46,9 @@ private:
     };
     static SceneConfig getConfig(MusicScene scene);
 
-    std::string extractOggToTemp(const std::string& resourcePath);
+    // 解析音效文件绝对路径：仅从哈希资产库查 sounds/<resourcePath>.ogg → objects 内容寻址
+    //（旧 extracted sounds 目录回退已删除）；返回空串 = 未找到
+    std::string resolveSoundPath(const std::string& resourcePath);
     void startPlaying(const std::string& resourcePath);
     void stopPlaying();
     void loadClickSound();

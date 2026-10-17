@@ -221,7 +221,7 @@ BlockMetadata BlockRegistry::computeMetadata(int32_t blockState) const {
     meta.isGrassBlock = (meta.name == "grass_block");
     meta.isLeaves = (meta.name.find("leaves") != std::string::npos);
     meta.isSnow = (meta.name == "snow");
-    meta.isPlant = (meta.name == "grass" || meta.name == "tall_grass"
+    meta.isPlant = (meta.name == "short_grass" || meta.name == "tall_grass"
         || meta.name == "fern" || meta.name == "large_fern"
         || meta.name == "dead_bush" || meta.name == "vine"
         || meta.name == "lily_pad" || meta.name == "sugar_cane"

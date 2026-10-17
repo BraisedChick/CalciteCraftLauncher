@@ -45,6 +45,7 @@ import com.calcite.ui.MioTextView;
 import com.calcite.util.DohResolver;
 import com.calcite.LogManager;
 
+import com.calcite.assets.AssetSyncService;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -1155,13 +1156,15 @@ public class LauncherActivity extends Activity {
 
     /**
      * 校验资源包文件是否存在，若缺失则下载后再继续
+     * （ZIP 现仅提供 blocks.json/items.json/worldgen 等项目专有文件，
+     * 官方 index 没有这些文件，同为启动必需，失败则不启动）
      */
     private void checkResourcepackAndLaunch(Account selected, String versionName, int protocolVersion) {
         String zipName = "resourcepack" + protocolVersion + ".zip";
         File resourcepackFile = new File(getExternalFilesDir(null), zipName);
 
         if (resourcepackFile.exists()) {
-            checkSoundsAndLaunch(selected, versionName, protocolVersion);
+            checkAssetsAndLaunch(selected, versionName, protocolVersion);
             return;
         }
 
@@ -1230,8 +1233,8 @@ public class LauncherActivity extends Activity {
                     if (!response.isSuccessful()) {
                         runOnUiThread(() -> {
                             dialog.dismiss();
-                            Toast.makeText(this, "下载资源包失败: HTTP " + response.code(), Toast.LENGTH_LONG).show();
-                            checkSoundsAndLaunch(selected, versionName, protocolVersion);
+                            Toast.makeText(this, "下载资源包失败: HTTP " + response.code()
+                                    + "，无法获取 blocks.json 等必需文件", Toast.LENGTH_LONG).show();
                         });
                         return;
                     }
@@ -1275,55 +1278,51 @@ public class LauncherActivity extends Activity {
                 runOnUiThread(() -> {
                     dialog.dismiss();
                     Toast.makeText(this, "资源包下载完成", Toast.LENGTH_SHORT).show();
-                    checkSoundsAndLaunch(selected, versionName, protocolVersion);
+                    checkAssetsAndLaunch(selected, versionName, protocolVersion);
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {
                     dialog.dismiss();
-                    Toast.makeText(this, "下载资源包失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
-                    checkSoundsAndLaunch(selected, versionName, protocolVersion);
+                    Toast.makeText(this, "下载资源包失败: " + e.getMessage()
+                            + "，无法获取 blocks.json 等必需文件", Toast.LENGTH_LONG).show();
                 });
             }
         }).start();
     }
 
     /**
-     * 校验音效文件是否已下载完整，不完整则先下载再启动
+     * 校验官方资源是否就绪（哈希资产库 + 最新正式版 jar 解包的 vanilla 底层），未同步则先询问下载。
+     * 音效来自 Mojang assets index，纹理/模型来自官方 client.jar，均为用户端直连 Mojang 下载；
+     * 资源齐备是进游戏的必要条件，取消/失败则不启动
      */
-    private void checkSoundsAndLaunch(Account selected, String versionName, int protocolVersion) {
-        String soundsDir = Environment.getExternalStorageDirectory().getAbsolutePath()
-            + "/Android/data/com.calcite/files/sounds";
-
-        // 快速检查关键文件是否存在
-        if (new File(soundsDir + "/music/menu/menu1.ogg").exists()) {
+    private void checkAssetsAndLaunch(Account selected, String versionName, int protocolVersion) {
+        if (AssetSyncService.isVersionSynced(this, versionName)) {
             doLaunch(selected, versionName, protocolVersion);
             return;
         }
 
-        // 缺失音效：让用户选择下载或直接进入
         new AlertDialog.Builder(this)
-            .setTitle("音效资源未下载")
-            .setMessage("未检测到音效文件，是否下载？\n（约需下载 50 个文件，建议连接 Wi-Fi）")
-            .setPositiveButton("下载音效", (d, w) ->
-                downloadSoundsBlocking(selected, versionName, protocolVersion, soundsDir))
-            .setNegativeButton("直接进入", (d, w) ->
-                doLaunch(selected, versionName, protocolVersion))
+            .setTitle("游戏资源未下载")
+            .setMessage("首次进入需下载官方资源（音效 + 原版纹理/模型 jar，合计数百 MB），\n"
+                + "支持断点续传，中断后下次进入会继续补全。建议连接 Wi-Fi。")
+            .setPositiveButton("开始下载", (d, w) ->
+                downloadAssetsBlocking(selected, versionName, protocolVersion))
+            .setNegativeButton("取消", null)
             .setCancelable(false)
             .show();
     }
 
     /**
-     * 阻塞式下载音效：弹进度条，逐一下载缺失文件，全部完成后才启动游戏
+     * 阻塞式资产下载：弹进度条（文件 x/y、当前文件名、字节数、瞬时速度、剩余时间，500ms 刷新），
+     * 仅全部成功才启动游戏；取消/失败则中止并返回启动器（已入库对象下次续传）
      */
-    private void downloadSoundsBlocking(Account selected, String versionName,
-                                         int protocolVersion, String soundsDir) {
-        // 构建进度条对话框
+    private void downloadAssetsBlocking(Account selected, String versionName, int protocolVersion) {
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setPadding(60, 30, 60, 40);
 
         TextView tvMsg = new TextView(this);
-        tvMsg.setText("正在下载音效资源，请稍候...");
+        tvMsg.setText("正在获取资源元数据...");
         tvMsg.setTextSize(15);
         tvMsg.setTextColor(0xFF333333);
         layout.addView(tvMsg);
@@ -1337,6 +1336,19 @@ public class LauncherActivity extends Activity {
         progressBar.setLayoutParams(lp);
         layout.addView(progressBar);
 
+        // 当前下载文件展示行（对齐 FCL 能看到正在下什么文件；路径过长时省略头部保留文件名）
+        TextView tvFile = new TextView(this);
+        tvFile.setText("");
+        tvFile.setTextSize(13);
+        tvFile.setTextColor(0xFF555555);
+        tvFile.setSingleLine(true);
+        tvFile.setEllipsize(android.text.TextUtils.TruncateAt.START);
+        LinearLayout.LayoutParams fileLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        fileLp.setMargins(0, 12, 0, 0);
+        tvFile.setLayoutParams(fileLp);
+        layout.addView(tvFile);
+
         TextView tvSpeed = new TextView(this);
         tvSpeed.setText("");
         tvSpeed.setTextSize(13);
@@ -1349,94 +1361,68 @@ public class LauncherActivity extends Activity {
         layout.addView(tvSpeed);
 
         AlertDialog dialog = new AlertDialog.Builder(this)
-            .setTitle("下载音效资源")
+            .setTitle("下载游戏资源")
             .setView(layout)
-            .setCancelable(false)
-            .show();
+            .setNegativeButton("取消下载", null)
+            .create();
 
-        new Thread(() -> {
-            try {
-                new File(soundsDir).mkdirs();
+        // 关闭对话框（含"取消下载"）即中止后台同步；已入库对象保留，下次续传；
+        // 仅 onResult 成功路径才启动游戏
+        dialog.setOnDismissListener(d -> AssetSyncService.cancel());
+        dialog.show();
 
-                // 1. 获取音效文件列表
-                OkHttpClient client = MainActivity.httpClient;
-                Request listRequest = new Request.Builder().url(BASE_URL + "/sounds").build();
-                String json;
-                try (Response listResponse = client.newCall(listRequest).execute()) {
-                    if (!listResponse.isSuccessful()) {
-                        runOnUiThread(() -> {
-                            dialog.dismiss();
-                            Toast.makeText(this, "获取音效列表失败", Toast.LENGTH_LONG).show();
-                        });
-                        return;
-                    }
-                    json = listResponse.body().string();
-                }
-
-                // 2. 逐个下载缺失文件，更新进度条
-                JSONArray files = new JSONArray(json);
-                int total = files.length();
-                int completed = 0;
-                long totalBytes = 0;
-                long startTime = System.currentTimeMillis();
-                long lastUpdate = startTime;
-
-                for (int i = 0; i < total; i++) {
-                    String path = files.getString(i);
-                    File localFile = new File(soundsDir + "/" + path);
-
-                    if (localFile.exists()) {
-                        completed++;
-                        continue;
-                    }
-
-                    File parent = localFile.getParentFile();
-                    if (parent != null && !parent.exists()) parent.mkdirs();
-
-                    String fileUrl = BASE_URL + "/sounds/file?path=" + path;
-                    boolean ok = MainActivity.downloadFile(fileUrl, localFile.getAbsolutePath());
-
-                    if (ok) {
-                        completed++;
-                        totalBytes += localFile.length();
-                    }
-
-                    final int percent = completed * 100 / total;
-                    long now = System.currentTimeMillis();
-                    if (now - lastUpdate > 500) {
-                        long elapsed = now - startTime;
-                        if (elapsed > 0 && totalBytes > 0) {
-                            long speedBps = totalBytes * 1000 / elapsed;
-                            final String speedStr = formatSpeed(speedBps);
-                            lastUpdate = now;
-                            runOnUiThread(() -> {
-                                progressBar.setProgress(percent);
-                                tvSpeed.setText(speedStr);
-                            });
-                        } else {
-                            runOnUiThread(() -> progressBar.setProgress(percent));
-                        }
+        AssetSyncService.sync(this, versionName, new AssetSyncService.Callback() {
+            @Override
+            public void onCheckComplete(int totalObjects, int needCount, long needBytes) {
+                runOnUiThread(() -> {
+                    if (needCount == 0) {
+                        tvMsg.setText("资源校验完成，无需下载");
                     } else {
-                        runOnUiThread(() -> progressBar.setProgress(percent));
+                        tvMsg.setText("正在下载游戏资源 0/" + needCount);
+                        tvSpeed.setText("共 " + formatSize(needBytes));
+                        tvFile.setText("准备开始...");
                     }
-                }
-
-                // 3. 全部下载完成，启动游戏
-                runOnUiThread(() -> {
-                    dialog.dismiss();
-                    doLaunch(selected, versionName, protocolVersion);
-                });
-            } catch (Exception e) {
-                runOnUiThread(() -> {
-                    dialog.dismiss();
-                    Toast.makeText(this, "下载音效资源失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
                 });
             }
-        }).start();
+
+            @Override
+            public void onProgress(int doneFiles, int totalFiles, long bytesDone, long needBytes, long speedBps, String currentFile) {
+                runOnUiThread(() -> {
+                    if (totalFiles == 0) return;
+                    tvMsg.setText("正在下载游戏资源 " + doneFiles + "/" + totalFiles);
+                    if (currentFile != null && !currentFile.isEmpty()) {
+                        tvFile.setText(currentFile);
+                    }
+                    int percent = needBytes > 0
+                            ? (int) (bytesDone * 100 / needBytes)
+                            : doneFiles * 100 / totalFiles;
+                    progressBar.setProgress(Math.min(99, percent));
+                    String eta = speedBps > 0 && needBytes > bytesDone
+                            ? " · 剩余 " + formatTime((needBytes - bytesDone) / speedBps) : "";
+                    tvSpeed.setText(formatSize(bytesDone) + " / " + formatSize(needBytes)
+                            + "  " + formatSpeed(speedBps) + eta);
+                });
+            }
+
+            @Override
+            public void onResult(boolean success, String message) {
+                runOnUiThread(() -> {
+                    dialog.dismiss();
+                    if (success) {
+                        doLaunch(selected, versionName, protocolVersion);
+                    } else {
+                        // 官方资源（资产库+vanilla）未齐备不能进游戏，已下载部分保留续传
+                        Toast.makeText(LauncherActivity.this, "资源下载不完整: " + message
+                                        + "\n资源下载完成后方可进入游戏（已下载部分会自动续传）",
+                                Toast.LENGTH_LONG).show();
+                    }
+                });
+            }
+        });
     }
 
     /**
-     * 音效校验通过后的实际启动流程（保留正版令牌刷新逻辑）
+     * 资产校验/下载链结束后的实际启动流程（保留正版令牌刷新逻辑）
      */
     private void doLaunch(Account selected, String versionName, int protocolVersion) {
         // 正版账号：检查令牌是否需要刷新
@@ -1491,6 +1477,13 @@ public class LauncherActivity extends Activity {
         if (seconds < 60) return seconds + "s";
         if (seconds < 3600) return (seconds / 60) + "m " + (seconds % 60) + "s";
         return (seconds / 3600) + "h " + ((seconds % 3600) / 60) + "m";
+    }
+
+    private static String formatSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        if (bytes < 1024L * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
+        return String.format("%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0));
     }
 
     // ===== 心跳上报 =====

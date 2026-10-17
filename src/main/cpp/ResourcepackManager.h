@@ -6,7 +6,7 @@
 // 编译后的着色器程序信息
 struct ShaderProgramInfo {
     GLuint program = 0;
-    // 标准 Mojang uniform 位置
+    // 着色器 uniform 位置（未声明的为 -1，调用方需自行判空）
     GLint uModelViewMat = -1;
     GLint uProjMat = -1;
     GLint uChunkOffset = -1;
@@ -36,8 +36,8 @@ public:
     void refreshItemIcons();
 
     // ===== 着色器 =====
-    // 从资源包加载并编译 Mojang 格式着色器程序
-    // name: JSON 文件名（如 "rendertype_cutout"），自动从 shaders/core/ 加载
+    // 编译 assets/shaders/opengl/ 下的自研 GLES 着色器
+    // name: 内置表 kBuiltinShaderPrograms 里的程序名（如 "chunk_cutout"），其它名字一律失败
     // 返回 ShaderProgramInfo（program=0 表示失败）
     ShaderProgramInfo loadShaderProgram(const std::string& name);
 
@@ -56,16 +56,9 @@ private:
     GLuint loadAndUploadTexture(const std::string& fullPath);
 
     // ===== 着色器内部方法 =====
-    // 读取着色器源文件，处理 #moj_import，转换 GL→GLES
-    std::string loadShaderSource(const std::string& shaderPath);
-    // 递归解析 #moj_import
-    std::string resolveImports(const std::string& source, int depth = 0);
-    // 将 OpenGL #version 150 转换为 GLES #version 300 es，并适配纹理数组
-    // isVertex: true=顶点着色器, false=片段着色器
-    std::string convertGLtoGLES(const std::string& source, bool isVertex);
     // 编译着色器
     GLuint compileShader(GLenum type, const std::string& source);
-    // 链接程序（绑定 Mojang attribute locations）
+    // 链接程序（attribute location 由着色器源码的 layout 指定）
     GLuint linkProgram(GLuint vert, GLuint frag);
 
     std::unordered_map<std::string, GLuint> cache;

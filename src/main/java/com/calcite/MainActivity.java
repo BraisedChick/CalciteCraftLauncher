@@ -32,7 +32,8 @@ import com.calcite.LogManager;
 import com.calcite.util.DohResolver;
 
 public class MainActivity extends Activity {
-    static final OkHttpClient httpClient = new OkHttpClient.Builder()
+    // public：供跨包复用连接池（LauncherActivity 下载链、com.calcite.assets.AssetSyncService）
+    public static final OkHttpClient httpClient = new OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .dns(hostname -> {
@@ -146,6 +147,22 @@ public class MainActivity extends Activity {
         }
         if (!zipFound) {
             android.util.Log.w("MainActivity", "ZIP not found at any path, textures may show as purple");
+        }
+
+        // 哈希资产库（官方 assets 体系）：index 收录内容（音效等）的唯一来源；
+        // vanilla/ 目录（最新正式版 jar 解包）为官方纹理/模型兜底源；
+        // 服务器 ZIP 仅供 blocks.json/items.json/worldgen 等项目专有文件与定制 overlay。
+        // 启动器保证进游戏前两者均已就绪，此处失败仅可能出现在调试场景
+        java.io.File assetStoreDir = getExternalFilesDir("assets");
+        if (assetStoreDir != null) {
+            boolean storeReady = setAssetStorePath(assetStoreDir.getAbsolutePath());
+            android.util.Log.i("MainActivity", "Asset store ready=" + storeReady + " at " + assetStoreDir.getAbsolutePath());
+            boolean vanillaReady = setVanillaRootPath(
+                    new java.io.File(assetStoreDir, "vanilla").getAbsolutePath());
+            android.util.Log.i("MainActivity", "Vanilla root ready=" + vanillaReady);
+            // 实验开关：true = 官方新版资源优先（blockstates/models/纹理先取 vanilla，缺失回退服务器 ZIP），
+            // false = 服务器 ZIP（按协议版本定制）优先；改这一行即可整体回退
+            setPreferVanillaResources(true);
         }
 
         setContentView(R.layout.activity_main);
@@ -338,6 +355,9 @@ public class MainActivity extends Activity {
     private native void cleanupRenderer();
     private native void setAssetManager(AssetManager assetManager);
     private native void setTextureZipPath(String zipPath);
+    private native boolean setAssetStorePath(String root);
+    private native boolean setVanillaRootPath(String root);
+    private native void setPreferVanillaResources(boolean prefer);
     private native void resizeRenderer(int width, int height);
     private native void setRendererType(String rendererType);
     private native void setUsername(String username);

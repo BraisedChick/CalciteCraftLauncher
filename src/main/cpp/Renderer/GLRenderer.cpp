@@ -319,12 +319,12 @@ bool GLRenderer::createEGLContext(ANativeWindow* window) {
 
 bool GLRenderer::createShaders() {
     auto& rpm = ResourcepackManager::getInstance();
-    shaderSolid = rpm.loadShaderProgram("rendertype_solid");
-    shaderCutout = rpm.loadShaderProgram("rendertype_cutout");
-    shaderCutoutMipped = rpm.loadShaderProgram("rendertype_cutout_mipped");
-    shaderTranslucent = rpm.loadShaderProgram("rendertype_translucent");
+    shaderSolid = rpm.loadShaderProgram("chunk_solid");
+    shaderCutout = rpm.loadShaderProgram("chunk_cutout");
+    shaderCutoutMipped = rpm.loadShaderProgram("chunk_cutout_mipped");
+    shaderTranslucent = rpm.loadShaderProgram("chunk_translucent");
 
-    LOGI("Mojang shaders: solid=%d, cutout=%d, cutout_mipped=%d, translucent=%d",
+    LOGI("Built-in shaders: solid=%d, cutout=%d, cutout_mipped=%d, translucent=%d",
          shaderSolid.program, shaderCutout.program, shaderCutoutMipped.program, shaderTranslucent.program);
 
     // 输出 cutout 着色器的 uniform 位置，便于诊断
@@ -336,13 +336,13 @@ bool GLRenderer::createShaders() {
 
     // 至少需要 cutout 着色器才能渲染
     if (shaderCutout.program == 0) {
-        LOGE("Failed to load Mojang shaders (rendertype_cutout is required)");
+        LOGE("Failed to compile built-in shaders (chunk_cutout is required)");
         return false;
     }
 
     // 光照贴图纹理延迟到渲染循环中创建（需要 GameEngine 存在）
 
-    LOGI("Mojang shaders loaded successfully");
+    LOGI("Built-in shaders loaded successfully");
     return true;
 }
 
@@ -700,7 +700,7 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
     glm::mat4 projMatrix = glm::make_mat4(projectionMatrix);
     computeFrustumPlanes(projMatrix * viewMatrix);
 
-    // ===== Phase 1: 使用 rendertype_cutout 渲染基体 + 覆盖层 =====
+    // ===== Phase 1: 使用 chunk_cutout 渲染基体 + 覆盖层 =====
     if (shaderCutout.program == 0) {
         renderUI();
         eglSwapBuffers(display, surface);
@@ -853,7 +853,7 @@ void GLRenderer::render(float cx, float cy, float cz, float pitch, float yaw) {
         if (blendEnabled) glDisable(GL_BLEND);
     }
 
-    // ===== Phase 2: 使用 rendertype_translucent 渲染水 =====
+    // ===== Phase 2: 使用 chunk_translucent 渲染水 =====
     if (shaderTranslucent.program != 0) {
         bool waterStateSet = false;
         for (auto& [chunkKey, renderData] : chunkRenderCache) {

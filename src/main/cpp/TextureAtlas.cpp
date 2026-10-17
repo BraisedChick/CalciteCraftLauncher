@@ -28,6 +28,52 @@ static std::string normalizeTexturePath(const std::string& path) {
     return path;
 }
 
+// 解析新版 item 定义（assets/<ns>/items/*.json，26.x 起取代 models/item 的方块物品映射）
+// 的 model 节点，递归取出物品栏使用的模型路径：
+//   model             → 直接取路径
+//   condition         → 先看 on_false（未激活态，就是背包里显示的那个），再看 on_true
+//   select/range_dispatch → 先看 fallback，再看各分支（cases[]/entries[]）
+//   special/composite → 返回空：床/箱子/盾牌/头颅这类运行时生成的模型 CPU 光栅化不支持，
+//                       多部件合成模型（如床的两半）立体化后会变形，一律保持 2D 贴图
+static std::string resolveItemDefinitionModel(const json& node, int depth) {
+    if (depth > 6 || !node.is_object()) return "";
+
+    std::string type = node.value("type", "");
+    if (type == "minecraft:model") {
+        return normalizeTexturePath(node.value("model", ""));
+    }
+    if (type == "minecraft:special" || type == "minecraft:composite") {
+        return "";
+    }
+
+    if (type == "minecraft:condition") {
+        if (node.contains("on_false")) {
+            std::string r = resolveItemDefinitionModel(node["on_false"], depth + 1);
+            if (!r.empty()) return r;
+        }
+        if (node.contains("on_true")) {
+            std::string r = resolveItemDefinitionModel(node["on_true"], depth + 1);
+            if (!r.empty()) return r;
+        }
+        return "";
+    }
+
+    if (node.contains("fallback")) {
+        std::string r = resolveItemDefinitionModel(node["fallback"], depth + 1);
+        if (!r.empty()) return r;
+    }
+    for (const char* arrKey : {"cases", "entries"}) {
+        if (!node.contains(arrKey) || !node[arrKey].is_array()) continue;
+        for (const auto& branch : node[arrKey]) {
+            if (!branch.is_object()) continue;
+            const json& child = branch.contains("model") ? branch["model"] : branch;
+            std::string r = resolveItemDefinitionModel(child, depth + 1);
+            if (!r.empty()) return r;
+        }
+    }
+    return "";
+}
+
 FaceDir TextureAtlas::faceDirFromString(const std::string& dir) {
     if (dir == "down")  return FACE_DOWN;
     if (dir == "up")    return FACE_UP;
@@ -59,11 +105,20 @@ TextureAtlas::TextureMap TextureAtlas::resolveModelTextures(
     }
 
     // 提取 textures 对象
+    // 26.x 起 textures 的值允许写成对象（{ "sprite": "minecraft:block/glass", "force_translucent": true,
+    // "tint_index": ... }），实测玻璃/染色玻璃/玻璃板一族共 110 个模型用了这种新写法。
+    // 只认字符串会让 pane/edge 这类变量从未定义，面上引用的 #pane/#edge 解析不到，
+    // face.textureLayer 保持默认 0 → 采样到 atlas 第 0 号图层（内容随哈希遍历顺序而定）。
     TextureMap ownTextures;
     if (j.contains("textures") && j["textures"].is_object()) {
         for (auto it = j["textures"].begin(); it != j["textures"].end(); ++it) {
             if (it->is_string()) {
                 ownTextures[it.key()] = it->get<std::string>();
+            } else if (it->is_object()) {
+                auto spriteIt = it->find("sprite");
+                if (spriteIt != it->end() && spriteIt->is_string()) {
+                    ownTextures[it.key()] = spriteIt->get<std::string>();
+                }
             }
         }
     }
@@ -586,6 +641,34 @@ bool TextureAtlas::initialize(std::function<void(float, const char*)> progressCa
             }
         }
         LOGI("Parsed %d item model references", itemCount);
+    }
+
+    // 4.7 加载 items/*.json（26.x 的新版 item 定义）
+    // 1.18 的 models/item/<name>.json 靠 parent 指向 block 模型来出 3D 物品栏图标，
+    // 而 26.x 把方块物品的这层映射搬进了 items/<name>.json，models/item/ 只剩特殊物品，
+    // 所以必须解析这里，否则 itemModelCache 里没有 dirt/stone/... 这些键，图标全部退化成 2D 贴图。
+    {
+        auto itemDefFiles = TextureLoader::readAllTextFromZip("items/");
+        int defCount = 0;
+        for (const auto& [entryPath, content] : itemDefFiles) {
+            std::string itemName = entryPath;
+            size_t slash = itemName.rfind('/');
+            if (slash != std::string::npos) itemName = itemName.substr(slash + 1);
+            size_t dot = itemName.rfind(".json");
+            if (dot != std::string::npos) itemName = itemName.substr(0, dot);
+            if (itemName.empty()) continue;
+
+            json j;
+            try { j = json::parse(content); } catch (...) { continue; }
+            if (!j.is_object() || !j.contains("model")) continue;
+
+            std::string model = resolveItemDefinitionModel(j["model"], 0);
+            // 只接管指向 block/ 的定义（指向 item/ 的平面物品仍走 2D 贴图路径）
+            if (model.compare(0, 6, "block/") != 0) continue;
+            itemModelCache[itemName] = model.substr(6);
+            defCount++;
+        }
+        LOGI("Parsed %d item definitions (block models) from items/", defCount);
     }
 
     // 5. 强制加入特殊纹理
