@@ -149,10 +149,10 @@ public class MainActivity extends Activity {
             android.util.Log.w("MainActivity", "ZIP not found at any path, textures may show as purple");
         }
 
-        // 哈希资产库（官方 assets 体系）：index 收录内容（音效等）的唯一来源；
-        // vanilla/ 目录（最新正式版 jar 解包）为官方纹理/模型兜底源；
-        // 服务器 ZIP 仅供 blocks.json/items.json/worldgen 等项目专有文件与定制 overlay。
-        // 启动器保证进游戏前两者均已就绪，此处失败仅可能出现在调试场景
+        // 三个来源的分工由 C++ 侧 TextureLoader::routeFor 唯一裁决：
+        //   assets/ 哈希库 = 音频、语言表、主菜单全景图
+        //   vanilla/ 目录  = 纹理/模型/blockstate 等官方资源
+        //   服务器 ZIP     = blocks.json、items.json、worldgen/
         java.io.File assetStoreDir = getExternalFilesDir("assets");
         if (assetStoreDir != null) {
             boolean storeReady = setAssetStorePath(assetStoreDir.getAbsolutePath());
@@ -160,9 +160,6 @@ public class MainActivity extends Activity {
             boolean vanillaReady = setVanillaRootPath(
                     new java.io.File(assetStoreDir, "vanilla").getAbsolutePath());
             android.util.Log.i("MainActivity", "Vanilla root ready=" + vanillaReady);
-            // 实验开关：true = 官方新版资源优先（blockstates/models/纹理先取 vanilla，缺失回退服务器 ZIP），
-            // false = 服务器 ZIP（按协议版本定制）优先；改这一行即可整体回退
-            setPreferVanillaResources(true);
         }
 
         setContentView(R.layout.activity_main);
@@ -357,7 +354,6 @@ public class MainActivity extends Activity {
     private native void setTextureZipPath(String zipPath);
     private native boolean setAssetStorePath(String root);
     private native boolean setVanillaRootPath(String root);
-    private native void setPreferVanillaResources(boolean prefer);
     private native void resizeRenderer(int width, int height);
     private native void setRendererType(String rendererType);
     private native void setUsername(String username);

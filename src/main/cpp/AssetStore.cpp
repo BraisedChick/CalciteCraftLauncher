@@ -20,76 +20,135 @@ bool AssetStore::setRoot(const std::string& rootPath) {
     // 启动期由 JNI 线程在渲染/工作线程启动前调用，运行期只读
     ready.store(false, std::memory_order_release);
     root = rootPath;
-    objects.clear();
+    objectPaths.clear();
     if (root.empty() || !loadIndex()) {
         LOGI("Asset store not ready (root=%s)", root.c_str());
         return false;
     }
     ready.store(true, std::memory_order_release);
-    LOGI("Asset store ready: root=%s objects=%zu", root.c_str(), objects.size());
+    LOGI("Asset store ready: root=%s objects=%zu", root.c_str(), objectPaths.size());
     return true;
 }
 
+namespace {
+
+// asset index 流式提取器：只取每个条目的 "hash"，边解析边拼出对象绝对路径，全程不建 DOM。
+// 事件深度：depth1 根对象，depth2 objects 对象，depth3 单个资产条目（字段键值对都在 depth3 上报）
+class IndexObjectPathSax : public nlohmann::json_sax<json> {
+public:
+    IndexObjectPathSax(const std::string& rootPath,
+                       std::unordered_map<std::string, std::string>& out)
+        : objectsDir(rootPath + "/objects/"), objectPaths(out) {}
+
+    bool null() override { return true; }
+    bool boolean(bool) override { return true; }
+    bool number_integer(number_integer_t) override { return true; }
+    bool number_unsigned(number_unsigned_t) override { return true; }
+    bool number_float(number_float_t, const string_t&) override { return true; }
+    bool binary(binary_t&) override { return true; }
+
+    bool key(string_t& val) override {
+        if (depth == 1) {
+            inObjects = (val == "objects");
+        } else if (inObjects) {
+            if (depth == 2) currentPath = val;
+            else if (depth == 3) pendingKey = std::move(val);
+        }
+        return true;
+    }
+
+    bool string(string_t& val) override {
+        if (inObjects && depth == 3 && pendingKey == "hash") {
+            hash = std::move(val);
+            hasHash = true;
+        }
+        return true;
+    }
+
+    bool start_object(std::size_t) override {
+        depth++;
+        if (inObjects && depth == 3) {
+            hash.clear();
+            hasHash = false;
+        }
+        return true;
+    }
+
+    bool end_object() override {
+        if (inObjects) {
+            if (depth == 3) {
+                if (hasHash) store(currentPath, hash);
+            } else if (depth == 2) {
+                inObjects = false;
+            }
+        }
+        if (depth > 0) depth--;
+        return true;
+    }
+
+    bool start_array(std::size_t) override { depth++; return true; }
+    bool end_array() override { if (depth > 0) depth--; return true; }
+    bool parse_error(std::size_t, const std::string&, const nlohmann::detail::exception&) override { return false; }
+
+private:
+    // 剥掉命名空间前缀（老 index 用 "minecraft/"，新版用 "minecraft:"）
+    void store(const std::string& path, const std::string& sha1) {
+        static const std::string nsSlash = "minecraft/";
+        static const std::string nsColon = "minecraft:";
+        std::string key = path;
+        if (key.size() > nsSlash.size() && key.compare(0, nsSlash.size(), nsSlash) == 0) {
+            key.erase(0, nsSlash.size());
+        } else if (key.size() > nsColon.size() && key.compare(0, nsColon.size(), nsColon) == 0) {
+            key.erase(0, nsColon.size());
+        }
+        if (sha1.size() < 2 || key.empty()) return;
+        objectPaths.emplace(std::move(key), objectsDir + sha1.substr(0, 2) + "/" + sha1);
+    }
+
+    std::string objectsDir;
+    std::unordered_map<std::string, std::string>& objectPaths;
+    std::size_t depth = 0;
+    bool inObjects = false;
+    bool hasHash = false;
+    std::string pendingKey;
+    std::string currentPath;
+    std::string hash;
+};
+
+} // namespace
+
 bool AssetStore::loadIndex() {
-    // 1) current_index.txt 记录当前使用的 assetId（如 "1.18"）
-    std::ifstream idFile(root + "/current_index.txt");
+    std::ifstream idFile(root + "/current_index.txt");   // 单行 assetId
     if (!idFile) return false;
     std::string assetId;
     std::getline(idFile, assetId);
     idFile.close();
-    // 去除行尾空白
     while (!assetId.empty() && (assetId.back() == '\r' || assetId.back() == '\n' ||
                                  assetId.back() == ' ' || assetId.back() == '\t')) {
         assetId.pop_back();
     }
     if (assetId.empty()) return false;
 
-    // 2) 解析 indexes/<assetId>.json
     std::string indexPath = root + "/indexes/" + assetId + ".json";
     std::ifstream indexFile(indexPath, std::ios::binary);
     if (!indexFile) {
         LOGE("Index file not found: %s", indexPath.c_str());
         return false;
     }
-    json index;
-    try {
-        index = json::parse(indexFile);
-    } catch (const std::exception& e) {
-        LOGE("Failed to parse asset index %s: %s", indexPath.c_str(), e.what());
+    IndexObjectPathSax handler(root, objectPaths);
+    if (!json::sax_parse(indexFile, &handler)) {
+        LOGE("Failed to parse asset index %s", indexPath.c_str());
         return false;
     }
-    if (!index.is_object() || !index.contains("objects") || !index["objects"].is_object()) {
-        LOGE("Asset index malformed (no objects map): %s", indexPath.c_str());
-        return false;
-    }
-
-    // 3) 建 path → hash 映射（key 去除命名空间前缀：
-    //    1.18 等 index 实际用 "minecraft/"（斜杠），新版格式用 "minecraft:"（冒号），两种都剥）
-    static const std::string nsSlash = "minecraft/";
-    static const std::string nsColon = "minecraft:";
-    for (auto it = index["objects"].begin(); it != index["objects"].end(); ++it) {
-        const json& obj = it.value();
-        if (!obj.is_object() || !obj.contains("hash") || !obj["hash"].is_string()) continue;
-        std::string path = it.key();
-        if (path.size() > nsSlash.size() && path.compare(0, nsSlash.size(), nsSlash) == 0) {
-            path.erase(0, nsSlash.size());
-        } else if (path.size() > nsColon.size() && path.compare(0, nsColon.size(), nsColon) == 0) {
-            path.erase(0, nsColon.size());
-        }
-        objects.emplace(std::move(path), obj["hash"].get<std::string>());
-    }
-    LOGI("Loaded asset index '%s' (%zu objects)", assetId.c_str(), objects.size());
-    return !objects.empty();
+    LOGI("Loaded asset index '%s' (%zu objects)", assetId.c_str(), objectPaths.size());
+    return !objectPaths.empty();
 }
 
 std::string AssetStore::getObjectPath(const std::string& path) const {
     if (!ready.load(std::memory_order_acquire)) return "";
-    auto it = objects.find(path);
-    if (it == objects.end()) return "";
-    const std::string& hash = it->second;
-    if (hash.size() < 2) return "";
-    // objects/<2hex>/<hash>
-    return root + "/objects/" + hash.substr(0, 2) + "/" + hash;
+    auto it = objectPaths.find(path);
+    if (it == objectPaths.end()) return "";
+    return it->second;
 }
 
 bool AssetStore::readFile(const std::string& path, std::vector<uint8_t>& out) const {
@@ -119,13 +178,13 @@ bool AssetStore::readText(const std::string& path, std::string& out) const {
 std::vector<std::string> AssetStore::enumeratePrefix(const std::string& prefix) const {
     std::vector<std::string> result;
     if (!ready.load(std::memory_order_acquire)) return result;
-    for (const auto& pair : objects) {
+    for (const auto& pair : objectPaths) {
         if (pair.first.size() > prefix.size() &&
             pair.first.compare(0, prefix.size(), prefix) == 0) {
             result.push_back(pair.first);
         }
     }
-    // 哈希遍历顺序不定，排序保证批量加载结果稳定
+    // 哈希表顺序不定，排序保证批量加载结果稳定
     std::sort(result.begin(), result.end());
     return result;
 }
