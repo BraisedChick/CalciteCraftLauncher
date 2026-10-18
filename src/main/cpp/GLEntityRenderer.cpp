@@ -478,7 +478,13 @@ void GLEntityRenderer::renderAll(const std::vector<Entity>& entities,
             }
 
                 // 四足动物（整体绘制）
-            case EntityType::PIG:
+            case EntityType::PIG: {
+                // 猪用 64x64 贴图页的变体（几何与其它四足相同）
+                glm::mat4 mvp = vp * baseModelMatrix;
+                glUniformMatrix4fv(m_uMVP, 1, GL_FALSE, &mvp[0][0]);
+                renderQuadruped(EntityModel::getPig(), iyaw, iheadYaw, entity.pitch);
+                break;
+            }
             case EntityType::CHICKEN:
             case EntityType::HORSE:
             case EntityType::WOLF:

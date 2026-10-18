@@ -54,6 +54,7 @@ public:
     // ===== 静态工厂方法 =====
     static const EntityModel& getHumanoid();
     static const EntityModel& getQuadruped();
+    static const EntityModel& getPig();      // 与 quadruped 同几何，仅 UV 贴图页不同
     static const EntityModel& getCow();
     static const EntityModel& getSpider();
     static const EntityModel& getCreeper();
@@ -72,7 +73,8 @@ private:
 
     // 各模型的构建函数（返回 EntityModel 实例）
     static EntityModel buildHumanoid();
-    static EntityModel buildQuadruped();
+    // texW/texH 是 UV 归一化用的贴图页尺寸，必须与实际纹理一致（26.x 起猪/牛页高变成 64）
+    static EntityModel buildQuadruped(float texW, float texH);
     static EntityModel buildCow();
     static EntityModel buildSpider();
     static EntityModel buildCreeper();
@@ -112,6 +114,7 @@ private:
     // ===== 静态缓存 =====
     static EntityModel s_humanoid;
     static EntityModel s_quadruped;
+    static EntityModel s_pig;
     static EntityModel s_cow;
     static EntityModel s_spider;
     static EntityModel s_creeper;

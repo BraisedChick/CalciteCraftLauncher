@@ -6,6 +6,7 @@
 // ---------- 静态成员定义 ----------
 EntityModel EntityModel::s_humanoid;
 EntityModel EntityModel::s_quadruped;
+EntityModel EntityModel::s_pig;
 EntityModel EntityModel::s_cow;
 EntityModel EntityModel::s_spider;
 EntityModel EntityModel::s_creeper;
@@ -167,9 +168,11 @@ EntityModel EntityModel::buildHumanoid() {
     model.setupDefaultLayout();
     return model;
 }
-EntityModel EntityModel::buildQuadruped() {
+EntityModel EntityModel::buildQuadruped(float texW, float texH) {
     EntityModel model;
-    const float QW = 64.0f, QH = 32.0f;
+    // 贴图页由调用方给定：几何/UV 坐标不变，只是归一化分母要跟实际纹理一致
+    // （26.x 猪贴图从 64x32 扩到 64x64，内容仍在左上 64x32 区域）
+    const float QW = texW, QH = texH;
 
     // Head
     model.buildBox(-4, 8, -14, 8, 8, 8, 0, 0, QW, QH);
@@ -208,7 +211,8 @@ EntityModel EntityModel::buildQuadruped() {
 
 EntityModel EntityModel::buildCow() {
     EntityModel model;
-    const float QW = 64.0f, QH = 32.0f;
+    // 26.x 牛贴图同样是 64x64（内容仍在左上 64x32 区域），页高必须跟足，否则腿采样到空白
+    const float QW = 64.0f, QH = 64.0f;
 
     model.buildBox(-4, 16, -14, 8, 8, 6, 0, 0, QW, QH);  // Head (smaller)
 
@@ -365,7 +369,8 @@ EntityModel EntityModel::buildItem() {
 void EntityModel::initializeAll() {
     if (s_initialized) return;
     s_humanoid = buildHumanoid();
-    s_quadruped = buildQuadruped();
+    s_quadruped = buildQuadruped(64.0f, 32.0f);   // chicken/wolf/cat/horse 仍是 64x32 页
+    s_pig = buildQuadruped(64.0f, 64.0f);         // 26.x 猪贴图页 64x64
     s_cow = buildCow();
     s_spider = buildSpider();
     s_creeper = buildCreeper();
@@ -379,6 +384,7 @@ void EntityModel::initializeAll() {
 
 const EntityModel& EntityModel::getHumanoid() { return s_humanoid; }
 const EntityModel& EntityModel::getQuadruped() { return s_quadruped; }
+const EntityModel& EntityModel::getPig() { return s_pig; }
 const EntityModel& EntityModel::getCow() { return s_cow; }
 const EntityModel& EntityModel::getSpider() { return s_spider; }
 const EntityModel& EntityModel::getCreeper() { return s_creeper; }
