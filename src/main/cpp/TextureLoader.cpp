@@ -106,27 +106,6 @@ const char* TextureLoader::sourceName(Source source) {
     return "unknown";
 }
 
-void TextureLoader::closeZip() {
-    {
-        std::unique_lock<std::shared_mutex> lock(s_cacheMutex);
-        s_cache.clear();
-    }
-
-    if (g_zipOpen) {
-        mz_zip_reader_end(static_cast<mz_zip_archive*>(g_zip));
-        delete static_cast<mz_zip_archive*>(g_zip);
-        g_zip = nullptr;
-        g_zipOpen = false;
-        LOGI("ZIP closed");
-    }
-}
-
-void TextureLoader::clearCache() {
-    std::unique_lock<std::shared_mutex> lock(s_cacheMutex);
-    s_cache.clear();
-    LOGI("Texture cache cleared");
-}
-
 // 裸文件名补 block/ 段，统一再加 textures/ 前缀：
 // "colormap/grass.png" → "textures/colormap/grass.png"，"stone.png" → "textures/block/stone.png"
 std::string TextureLoader::normalizeTexturePath(const std::string& filename) {
@@ -168,30 +147,6 @@ TextureData TextureLoader::loadFromStore(const std::string& filename) {
         return result;
     }
     return decodeFromBytes(bytes);
-}
-
-TextureData TextureLoader::loadFromZip(const std::string& filename) {
-    TextureData result;
-    if (!g_zipOpen || !g_zip) return result;
-
-    mz_zip_archive* zip = static_cast<mz_zip_archive*>(g_zip);
-    std::string entry = normalizeTexturePath(filename);
-    int foundIndex = mz_zip_reader_locate_file(zip, entry.c_str(), nullptr, 0);
-    if (foundIndex < 0) return result;
-
-    size_t uncompSize = 0;
-    unsigned char* data = static_cast<unsigned char*>(
-        mz_zip_reader_extract_to_heap(zip, foundIndex, &uncompSize, 0));
-    if (!data || uncompSize == 0) {
-        if (data) mz_free(data);
-        return result;
-    }
-
-    std::vector<uint8_t> bytes(data, data + uncompSize);
-    mz_free(data);
-    result = decodeFromBytes(bytes);
-    if (!result.data) LOGE("Failed to load PNG from ZIP: %s", entry.c_str());
-    return result;
 }
 
 TextureData TextureLoader::loadFromVanilla(const std::string& filename) {
@@ -402,14 +357,14 @@ TextureData TextureLoader::loadPNG(const std::string& filename) {
         }
     }
 
-    // 只查 routeFor 指定的那一个来源（纹理只会落到 Vanilla / Index 两支）
+    // 纹理只有两个来源：ZIP 内不含任何纹理，routeFor 也不会把纹理判给 Zip
     const std::string normalized = normalizeTexturePath(filename);
     const Source source = routeFor(normalized);
     TextureData result;
-    switch (source) {
-        case Source::Index:   result = loadFromStore(filename); break;
-        case Source::Zip:     result = loadFromZip(filename); break;
-        case Source::Vanilla: result = loadFromVanilla(filename); break;
+    if (source == Source::Index) {
+        result = loadFromStore(filename);
+    } else if (source == Source::Vanilla) {
+        result = loadFromVanilla(filename);
     }
 
     if (!result.data) {

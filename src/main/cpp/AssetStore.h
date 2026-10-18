@@ -22,7 +22,6 @@ public:
     bool setRoot(const std::string& rootPath);
 
     bool isReady() const { return ready.load(std::memory_order_acquire); }
-    const std::string& getRoot() const { return root; }
 
     // path 为 assets/minecraft 相对路径（如 "textures/block/stone.png"），未命中返回空串
     std::string getObjectPath(const std::string& path) const;
@@ -32,8 +31,6 @@ public:
     bool readText(const std::string& path, std::string& out) const;
 
     std::vector<std::string> enumeratePrefix(const std::string& prefix) const;
-
-    size_t getObjectCount() const { return objectPaths.size(); }
 
 private:
     AssetStore() = default;

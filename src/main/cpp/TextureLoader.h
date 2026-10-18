@@ -80,15 +80,12 @@ public:
     static std::vector<std::pair<std::string, std::string>> readAllTextFromZip(const std::string& prefix);
     static Source routeFor(const std::string& path);
     static const char* sourceName(Source s);
-    static void closeZip();
-    static void* getZipHandle() { return g_zip; }
 
 private:
     static AAssetManager* g_assetManager;
     static std::string g_zipPath;
     static std::string g_vanillaRoot;
     static TextureData loadFromStore(const std::string& filename);
-    static TextureData loadFromZip(const std::string& filename);
     static TextureData loadFromVanilla(const std::string& filename);
     static TextureData decodeFromBytes(const std::vector<uint8_t>& bytes);
     static std::string readTextFromVanilla(const std::string& filename);
@@ -101,5 +98,4 @@ private:
     // 已解码纹理缓存（文件名 → TextureData）
     static std::unordered_map<std::string, TextureData> s_cache;
     static std::shared_mutex s_cacheMutex;
-    static void clearCache();
 };

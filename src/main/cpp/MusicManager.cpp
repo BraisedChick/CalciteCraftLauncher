@@ -149,9 +149,7 @@ void MusicManager::setVolume(float volume) {
 }
 
 std::string MusicManager::resolveSoundPath(const std::string& resourcePath) {
-    // 哈希资产库是唯一来源（旧 files/sounds 目录回退已删除）：
-    // index key = "sounds/<resourcePath>.ogg"，objects 即真实文件，
-    // ov_fopen 可直接流式读取，无需解压临时文件
+    // 哈希资产库是音频的唯一来源，对象文件可直接 ov_fopen 流式读
     std::string objPath = AssetStore::getInstance().getObjectPath(
         "sounds/" + resourcePath + ".ogg");
     if (!objPath.empty()) {
