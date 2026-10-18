@@ -1820,9 +1820,8 @@ void GLRenderer::renderSky(const glm::mat4& viewMatrix, const glm::mat4& projMat
 
     // 5. 渲染星星
     if (starBrightness > 0.01f) {
-        float actualStarBrightness = starBrightness * skyColor.r;
-        glUniform4f(uColor, actualStarBrightness, actualStarBrightness,
-                    actualStarBrightness, actualStarBrightness);
+        glUniform4f(uColor, starBrightness, starBrightness,
+                    starBrightness, starBrightness);
         glBindVertexArray(skyStarsVAO);
 
         // 使用保存的 m_starCount 生成索引（或直接复用已上传的 EBO 数据）
