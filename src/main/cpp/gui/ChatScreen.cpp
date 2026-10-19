@@ -1,6 +1,7 @@
 #include "ChatScreen.h"
 
 #include "imgui.h"
+#include "McTextFormat.h"
 #include <algorithm>
 #include <cfloat>
 #include <cstring>
@@ -77,15 +78,16 @@ void ChatScreen::render() {
 
             int start = std::max(0, (int)messages.size() - 20);
             if (chatFontPtr) ImGui::PushFont((ImFont*)chatFontPtr);
+            // 逐条自绘：一条消息内部可以有 § 颜色/粗体/下划线等多样式片段，
+            // entry.color 只作为未标注样式时的默认色
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            float wrapW = ImGui::GetContentRegionAvail().x;
             for (int i = start; i < (int)messages.size(); i++) {
                 const auto& entry = messages[i];
-                ImVec4 col(
-                    ((entry.color >> 0) & 0xFF) / 255.0f,
-                    ((entry.color >> 8) & 0xFF) / 255.0f,
-                    ((entry.color >> 16) & 0xFF) / 255.0f,
-                    ((entry.color >> 24) & 0xFF) / 255.0f * alpha
-                );
-                ImGui::TextColored(col, "%s", entry.text.c_str());
+                ImVec2 pos = ImGui::GetCursorScreenPos();
+                ImVec2 end = McText::draw(dl, pos.x, pos.y, entry.text, entry.color, alpha, wrapW);
+                // 占据实际排版尺寸，保证窗口内容高度/自动滚到底部仍成立
+                ImGui::Dummy(ImVec2(end.x - pos.x, end.y - pos.y));
             }
             if (chatFontPtr) ImGui::PopFont();
             ImGui::SetWindowSize(ImVec2(chatW - 8, chatH - 8));

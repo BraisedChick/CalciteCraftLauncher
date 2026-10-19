@@ -182,22 +182,13 @@ void MultiplayerScreen::renderServerList() {
 
                 std::string line1 = servers[i].name;
                 std::string rightInfo;
-                std::string motdLine1, motdLine2;
+                std::string motdText;
                 bool motdRed = false;
                 if (servers[i].pinging) {
-                    motdLine1 = "(正在获取信息...)";
+                    motdText = "(正在获取信息...)";
                 } else if (servers[i].pinged) {
-                    if (!servers[i].motd.empty()) {
-                        size_t nlPos = servers[i].motd.find('\n');
-                        if (nlPos != std::string::npos) {
-                            motdLine1 = servers[i].motd.substr(0, nlPos);
-                            motdLine2 = servers[i].motd.substr(nlPos + 1);
-                            while (!motdLine2.empty() && (motdLine2[0] == ' ' || motdLine2[0] == '\t'))
-                                motdLine2.erase(0, 1);
-                        } else {
-                            motdLine1 = servers[i].motd;
-                        }
-                    }
+                    // 不再手工按 \n 拆分：McText 自行处理硬换行，且样式跨行延续
+                    motdText = servers[i].motd;
                     if (servers[i].latencyMs >= 0) {
                         char info[64];
                         snprintf(info, sizeof(info), "%d/%d", servers[i].onlinePlayers, servers[i].maxPlayers);
@@ -208,7 +199,7 @@ void MultiplayerScreen::renderServerList() {
                         rightInfo = info;
                     }
                 } else if (servers[i].pingFailed) {
-                    motdLine1 = "\xe6\x97\xa0\xe6\xb3\x95\xe8\xbf\x9e\xe6\x8e\xa5\xe5\x88\xb0\xe6\x9c\x8d\xe5\x8a\xa1\xe5\x99\xa8";
+                    motdText = "\xe6\x97\xa0\xe6\xb3\x95\xe8\xbf\x9e\xe6\x8e\xa5\xe5\x88\xb0\xe6\x9c\x8d\xe5\x8a\xa1\xe5\x99\xa8";
                     motdRed = true;
                 }
 
@@ -288,17 +279,14 @@ void MultiplayerScreen::renderServerList() {
 
                 if (motdRed) {
                     ImGui::SetCursorPos(ImVec2(textLeft, startPos.y + 28));
-                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", motdLine1.c_str());
-                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", motdText.c_str());
+                } else if (!motdText.empty()) {
                     ImGui::SetCursorPos(ImVec2(textLeft, startPos.y + 28));
                     ImVec2 screenPos = ImGui::GetCursorScreenPos();
-                    drawMcText(screenPos.x, screenPos.y, motdLine1, IM_COL32(128, 128, 128, 255));
-                }
-
-                if (!motdLine2.empty()) {
-                    ImGui::SetCursorPos(ImVec2(textLeft, startPos.y + 46));
-                    ImVec2 screenPos = ImGui::GetCursorScreenPos();
-                    drawMcText(screenPos.x, screenPos.y, motdLine2, IM_COL32(128, 128, 128, 255));
+                    // 宽度限制到延迟图标之前，超宽自动按词折行
+                    float motdWidth = rightEdge - textLeft - pingIconWidth - 4.0f;
+                    McText::draw(ImGui::GetWindowDrawList(), screenPos.x, screenPos.y, motdText,
+                                 IM_COL32(128, 128, 128, 255), 1.0f, motdWidth);
                 }
 
                 ImGui::PopID();

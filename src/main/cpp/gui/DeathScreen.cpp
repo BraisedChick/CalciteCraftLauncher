@@ -34,10 +34,13 @@ void DeathScreen::render(int mouseX, int mouseY) {
     ImGui::SetCursorPos(ImVec2(CENTER_X - textW * 0.5f, h * 0.3f));
     ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "你死了！");
 
-    // 死亡原因
-    textW = ImGui::CalcTextSize(deathReason.c_str()).x;
-    ImGui::SetCursorPos(ImVec2(CENTER_X - textW * 0.5f, h * 0.3f + 45.0f));
-    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "%s", deathReason.c_str());
+    // 死亡原因（带 § 样式，可能较长，限宽折行后整体居中）
+    const float REASON_W = w * 0.8f;
+    ImVec2 reasonSize = McText::measure(deathReason, REASON_W);
+    ImGui::SetCursorPos(ImVec2(CENTER_X - reasonSize.x * 0.5f, h * 0.3f + 45.0f));
+    ImVec2 reasonPos = ImGui::GetCursorScreenPos();
+    McText::draw(ImGui::GetWindowDrawList(), reasonPos.x, reasonPos.y, deathReason,
+                 IM_COL32(204, 204, 204, 255), 1.0f, REASON_W);
 
     // 重生按钮
     ImGui::SetCursorPos(ImVec2(CENTER_X - BTN_W * 0.5f, h * 0.5f));

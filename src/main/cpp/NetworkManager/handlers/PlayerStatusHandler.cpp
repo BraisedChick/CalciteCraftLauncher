@@ -122,10 +122,11 @@ void NetworkManager::handlePlayerStatus(int packetId, const std::vector<uint8_t>
             auto iter = pktData.cbegin();
             size_t len = pktData.size();
             killPacket.Read(iter, len);
-            m_engine->deathMessage = killPacket.GetMessage().GetText();
-            if (m_engine->deathMessage.empty()) {
-                m_engine->deathMessage = m_engine->parseChatComponent(killPacket.GetMessage().GetRawText());
-            }
+            // GetText() 是压平后的无样式文本，优先解析原始组件才能保留死亡消息里的颜色
+            const std::string& rawDeath = killPacket.GetMessage().GetRawText();
+            m_engine->deathMessage = rawDeath.empty()
+                ? killPacket.GetMessage().GetText()
+                : m_engine->parseChatComponent(rawDeath);
             LOGI("Death message: '%s'", m_engine->deathMessage.c_str());
             break;
         }

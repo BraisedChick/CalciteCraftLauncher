@@ -25,13 +25,12 @@ void DisconnectedScreen::render(int mouseX, int mouseY) {
     ImGui::SetCursorPos(ImVec2(CENTER_X - textW * 0.5f, h * 0.25f));
     ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", title.c_str());
 
-    // 原因文本（可能多行/较长，限宽自动换行并居中排版）
+    // 原因文本（可能多行/带 § 样式，限宽自动换行并居中排版）
     const float WRAP_W = w * 0.6f;
-    ImVec2 reasonSize = ImGui::CalcTextSize(reason.c_str(), nullptr, false, WRAP_W);
-    ImGui::SetCursorPos(ImVec2(CENTER_X - reasonSize.x * 0.5f, h * 0.25f + 50.0f));
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + WRAP_W);
-    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "%s", reason.c_str());
-    ImGui::PopTextWrapPos();
+    ImGui::SetCursorPos(ImVec2(CENTER_X - WRAP_W * 0.5f, h * 0.25f + 50.0f));
+    ImVec2 reasonPos = ImGui::GetCursorScreenPos();
+    McText::draw(ImGui::GetWindowDrawList(), reasonPos.x, reasonPos.y, reason,
+                 IM_COL32(204, 204, 204, 255), 1.0f, WRAP_W, McText::Align::Center);
 
     // 返回按钮（对应原版 "回到服务器列表"）
     const float BTN_W = 360.0f;

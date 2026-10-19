@@ -98,6 +98,8 @@ set(APP_SOURCES
     gui/InventoryScreen.cpp
     gui/PauseScreen.cpp
     gui/ChatScreen.cpp
+    gui/McTextFormat.cpp
+    ChatComponentText.cpp
     gui/DragHelper.cpp
     ResourcepackManager.cpp
     PlayerInventory.cpp

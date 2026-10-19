@@ -8,6 +8,7 @@
 #include <cstring>
 #include <sstream>
 #include "3rdparty/json.hpp"
+#include "ChatComponentText.h"
 using njson = nlohmann::json;
 
 // ProtocolCraft 数据包
@@ -133,113 +134,11 @@ std::vector<uint8_t> ServerList::base64Decode(const std::string& encoded) {
 
 // ===== JSON 解析 (nlohmann/json) =====
 
-// Minecraft 颜色名称 → § 代码
-static char colorNameToCode(const std::string& name) {
-    if (name == "black") return '0';
-    if (name == "dark_blue") return '1';
-    if (name == "dark_green") return '2';
-    if (name == "dark_aqua") return '3';
-    if (name == "dark_red") return '4';
-    if (name == "dark_purple") return '5';
-    if (name == "gold") return '6';
-    if (name == "gray") return '7';
-    if (name == "dark_gray") return '8';
-    if (name == "blue") return '9';
-    if (name == "green") return 'a';
-    if (name == "aqua") return 'b';
-    if (name == "red") return 'c';
-    if (name == "light_purple") return 'd';
-    if (name == "yellow") return 'e';
-    if (name == "white") return 'f';
-    return 0;
-}
-
-// 将 hex 颜色 (#RRGGBB) 转换为最接近的 Minecraft § 颜色代码
-static char hexToNearestMcColor(const std::string& hex) {
-    if (hex.size() < 7 || hex[0] != '#') return 0;
-    try {
-        int r = std::stoi(hex.substr(1, 2), nullptr, 16);
-        int g = std::stoi(hex.substr(3, 2), nullptr, 16);
-        int b = std::stoi(hex.substr(5, 2), nullptr, 16);
-
-        static const struct { int r, g, b; char code; } palette[] = {
-            {0,0,0, '0'}, {0,0,170, '1'}, {0,170,0, '2'}, {0,170,170, '3'},
-            {170,0,0, '4'}, {170,0,170, '5'}, {255,170,0, '6'}, {170,170,170, '7'},
-            {85,85,85, '8'}, {85,85,255, '9'}, {85,255,85, 'a'}, {85,255,255, 'b'},
-            {255,85,85, 'c'}, {255,85,255, 'd'}, {255,255,85, 'e'}, {255,255,255, 'f'},
-        };
-        char bestCode = 'f';
-        int bestDist = INT32_MAX;
-        for (const auto& c : palette) {
-            int dr = r - c.r, dg = g - c.g, db = b - c.b;
-            int dist = dr*dr + dg*dg + db*db;
-            if (dist < bestDist) {
-                bestDist = dist;
-                bestCode = c.code;
-            }
-        }
-        return bestCode;
-    } catch (...) {
-        return 0;
-    }
-}
-
-// 将颜色值（名称或 #hex）转换为 § 代码
-static std::string colorToSection(const std::string& color) {
-    if (color.empty()) return "";
-    char code = 0;
-    if (color[0] == '#') {
-        code = hexToNearestMcColor(color);
-    } else {
-        code = colorNameToCode(color);
-    }
-    if (code) return std::string(1, '\xa7') + code;
-    return "";
-}
-
-// 递归提取 Minecraft Component JSON 为带 § 颜色代码的纯文本
-static std::string extractComponentText(const njson& component) {
-    std::string result;
-
-    if (component.is_string()) {
-        return component.get<std::string>();
-    }
-
-    if (component.is_object()) {
-        // 颜色前缀
-        if (component.contains("color") && component["color"].is_string()) {
-            result += colorToSection(component["color"].get<std::string>());
-        }
-
-        // 文本内容
-        if (component.contains("text") && component["text"].is_string()) {
-            result += component["text"].get<std::string>();
-        }
-
-        // 递归处理 extra 或 with 数组
-        for (const char* key : {"extra", "with"}) {
-            if (component.contains(key) && component[key].is_array()) {
-                for (const auto& child : component[key]) {
-                    result += extractComponentText(child);
-                }
-                break; // 只处理第一个匹配的数组
-            }
-        }
-    }
-
-    if (component.is_array()) {
-        for (const auto& child : component) {
-            result += extractComponentText(child);
-        }
-    }
-
-    return result;
-}
-
-// 提取 MOTD（description 字段）
+// description 可以是组件对象、数组或纯字符串；颜色（含 #hex 真彩色）与格式位
+// 交由共享的 ChatComponent 展开成 § 代码，渲染端 McText 负责解释
 static std::string extractMotd(const njson& root) {
     if (!root.contains("description")) return "";
-    return extractComponentText(root["description"]);
+    return ChatComponent::toText(root["description"]);
 }
 
 // ===== 主 Ping 函数 =====
