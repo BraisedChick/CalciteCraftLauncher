@@ -53,7 +53,7 @@ std::unique_ptr<ChunkSection> ChunkParser::parseSection(
     size_t pos = sectionStart;
 
     if (bitsPerBlock == 0) {
-        // Empty section (Single Value palette)
+        // 不可达：单值段由调用方直接填充，不经过这里
         section->isEmpty = true;
         return section;
     }
@@ -358,26 +358,29 @@ std::unique_ptr<Chunk> ChunkParser::parseExtendedChunk(
         // Non-empty section: parse it
         if (pos >= data.size()) break;
         uint8_t bitsPerBlock = data[pos++];
-        
-        bool hasPalette = (bitsPerBlock <= 8);
+
+        // Palette 形态由 bits 决定（1.18.2 SECTION_STATES）：
+        // 0 = SingleValuePalette，只写一个值 varint（无长度前缀）；
+        // 1-8 = Linear/HashMap，长度 + 对应个数 varint；>8 = GlobalPalette，无 palette
+        bool isSingleValue = (bitsPerBlock == 0);
+        bool hasPalette = (bitsPerBlock > 0 && bitsPerBlock <= 8);
         int paletteLength = 0;
-        
-        if (hasPalette) {
-            paletteLength = readVarInt(data, pos);
-        }
-        
+        int32_t singleValue = 0;
+
+        // sectionStart 指向 palette 条目（parseSection 不重读长度前缀），
+        // 故要在读完 paletteLength 之后才赋值；bits>8 时即 long array 长度 varint 处
         size_t sectionStart = pos;
-        
-        // Skip palette
-        if (hasPalette) {
+
+        if (isSingleValue) {
+            singleValue = readVarInt(data, pos);
+        } else if (hasPalette) {
+            paletteLength = readVarInt(data, pos);
+            sectionStart = pos;
             for (int i = 0; i < paletteLength; i++) {
                 readVarInt(data, pos);
             }
-        } else if (bitsPerBlock == 0) {
-            // Single value palette
-            readVarInt(data, pos);
         }
-        
+
         // Read data array length
         int dataArrayLength = readVarInt(data, pos);
         
@@ -388,8 +391,16 @@ std::unique_ptr<Chunk> ChunkParser::parseExtendedChunk(
         }
         
         // Parse the section
-        auto section = parseSection(data, sectionStart, sectionEnd,
+        std::unique_ptr<ChunkSection> section;
+        if (isSingleValue) {
+            // ZeroBitStorage：long array 恒为空，整段 4096 格同值
+            section = std::make_unique<ChunkSection>();
+            section->blockStates.assign(4096, singleValue);
+            section->isEmpty = (singleValue == 0);
+        } else {
+            section = parseSection(data, sectionStart, sectionEnd,
                                    bitsPerBlock, hasPalette, paletteLength);
+        }
         
         if (section) {
             section->y = chunk->dimension.minY + (sectionY * SECTION_HEIGHT);
