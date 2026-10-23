@@ -888,7 +888,6 @@ void TextureAtlas::parseBlockState(const std::string& blockName, const json& j) 
         {"type",     {"top", "bottom", "double"}},
         {"shape",    {"straight", "inner_left", "inner_right", "outer_left", "outer_right"}},
         {"face",     {"floor", "wall", "ceiling"}},
-        {"egde",     {"none", "up", "side"}},
         {"attach",   {"floor", "ceiling", "single_wall", "double_wall"}},
         {"part",     {"foot", "head"}},
         {"vertical_direction", {"down", "up"}},
