@@ -11,11 +11,16 @@ public:
     ChunkManager();
     
     // 加载区块
+    // chunkBiomes 参数仅 1.17.x（CHUNK_HAS_LEVEL_BIOMES，见 ChunkParser.h）存在
     void loadChunk(int x, int z, const std::vector<uint8_t>& data, 
                    bool fullChunk, long long primaryBitMask,
                    const std::vector<uint8_t>& heightmaps,
                    const std::vector<uint8_t>& blockEntities,
-                   int dimensionMinY, int dimensionHeight);
+                   int dimensionMinY, int dimensionHeight
+#ifdef CHUNK_HAS_LEVEL_BIOMES
+                   , const std::vector<int32_t>& chunkBiomes
+#endif
+                   );
     
     // 获取区块（返回 shared_ptr，线程安全）
     std::shared_ptr<const Chunk> getChunk(int x, int z) const;

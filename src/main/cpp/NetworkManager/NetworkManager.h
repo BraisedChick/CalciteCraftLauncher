@@ -51,6 +51,10 @@ public:
     void enqueueChunkData(std::vector<uint8_t> rawData);
     // 区块卸载入队（ForgetLevelChunk，与加载同队列保证服务端顺序）
     void enqueueChunkUnload(int chunkX, int chunkZ);
+#if PROTOCOL_VERSION < 757
+    // 1.17.x 光照更新入队（与区块加载同队列，避免先于区块到达被丢弃）
+    void enqueueLightUpdate(std::vector<uint8_t> rawData);
+#endif
 
 private:
     // 加密包接收
@@ -94,6 +98,7 @@ private:
     struct ChunkLoadTask {
         std::vector<uint8_t> rawData;   // 非空=加载任务
         bool isUnload = false;          // true=卸载任务
+        bool isLight = false;           // true=光照更新任务（1.17.x，rawData 为 LightUpdate 包体）
         int chunkX = 0;
         int chunkZ = 0;
     };
@@ -106,6 +111,9 @@ private:
     void urgentProcessorFunc();
     void normalProcessorFunc();
     void parseChunkDataPacket(const std::vector<uint8_t>& data, size_t startPos);
+#if PROTOCOL_VERSION < 757
+    void applyLightUpdatePacket(const std::vector<uint8_t>& data, size_t startPos);
+#endif
     size_t calculateNBTSize(const std::vector<uint8_t>& data, size_t startPos);
     void chunkWorkerFunc();
 

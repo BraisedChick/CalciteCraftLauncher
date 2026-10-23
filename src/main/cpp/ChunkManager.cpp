@@ -7,12 +7,20 @@ void ChunkManager::loadChunk(int x, int z, const std::vector<uint8_t>& data,
                               bool fullChunk, long long primaryBitMask,
                               const std::vector<uint8_t>& heightmaps,
                               const std::vector<uint8_t>& blockEntities,
-                              int dimensionMinY, int dimensionHeight) {
+                              int dimensionMinY, int dimensionHeight
+#ifdef CHUNK_HAS_LEVEL_BIOMES
+                              , const std::vector<int32_t>& chunkBiomes
+#endif
+                              ) {
     std::unique_lock<std::shared_mutex> lock(mutex);
 
     try {
         auto chunk = parser.parseChunkData(x, z, data, fullChunk, primaryBitMask,
-                                           heightmaps, blockEntities, dimensionMinY, dimensionHeight);
+                                           heightmaps, blockEntities, dimensionMinY, dimensionHeight
+#ifdef CHUNK_HAS_LEVEL_BIOMES
+                                           , chunkBiomes
+#endif
+                                           );
 
         ChunkPos pos{x, z};
         chunks[pos] = std::move(chunk);

@@ -148,6 +148,10 @@ std::unique_ptr<Chunk> ChunkParser::parseChunkData(
     const std::vector<uint8_t>& blockEntitiesData,
     int dimensionMinY,
     int dimensionHeight
+#ifdef CHUNK_HAS_LEVEL_BIOMES
+    ,
+    const std::vector<int32_t>& chunkBiomes
+#endif
 ) {
     // 编译期根据 PROTOCOL_VERSION 宏选择区块解析方法
 #if PROTOCOL_VERSION >= 766
@@ -158,8 +162,12 @@ std::unique_ptr<Chunk> ChunkParser::parseChunkData(
     // 1.18+ Extended
     return parseExtendedChunk(chunkX, chunkZ, data, primaryBitMask,
                               heightmapsData, dimensionMinY, dimensionHeight);
+#elif PROTOCOL_VERSION >= 755
+    // 1.17.x：section 由 primaryBitMask 挑选，biomes 走区块级数组
+    return parseV17Chunk(chunkX, chunkZ, data, primaryBitMask,
+                         heightmapsData, chunkBiomes, dimensionMinY, dimensionHeight);
 #elif PROTOCOL_VERSION >= 404
-    // 1.13-1.17 Modern
+    // 1.13-1.16 Modern
     return parseModernChunk(chunkX, chunkZ, data, primaryBitMask);
 #else
     // 1.8-1.12 Legacy
@@ -185,20 +193,146 @@ std::unique_ptr<Chunk> ChunkParser::parseLegacyChunk(
     return chunk;
 }
 
-// ===== Modern Chunk Parser (1.13 - 1.17) =====
+// ===== Modern Chunk Parser (1.13 - 1.16) =====
 std::unique_ptr<Chunk> ChunkParser::parseModernChunk(
     int chunkX, int chunkZ,
     const std::vector<uint8_t>& data,
     long long primaryBitMask
 ) {
-    LOGI("Parsing modern chunk (1.13-1.17)");
+    LOGI("Parsing modern chunk (1.13-1.16)");
     
     auto chunk = std::make_unique<Chunk>(chunkX, chunkZ);
-    // TODO: 实现 1.13-1.17 的区块解析逻辑
+    // TODO: 实现 1.13-1.16 的区块解析逻辑
     // - Section 调色板
     // - Section 高度 16
     // - Y 范围 0-255
     
+    chunk->isLoaded = true;
+    return chunk;
+}
+
+// ===== 1.17.x Chunk Parser =====
+// 与 1.18 Extended 的差异（对照 1.17.1 源码 ClientboundLevelChunkPacket）：
+// 1. Buffer 只含 primaryBitMask（AvailableSections BitSet）置位的 section，需按位挑选；
+// 2. section 内只有 BlockState 调色板，没有 Biome 调色板；
+// 3. 生物群系走区块级 VarInt 数组（chunkBiomes），每 section 64 个（4x4x4），自底向上连续排列。
+std::unique_ptr<Chunk> ChunkParser::parseV17Chunk(
+        int chunkX, int chunkZ,
+        const std::vector<uint8_t>& data,
+        long long primaryBitMask,
+        const std::vector<uint8_t>& heightmapsData,
+        const std::vector<int32_t>& chunkBiomes,
+        int dimensionMinY,
+        int dimensionHeight
+) {
+    auto chunk = std::make_unique<Chunk>(chunkX, chunkZ);
+
+    chunk->dimension.minY = dimensionMinY;
+    chunk->dimension.maxY = dimensionMinY + dimensionHeight;
+
+    int sectionCount = dimensionHeight / SECTION_HEIGHT;  // 1.17.1 主世界 320/16=20，下界/末地 256/16=16
+    chunk->sections.clear();
+    chunk->sections.resize(sectionCount);
+    for (int i = 0; i < sectionCount; ++i) {
+        int y = dimensionMinY + i * SECTION_HEIGHT;
+        auto sec = std::make_unique<ChunkSection>(y);
+        sec->isEmpty = true;
+        // 区块级 biomes 数组切出本 section 的 64 个（段内顺序与 1.18 段内调色板一致：y4<<4|z4<<2|x4）
+        size_t base = static_cast<size_t>(i) * 64;
+        if (chunkBiomes.size() >= base + 64) {
+            sec->biomes.assign(chunkBiomes.begin() + base, chunkBiomes.begin() + base + 64);
+        }
+        chunk->sections[i] = std::move(sec);
+    }
+
+    size_t pos = 0;
+
+    for (int sectionY = 0; sectionY < sectionCount; ++sectionY) {
+        // BitSet 未置位的 section 不在 Buffer 中，保持空 section
+        if (((primaryBitMask >> sectionY) & 1LL) == 0) {
+            continue;
+        }
+
+        // block_count（2 字节 BIG-ENDIAN）
+        if (pos + 2 > data.size()) {
+            LOGE("Not enough data for section %d at pos=%zu, data.size=%zu", sectionY, pos, data.size());
+            break;
+        }
+        uint16_t blockCount = (static_cast<uint16_t>(data[pos]) << 8) | data[pos+1];
+        pos += 2;
+
+        if (blockCount == 0) {
+            // 空段仍有序列化的 palette + data array，逐段跳过后落到循环末尾
+            if (pos >= data.size()) break;
+            uint8_t bitsPerBlock = data[pos++];
+
+            if (bitsPerBlock > 0 && bitsPerBlock <= 8) {
+                int paletteLength = readVarInt(data, pos);
+                for (int i = 0; i < paletteLength; i++) {
+                    readVarInt(data, pos);
+                }
+            } else if (bitsPerBlock == 0) {
+                readVarInt(data, pos);
+            }
+
+            int dataArrayLength = readVarInt(data, pos);
+            pos += dataArrayLength * 8;
+            continue;
+        }
+
+        if (pos >= data.size()) break;
+        uint8_t bitsPerBlock = data[pos++];
+
+        // Palette 形态与 1.18 相同（1.16+ PalettedContainer）：
+        // 0 = SingleValuePalette；1-8 = Linear/HashMap palette；>8 = GlobalPalette 无 palette
+        bool isSingleValue = (bitsPerBlock == 0);
+        bool hasPalette = (bitsPerBlock > 0 && bitsPerBlock <= 8);
+        int paletteLength = 0;
+        int32_t singleValue = 0;
+
+        size_t sectionStart = pos;
+
+        if (isSingleValue) {
+            singleValue = readVarInt(data, pos);
+        } else if (hasPalette) {
+            paletteLength = readVarInt(data, pos);
+            sectionStart = pos;
+            for (int i = 0; i < paletteLength; i++) {
+                readVarInt(data, pos);
+            }
+        }
+
+        int dataArrayLength = readVarInt(data, pos);
+
+        size_t sectionEnd = pos + (static_cast<size_t>(dataArrayLength) * 8);
+        if (sectionEnd > data.size()) {
+            LOGE("Section data exceeds buffer size");
+            break;
+        }
+
+        std::unique_ptr<ChunkSection> section;
+        if (isSingleValue) {
+            section = std::make_unique<ChunkSection>();
+            section->blockStates.assign(4096, singleValue);
+            section->isEmpty = (singleValue == 0);
+        } else {
+            section = parseSection(data, sectionStart, sectionEnd,
+                                   bitsPerBlock, hasPalette, paletteLength);
+        }
+
+        if (section) {
+            section->y = chunk->dimension.minY + (sectionY * SECTION_HEIGHT);
+            // 保留预分配时切好的区块级 biomes
+            if (sectionY < static_cast<int>(chunk->sections.size()) && chunk->sections[sectionY]) {
+                section->biomes = std::move(chunk->sections[sectionY]->biomes);
+            }
+            chunk->sections[sectionY] = std::move(section);
+        }
+
+        pos = sectionEnd;
+    }
+
+    chunk->heightmaps = heightmapsData;
     chunk->isLoaded = true;
     return chunk;
 }

@@ -10,6 +10,8 @@
 #include "EntityManager.h"
 #include "gui/GameUI.h"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundLevelChunkWithLightPacket.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundLevelChunkPacket.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundLightUpdatePacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundDisconnectPacket.hpp"
 #include "protocolCraft/Packets/Game/Serverbound/ServerboundClientInformationPacket.hpp"
 #include "Chunk.h"
@@ -234,7 +236,12 @@ void NetworkManager::registerHandlers() {
     reg(ClientboundRespawnPacket,            &NetworkManager::handleLogin);
 
     // World
+#if PROTOCOL_VERSION < 757
+    // 1.17.x：区块包不含光照（ClientboundLevelChunkPacket，光照走独立 LightUpdate 包）
+    reg(ClientboundLevelChunkPacket,          &NetworkManager::handleWorld);
+#else
     reg(ClientboundLevelChunkWithLightPacket, &NetworkManager::handleWorld);
+#endif
     reg(ClientboundBlockUpdatePacket,        &NetworkManager::handleWorld);
     reg(ClientboundForgetLevelChunkPacket,   &NetworkManager::handleWorld);
     reg(ClientboundLightUpdatePacket,        &NetworkManager::handleWorld);
@@ -349,6 +356,11 @@ void NetworkManager::chunkWorkerFunc() {
                 if (m_engine->getMeshScheduler()) {
                     m_engine->getMeshScheduler()->removeChunk(task.chunkX, task.chunkZ);
                 }
+#if PROTOCOL_VERSION < 757
+            } else if (task.isLight) {
+                // 1.17.x：光照包与区块包分离，随区块队列同线程执行，消除加载竞争
+                applyLightUpdatePacket(task.rawData, 0);
+#endif
             } else {
                 parseChunkDataPacket(task.rawData, 0);
             }
@@ -359,7 +371,12 @@ void NetworkManager::chunkWorkerFunc() {
 void NetworkManager::parseChunkDataPacket(const std::vector<uint8_t>& data, size_t startPos) {
     if (!m_engine || !m_engine->chunkManager) return;
 
+#if PROTOCOL_VERSION < 757
+    // 1.17.x：区块包不含光照，光照由独立的 ClientboundLightUpdatePacket 下发（见 WorldHandler）
+    ProtocolCraft::ClientboundLevelChunkPacket chunkPacket;
+#else
     ProtocolCraft::ClientboundLevelChunkWithLightPacket chunkPacket;
+#endif
     std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
     auto iter = pktData.cbegin();
     size_t len = pktData.size();
@@ -374,13 +391,38 @@ void NetworkManager::parseChunkDataPacket(const std::vector<uint8_t>& data, size
     int cz = chunkPacket.GetZ();
 
     // 使用 loadChunk 加载区块（与原始 chunkWorkerFunc 保持一致）
+#if PROTOCOL_VERSION < 757
+    const auto& buffer_data = chunkPacket.GetBuffer();
+#else
     const auto& buffer_data = chunkPacket.GetChunkData().GetBuffer();
+#endif
     if (buffer_data.empty()) return;
 
     std::vector<uint8_t> rawData(buffer_data.begin(), buffer_data.end());
     std::vector<uint8_t> emptyHeightmaps;
     std::vector<uint8_t> emptyBlockEntities;
 
+#ifdef CHUNK_HAS_LEVEL_BIOMES
+    // AvailableSections（BitSet → vector<unsigned long long>）：1.17.x 每区块最多 24 个
+    // section，低 64 位足够；Buffer 只按位序包含置位 section 的数据
+    long long bitMask = 0;
+    {
+        const auto& availableSections = chunkPacket.GetAvailableSections();
+        if (!availableSections.empty()) {
+            bitMask = static_cast<long long>(availableSections[0]);
+        }
+    }
+
+    // 区块级 biomes VarInt 数组（每 section 64 个，自底向上），交给 parseV17Chunk 切分
+    std::vector<int32_t> chunkBiomes;
+    {
+        const auto& rawBiomes = chunkPacket.GetBiomes();
+        chunkBiomes.reserve(rawBiomes.size());
+        for (const auto& b : rawBiomes) {
+            chunkBiomes.push_back(static_cast<int32_t>(b));
+        }
+    }
+#else
     // 从原始数据读取 bitMask（位置 8 起 8 字节）
     auto rawIter = data.cbegin() + startPos + 8;
     long long bitMask = 0;
@@ -388,8 +430,16 @@ void NetworkManager::parseChunkDataPacket(const std::vector<uint8_t>& data, size
         bitMask = (bitMask << 8) | (unsigned char)*rawIter;
         ++rawIter;
     }
+#endif
 
     try {
+#ifdef CHUNK_HAS_LEVEL_BIOMES
+        m_engine->chunkManager->loadChunk(cx, cz, rawData, true, bitMask,
+                                          emptyHeightmaps, emptyBlockEntities,
+                                          m_engine->dimensionMinY,
+                                          m_engine->dimensionHeight,
+                                          chunkBiomes);
+#else
         m_engine->chunkManager->loadChunk(cx, cz, rawData, true, bitMask,
                                           emptyHeightmaps, emptyBlockEntities,
                                           m_engine->dimensionMinY,
@@ -439,6 +489,7 @@ void NetworkManager::parseChunkDataPacket(const std::vector<uint8_t>& data, size
                 }
             }
         }
+#endif
 
         if (m_engine && m_engine->getMeshScheduler()) {
             m_engine->getMeshScheduler()->markChunkForUpdate(cx, cz);
@@ -447,6 +498,81 @@ void NetworkManager::parseChunkDataPacket(const std::vector<uint8_t>& data, size
         LOGW("Chunk worker: failed to load chunk (%d,%d): %s", cx, cz, e.what());
     }
 }
+
+#if PROTOCOL_VERSION < 757
+// ===== 1.17.x：独立光照更新包（1.18+ 光照内嵌在区块包中，无此路径） =====
+void NetworkManager::enqueueLightUpdate(std::vector<uint8_t> rawData) {
+    std::lock_guard<std::mutex> lock(chunkQueueMutex);
+    ChunkLoadTask task;
+    task.isLight = true;
+    task.rawData = std::move(rawData);
+    chunkQueue.push(std::move(task));
+    chunkCV.notify_one();
+}
+
+void NetworkManager::applyLightUpdatePacket(const std::vector<uint8_t>& data, size_t startPos) {
+    try {
+        ProtocolCraft::ClientboundLightUpdatePacket lightPacket;
+        std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
+        auto it = pktData.cbegin();
+        size_t len = pktData.size();
+        lightPacket.Read(it, len);
+
+        int lx = lightPacket.GetX();
+        int lz = lightPacket.GetZ();
+        if (!m_engine || !m_engine->chunkManager) return;
+        auto chunk = m_engine->chunkManager->getChunk(lx, lz);
+        if (!chunk) return;
+
+        const auto& skyMasks = lightPacket.GetSkyYMask();
+        const auto& blockMasks = lightPacket.GetBlockYMask();
+        const auto& emptySkyMasks = lightPacket.GetEmptySkyYMask();
+        const auto& emptyBlockMasks = lightPacket.GetEmptyBlockYMask();
+        const auto& skyUpdates = lightPacket.GetSkyUpdates();
+        const auto& blockUpdates = lightPacket.GetBlockUpdates();
+
+        uint64_t skyMask = skyMasks.empty() ? 0 : skyMasks[0];
+        uint64_t blockMask = blockMasks.empty() ? 0 : blockMasks[0];
+        uint64_t emptySkyMask = emptySkyMasks.empty() ? 0 : emptySkyMasks[0];
+        uint64_t emptyBlockMask = emptyBlockMasks.empty() ? 0 : emptyBlockMasks[0];
+
+        // 1.17.x 光照段自 minLightSection(-1) 起编号：chunk section i 对应 bit i+1（与 1.18+ 公式一致）
+        int skyIdx = 0, blockIdx = 0;
+        int sectionCount = (int)chunk->sections.size();
+        for (int i = 0; i < sectionCount; i++) {
+            auto& sec = chunk->sections[i];
+            if (!sec) continue;
+            int lightBit = i + 1;
+            if (skyMask & (1ULL << lightBit)) {
+                if (skyIdx < (int)skyUpdates.size()) {
+                    const auto& d = skyUpdates[skyIdx];
+                    sec->skyLight.resize(2048);
+                    memcpy(sec->skyLight.data(), d.data(), std::min(d.size(), (size_t)2048));
+                }
+                skyIdx++;
+            } else if (emptySkyMask & (1ULL << lightBit)) {
+                sec->skyLight.assign(2048, 0);
+            }
+            if (blockMask & (1ULL << lightBit)) {
+                if (blockIdx < (int)blockUpdates.size()) {
+                    const auto& d = blockUpdates[blockIdx];
+                    sec->blockLight.resize(2048);
+                    memcpy(sec->blockLight.data(), d.data(), std::min(d.size(), (size_t)2048));
+                }
+                blockIdx++;
+            } else if (emptyBlockMask & (1ULL << lightBit)) {
+                sec->blockLight.assign(2048, 0);
+            }
+        }
+
+        if (m_engine->getMeshScheduler()) {
+            m_engine->getMeshScheduler()->markChunkForUpdate(lx, lz);
+        }
+    } catch (const std::exception& e) {
+        LOGW("LightUpdate(worker): parse error: %s", e.what());
+    }
+}
+#endif
 
 
 bool NetworkManager::sendPacket(const std::vector<uint8_t>& data) {
@@ -517,7 +643,10 @@ void NetworkManager::startPlayLoop() {
             infoPacket.SetModelCustomisation(0x7F);
             infoPacket.SetMainHand(1);
             infoPacket.SetTextFilteringEnabled(false);
+#if PROTOCOL_VERSION > 756
+            // AllowListing 字段 1.18（protocol >756）才存在，1.17.1 无此字段
             infoPacket.SetAllowListing(true);
+#endif
 
             ProtocolCraft::WriteContainer writeData;
             infoPacket.Write(writeData);

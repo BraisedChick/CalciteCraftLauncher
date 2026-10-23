@@ -7,6 +7,7 @@
 #include "NetworkManager/PacketIds.h"
 
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundLevelChunkWithLightPacket.hpp"
+#include "protocolCraft/Packets/Game/Clientbound/ClientboundLevelChunkPacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundBlockUpdatePacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundLightUpdatePacket.hpp"
 #include "protocolCraft/Packets/Game/Clientbound/ClientboundSectionBlocksUpdatePacket.hpp"
@@ -14,7 +15,11 @@
 
 void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data, size_t startPos) {
     switch (packetId) {
+#if PROTOCOL_VERSION < 757
+        case ClientboundLevelChunkPacket:  // 1.17.x：区块包不含光照
+#else
         case ClientboundLevelChunkWithLightPacket:
+#endif
         { // Chunk Data
             {
                 std::lock_guard<std::mutex> lock(m_engine->netMutex);
@@ -86,6 +91,14 @@ void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data,
 
         case ClientboundLightUpdatePacket:
         { // Light Update
+#if PROTOCOL_VERSION < 757
+            // 1.17.x：光照包在线上紧跟区块包下发，若在此直接解析，chunkWorker 可能尚未
+            // 完成区块加载，getChunk 返回空导致初始光照丢失。改入区块队列同线程顺序执行。
+            {
+                std::lock_guard<std::mutex> lock(m_engine->netMutex);
+                enqueueLightUpdate(std::vector<uint8_t>(data.begin() + startPos, data.end()));
+            }
+#else
             try {
                 ProtocolCraft::ClientboundLightUpdatePacket lightPacket;
                 std::vector<unsigned char> pktData(data.begin() + startPos, data.end());
@@ -140,6 +153,7 @@ void NetworkManager::handleWorld(int packetId, const std::vector<uint8_t>& data,
             } catch (const std::exception& e) {
                 LOGW("LightUpdate: parse error: %s", e.what());
             }
+#endif
             break;
         }
 
